@@ -1,0 +1,10 @@
+[tools]
+python = "3.14"
+
+[env]
+PROJECT_NAME = "{{ config_root | basename }}"
+_.python.venv = { path = ".venv" }
+
+[settings]
+experimental = true
+python.uv_venv_auto = "create|source"
