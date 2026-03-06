@@ -389,7 +389,6 @@ class Handler:
             room.name,
         )
 
-        cancelled = False
         try:
             async for msg in self._router.handle_message(workspace, room, text):
                 if msg.is_loading:
@@ -416,20 +415,19 @@ class Handler:
                         "steps": msg.steps,
                     },
                 )
-                self._broadcast(
-                    {
-                        "type": "message_added",
-                        "workspace": workspace.name,
-                        "room": room.name,
-                        "sender": msg.sender,
-                        "text": msg.text,
-                        "is_system": msg.is_system,
-                        "raw": msg.raw,
-                        "steps": msg.steps,
-                    },
-                    workspace.name,
-                    room.name,
-                )
+                broadcast_data: dict = {
+                    "type": "message_added",
+                    "workspace": workspace.name,
+                    "room": room.name,
+                    "sender": msg.sender,
+                    "text": msg.text,
+                    "is_system": msg.is_system,
+                    "raw": msg.raw,
+                    "steps": msg.steps,
+                }
+                if msg.query_input:
+                    broadcast_data["query_input"] = msg.query_input
+                self._broadcast(broadcast_data, workspace.name, room.name)
         except asyncio.CancelledError:
             cancel_msg = {
                 "sender": room.leader,
@@ -525,7 +523,6 @@ class Handler:
             room.name,
         )
         asyncio.create_task(self._process_message(workspace, room, next_text))
-
 
     # ------------------------------------------------------------------
     # System event callback (from Router)

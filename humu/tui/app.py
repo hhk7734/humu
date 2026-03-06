@@ -207,6 +207,7 @@ class HumuApp(App):
             event.get("is_system", False),
             event.get("raw"),
             event.get("steps", []),
+            query_input=event.get("query_input"),
         )
 
     # ------------------------------------------------------------------

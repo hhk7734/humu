@@ -11,7 +11,7 @@ from humu.config import ROUTING_SCHEMA
 from humu.models.agent import AgentConfig
 from humu.models.room import Room
 from humu.models.workspace import Workspace
-from humu.services.agent_runner import AgentRunner, StreamChunk
+from humu.services.agent_runner import AgentRunner
 from humu.services.storage import Storage
 
 if TYPE_CHECKING:
@@ -28,6 +28,7 @@ class ChatMessage:
     raw: str | None = None
     is_loading: bool = False
     steps: list[dict] = field(default_factory=list)
+    query_input: dict | None = None  # {"system_prompt": str, "user_message": str}
 
 
 class Router:
@@ -226,7 +227,15 @@ When forwarding, include enough context in the "context" field for the agent to 
         try:
             decision = json.loads(response.text)
         except (json.JSONDecodeError, TypeError):
-            yield ChatMessage(sender=room.leader, text=response.text, raw=raw_response)
+            yield ChatMessage(
+                sender=room.leader,
+                text=response.text,
+                raw=raw_response,
+                query_input={
+                    "system_prompt": leader_prompt,
+                    "user_message": user_message,
+                },
+            )
             return
 
         action = decision.get("action", "direct")
@@ -237,6 +246,10 @@ When forwarding, include enough context in the "context" field for the agent to 
                 text=decision.get("message", response.text),
                 raw=raw_response,
                 steps=response.steps,
+                query_input={
+                    "system_prompt": leader_prompt,
+                    "user_message": user_message,
+                },
             )
 
         elif action == "forward":
@@ -308,12 +321,17 @@ When forwarding, include enough context in the "context" field for the agent to 
                             text_parts.append(chunk.text)
                             yield ChatMessage(sender=target_name, text=chunk.text)
                     full_text = "".join(text_parts)
+                    fwd_qi = {
+                        "system_prompt": agent_system,
+                        "user_message": forward_prompt,
+                    }
                     if streaming_steps:
                         yield ChatMessage(
                             sender=target_name,
                             text="Process log (right-click for details)",
                             is_system=True,
                             steps=streaming_steps,
+                            query_input=fwd_qi,
                         )
                 else:
                     try:
@@ -327,11 +345,16 @@ When forwarding, include enough context in the "context" field for the agent to 
                                 self._add_live_step(room_key, step, _name)
                             ),
                         )
+                        fwd_qi = {
+                            "system_prompt": agent_system,
+                            "user_message": forward_prompt,
+                        }
                         yield ChatMessage(
                             sender=target_name,
                             text=agent_resp.text,
                             raw=agent_resp.text,
                             steps=agent_resp.steps,
+                            query_input=fwd_qi,
                         )
                         full_text = agent_resp.text
                     except Exception as e:
@@ -371,6 +394,10 @@ When forwarding, include enough context in the "context" field for the agent to 
                         text=synthesis.text,
                         raw=synthesis.text,
                         steps=synthesis.steps,
+                        query_input={
+                            "system_prompt": leader_prompt,
+                            "user_message": synthesis_prompt,
+                        },
                     )
                 except Exception as e:
                     yield ChatMessage(
@@ -458,12 +485,17 @@ When forwarding, include enough context in the "context" field for the agent to 
                             text_parts_chain.append(chunk.text)
                             yield ChatMessage(sender=agent_name, text=chunk.text)
                     previous_output = "".join(text_parts_chain)
+                    chain_qi = {
+                        "system_prompt": chain_agent_system,
+                        "user_message": chain_prompt,
+                    }
                     if chain_steps:
                         yield ChatMessage(
                             sender=agent_name,
                             text="Process log (right-click for details)",
                             is_system=True,
                             steps=chain_steps,
+                            query_input=chain_qi,
                         )
                 else:
                     try:
@@ -477,11 +509,16 @@ When forwarding, include enough context in the "context" field for the agent to 
                                 self._add_live_step(room_key, step, _name)
                             ),
                         )
+                        chain_qi = {
+                            "system_prompt": chain_agent_system,
+                            "user_message": chain_prompt,
+                        }
                         yield ChatMessage(
                             sender=agent_name,
                             text=agent_resp.text,
                             raw=agent_resp.text,
                             steps=agent_resp.steps,
+                            query_input=chain_qi,
                         )
                         previous_output = agent_resp.text
                     except Exception as e:
@@ -521,6 +558,10 @@ When forwarding, include enough context in the "context" field for the agent to 
                         text=synthesis.text,
                         raw=synthesis.text,
                         steps=synthesis.steps,
+                        query_input={
+                            "system_prompt": leader_prompt,
+                            "user_message": synthesis_prompt,
+                        },
                     )
                 except Exception as e:
                     yield ChatMessage(

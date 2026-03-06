@@ -9,7 +9,7 @@ from rich.syntax import Syntax
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Label, Static
+from textual.widgets import Static
 
 
 class MessageDetailScreen(ModalScreen[None]):
@@ -110,13 +110,28 @@ class MessageDetailScreen(ModalScreen[None]):
         is_system: bool = False,
         raw: str | None = None,
         steps: list[dict] | None = None,
+        query_input: dict | None = None,
     ) -> None:
         super().__init__()
         self._sender = sender
         self._steps = steps or []
+        self._query_input = query_input
 
     def compose(self) -> ComposeResult:
         with VerticalScroll():
+            if self._query_input:
+                yield Static(f"Query Input  [{self._sender}]", classes="divider")
+                system_prompt = self._query_input.get("system_prompt", "")
+                user_message = self._query_input.get("user_message", "")
+                if system_prompt:
+                    yield Static(
+                        "System Prompt", classes="step-badge step-badge-thinking"
+                    )
+                    yield Static(system_prompt, classes="step-text")
+                if user_message:
+                    yield Static("User Message", classes="step-badge step-badge-tool")
+                    yield Static(user_message, classes="step-text")
+
             yield Static(f"Process Log  [{self._sender}]", classes="divider")
 
             if not self._steps:

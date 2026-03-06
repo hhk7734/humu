@@ -1,5 +1,4 @@
 import importlib
-import os
 import subprocess
 import sys
 import time
@@ -34,7 +33,7 @@ def _is_server_running() -> bool:
 def _start_server_daemon() -> None:
     """Spawn ``humu serve`` as a background daemon process."""
     subprocess.Popen(
-        [sys.executable, "-m", "humu.main", "serve"],
+        [sys.executable, "-m", "humu", "serve"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,

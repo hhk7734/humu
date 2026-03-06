@@ -10,7 +10,7 @@ dependencies = [
 ]
 
 [project.scripts]
-humu = "humu.main:main"
+humu = "humu:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -290,6 +290,7 @@ class ChatMessage(Vertical):
         is_system: bool = False,
         raw: str | None = None,
         steps: list[dict] | None = None,
+        query_input: dict | None = None,
     ) -> None:
         super().__init__()
         self._sender = sender
@@ -297,6 +298,7 @@ class ChatMessage(Vertical):
         self._is_system = is_system
         self._raw = raw
         self._steps = steps or []
+        self._query_input = query_input
 
     def compose(self) -> ComposeResult:
         from rich.text import Text
@@ -332,6 +334,7 @@ class ChatMessage(Vertical):
                     self._is_system,
                     raw=self._raw,
                     steps=self._steps,
+                    query_input=self._query_input,
                 )
             )
         elif result == "prompt":
@@ -498,9 +501,12 @@ class ChatPanel(Static):
         is_system: bool = False,
         raw: str | None = None,
         steps: list[dict] | None = None,
+        query_input: dict | None = None,
     ) -> None:
         container = self.query_one("#chat-messages", Vertical)
-        msg = ChatMessage(sender, text, is_system, raw=raw, steps=steps)
+        msg = ChatMessage(
+            sender, text, is_system, raw=raw, steps=steps, query_input=query_input
+        )
         container.mount(msg)
         self.call_after_refresh(self._scroll_to_end)
 
