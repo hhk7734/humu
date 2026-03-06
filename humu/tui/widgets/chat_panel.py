@@ -202,21 +202,28 @@ class PathAutocomplete(Static):
         return None
 
     def _refresh_display(self) -> None:
+        from rich.text import Text
+
         total = len(self._paths)
         window = 3
         start = max(0, min(self._index - window // 2, total - window))
         end = min(start + window, total)
-        lines = []
+        content = Text(no_wrap=True, overflow="crop")
+        rendered = 0
         for i in range(start, end):
+            if rendered > 0:
+                content.append("\n")
             path = self._paths[i]
             if i == self._index:
-                lines.append(f"[bold reverse] ❯ {path} [/bold reverse]")
+                content.append(f" ❯ {path} ", style="bold reverse")
             else:
-                lines.append(f"   {path}")
+                content.append(f"   {path}")
+            rendered += 1
         # Pad to always fill 3 lines
-        while len(lines) < 3:
-            lines.append("")
-        self.update("\n".join(lines))
+        while rendered < 3:
+            content.append("\n")
+            rendered += 1
+        self.update(content)
 
 
 class ChatMessage(Vertical):
