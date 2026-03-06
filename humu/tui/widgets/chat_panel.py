@@ -388,6 +388,7 @@ class ChatPanel(Static):
         color: $text-muted;
         background: $surface;
         border-top: solid $accent 30%;
+        border-bottom: solid $accent 30%;
         display: none;
     }
     ChatPanel #queue-display.visible {
