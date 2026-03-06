@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, AsyncIterator
 
@@ -32,6 +33,20 @@ class Router:
     def __init__(self, runner: AgentRunner, storage: Storage) -> None:
         self._runner = runner
         self._storage = storage
+        self._live_steps: list[dict] = []
+        self._live_steps_lock = threading.Lock()
+
+    def _add_live_step(self, step: dict) -> None:
+        with self._live_steps_lock:
+            self._live_steps.append(step)
+
+    def get_live_steps(self) -> list[dict]:
+        with self._live_steps_lock:
+            return list(self._live_steps)
+
+    def _clear_live_steps(self) -> None:
+        with self._live_steps_lock:
+            self._live_steps.clear()
 
     def _build_leader_prompt(self, leader: AgentConfig, room: Room) -> str:
         agent_descriptions = []
@@ -76,6 +91,7 @@ When forwarding, include enough context in the "context" field for the agent to 
 
         leader_prompt = self._build_leader_prompt(leader, room)
 
+        self._clear_live_steps()
         yield ChatMessage(sender=room.leader, text="", is_loading=True)
         try:
             response = await self._runner.query(
@@ -85,6 +101,7 @@ When forwarding, include enough context in the "context" field for the agent to 
                 user_message,
                 output_format={"type": "json_schema", "schema": ROUTING_SCHEMA},
                 system_prompt_override=leader_prompt,
+                step_callback=self._add_live_step,
             )
         except Exception as e:
             yield ChatMessage(
@@ -148,12 +165,14 @@ When forwarding, include enough context in the "context" field for the agent to 
 
                 forward_prompt = f"The leader agent forwarded the following to you.\n\nOriginal user message: {user_message}\n\nLeader's context: {context}"
 
+                self._clear_live_steps()
                 yield ChatMessage(sender=target_name, text="", is_loading=True)
                 if agent.streaming:
                     text_parts: list[str] = []
                     streaming_steps: list[dict] = []
                     async for chunk in self._runner.query_streaming(
-                        agent, workspace, room.name, forward_prompt
+                        agent, workspace, room.name, forward_prompt,
+                        step_callback=self._add_live_step,
                     ):
                         if chunk.done:
                             streaming_steps = chunk.steps
@@ -171,7 +190,8 @@ When forwarding, include enough context in the "context" field for the agent to 
                 else:
                     try:
                         agent_resp = await self._runner.query(
-                            agent, workspace, room.name, forward_prompt
+                            agent, workspace, room.name, forward_prompt,
+                            step_callback=self._add_live_step,
                         )
                         yield ChatMessage(
                             sender=target_name,
@@ -201,6 +221,7 @@ When forwarding, include enough context in the "context" field for the agent to 
                     + "\n\nPlease synthesize these responses into a coherent answer for the user."
                 )
 
+                self._clear_live_steps()
                 yield ChatMessage(sender=room.leader, text="", is_loading=True)
                 try:
                     synthesis = await self._runner.query(
@@ -208,6 +229,7 @@ When forwarding, include enough context in the "context" field for the agent to 
                         workspace,
                         room.name,
                         synthesis_prompt,
+                        step_callback=self._add_live_step,
                     )
                     yield ChatMessage(
                         sender=room.leader,
@@ -268,12 +290,14 @@ When forwarding, include enough context in the "context" field for the agent to 
                         f"\n\nOutput from previous agent:\n{previous_output}"
                     )
 
+                self._clear_live_steps()
                 yield ChatMessage(sender=agent_name, text="", is_loading=True)
                 if agent.streaming:
                     text_parts_chain: list[str] = []
                     chain_steps: list[dict] = []
                     async for chunk in self._runner.query_streaming(
-                        agent, workspace, room.name, chain_prompt
+                        agent, workspace, room.name, chain_prompt,
+                        step_callback=self._add_live_step,
                     ):
                         if chunk.done:
                             chain_steps = chunk.steps
@@ -291,7 +315,8 @@ When forwarding, include enough context in the "context" field for the agent to 
                 else:
                     try:
                         agent_resp = await self._runner.query(
-                            agent, workspace, room.name, chain_prompt
+                            agent, workspace, room.name, chain_prompt,
+                            step_callback=self._add_live_step,
                         )
                         yield ChatMessage(
                             sender=agent_name,
@@ -321,6 +346,7 @@ When forwarding, include enough context in the "context" field for the agent to 
                     + "\n\nPlease synthesize these into a final coherent answer for the user."
                 )
 
+                self._clear_live_steps()
                 yield ChatMessage(sender=room.leader, text="", is_loading=True)
                 try:
                     synthesis = await self._runner.query(
@@ -328,6 +354,7 @@ When forwarding, include enough context in the "context" field for the agent to 
                         workspace,
                         room.name,
                         synthesis_prompt,
+                        step_callback=self._add_live_step,
                     )
                     yield ChatMessage(
                         sender=room.leader,

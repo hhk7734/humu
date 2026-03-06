@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import glob as _glob
 import os
+from collections.abc import Callable
 
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
@@ -44,10 +45,11 @@ class LoadingChatMessage(Vertical):
 
     SPINNERS = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
-    def __init__(self, sender: str) -> None:
+    def __init__(self, sender: str, get_steps: Callable[[], list[dict]] | None = None) -> None:
         super().__init__()
         self._sender = sender
         self._spin_index = 0
+        self._get_steps = get_steps
 
     def compose(self) -> ComposeResult:
         from rich.text import Text
@@ -62,6 +64,14 @@ class LoadingChatMessage(Vertical):
         self._spin_index = (self._spin_index + 1) % len(self.SPINNERS)
         spinner = self.SPINNERS[self._spin_index]
         self.query_one(".loading-text", Static).update(f"{spinner} thinking...")
+
+    def on_click(self, event: Click) -> None:
+        if event.button == 3 and self._get_steps:  # right-click
+            from humu.tui.screens.message_detail import MessageDetailScreen
+            steps = self._get_steps()
+            self.app.push_screen(
+                MessageDetailScreen(self._sender, "", steps=steps)
+            )
 
 
 class MessageContextMenu(ModalScreen[None]):
@@ -342,10 +352,10 @@ class ChatPanel(Static):
         scroll = self.query_one("#chat-scroll", VerticalScroll)
         scroll.scroll_end(animate=False)
 
-    def show_loading(self, agent_name: str) -> None:
+    def show_loading(self, agent_name: str, get_steps: Callable[[], list[dict]] | None = None) -> None:
         self.hide_loading()
         container = self.query_one("#chat-messages", Vertical)
-        loading = LoadingChatMessage(agent_name)
+        loading = LoadingChatMessage(agent_name, get_steps=get_steps)
         loading.id = "loading-message"
         container.mount(loading)
         self.call_after_refresh(self._scroll_to_end)

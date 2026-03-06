@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator
 
@@ -84,6 +85,7 @@ class AgentRunner:
         *,
         output_format: dict | None = None,
         system_prompt_override: str | None = None,
+        step_callback: Callable[[dict], None] | None = None,
     ) -> AgentResponse:
         key = self._client_key(room_name, agent.name)
 
@@ -114,14 +116,22 @@ class AgentRunner:
                     if message.last_tool_name:
                         step["tool"] = message.last_tool_name
                     steps.append(step)
+                    if step_callback:
+                        step_callback(step)
                 if isinstance(message, AssistantMessage):
                     if message.error:
                         logger.error("Agent %s error: %s", agent.name, message.error)
                     for block in message.content:
                         if isinstance(block, ThinkingBlock):
-                            steps.append({"type": "thinking", "content": block.thinking})
+                            s = {"type": "thinking", "content": block.thinking}
+                            steps.append(s)
+                            if step_callback:
+                                step_callback(s)
                         elif isinstance(block, ToolUseBlock):
-                            steps.append({"type": "tool_use", "id": block.id, "name": block.name, "input": block.input})
+                            s = {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
+                            steps.append(s)
+                            if step_callback:
+                                step_callback(s)
                         elif isinstance(block, ToolResultBlock):
                             content = block.content
                             if isinstance(content, list):
@@ -129,12 +139,15 @@ class AgentRunner:
                                     c.get("text", str(c)) if isinstance(c, dict) else str(c)
                                     for c in content
                                 )
-                            steps.append({
+                            s = {
                                 "type": "tool_result",
                                 "tool_use_id": block.tool_use_id,
                                 "content": content or "",
                                 "is_error": bool(block.is_error),
-                            })
+                            }
+                            steps.append(s)
+                            if step_callback:
+                                step_callback(s)
                         elif isinstance(block, TextBlock):
                             text_parts.append(block.text)
                 if isinstance(message, ResultMessage):
@@ -180,6 +193,7 @@ class AgentRunner:
         prompt: str,
         *,
         system_prompt_override: str | None = None,
+        step_callback: Callable[[dict], None] | None = None,
     ) -> AsyncIterator[StreamChunk]:
         key = self._client_key(room_name, agent.name)
 
@@ -203,16 +217,24 @@ class AgentRunner:
 
             async for message in client.receive_response():
                 if isinstance(message, TaskProgressMessage):
-                    step: dict = {"type": "task_progress", "description": message.description}
+                    s2: dict = {"type": "task_progress", "description": message.description}
                     if message.last_tool_name:
-                        step["tool"] = message.last_tool_name
-                    steps.append(step)
+                        s2["tool"] = message.last_tool_name
+                    steps.append(s2)
+                    if step_callback:
+                        step_callback(s2)
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, ThinkingBlock):
-                            steps.append({"type": "thinking", "content": block.thinking})
+                            s2 = {"type": "thinking", "content": block.thinking}
+                            steps.append(s2)
+                            if step_callback:
+                                step_callback(s2)
                         elif isinstance(block, ToolUseBlock):
-                            steps.append({"type": "tool_use", "id": block.id, "name": block.name, "input": block.input})
+                            s2 = {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
+                            steps.append(s2)
+                            if step_callback:
+                                step_callback(s2)
                         elif isinstance(block, ToolResultBlock):
                             content = block.content
                             if isinstance(content, list):
@@ -220,12 +242,15 @@ class AgentRunner:
                                     c.get("text", str(c)) if isinstance(c, dict) else str(c)
                                     for c in content
                                 )
-                            steps.append({
+                            s2 = {
                                 "type": "tool_result",
                                 "tool_use_id": block.tool_use_id,
                                 "content": content or "",
                                 "is_error": bool(block.is_error),
-                            })
+                            }
+                            steps.append(s2)
+                            if step_callback:
+                                step_callback(s2)
                         elif isinstance(block, TextBlock):
                             yield StreamChunk(text=block.text)
                 if isinstance(message, ResultMessage):

@@ -206,7 +206,9 @@ class HumuApp(App):
         try:
             async for msg in self._router.handle_message(workspace, room, text):
                 if msg.is_loading:
-                    self.call_from_thread(chat.show_loading, msg.sender)
+                    self.call_from_thread(
+                        chat.show_loading, msg.sender, self._router.get_live_steps
+                    )
                     continue
                 self.call_from_thread(chat.hide_loading)
                 self.call_from_thread(
