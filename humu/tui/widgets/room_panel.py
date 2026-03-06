@@ -65,6 +65,22 @@ class RoomPanel(Static):
             lv.append(ListItem(Label(f"{prefix}{name}{badge}"), name=name))
         lv.append(ListItem(Label("+ new", classes="new-item"), name=NEW_ITEM))
 
+    def update_spinner(
+        self,
+        processing: set[str],
+        spinner: str,
+        selected: str | None = None,
+    ) -> None:
+        """Update only the spinner badge on existing items without rebuilding the list."""
+        lv = self.query_one("#room-list", ListView)
+        for item in lv.query(ListItem):
+            if not item.name or item.name == NEW_ITEM:
+                continue
+            label = item.query_one(Label)
+            prefix = "> " if item.name == selected else "  "
+            badge = f" [yellow]{spinner}[/yellow]" if item.name in processing else ""
+            label.update(f"{prefix}{item.name}{badge}")
+
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.item.name == NEW_ITEM:
             self.post_message(RoomNewRequested())

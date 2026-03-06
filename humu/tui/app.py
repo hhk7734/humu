@@ -148,8 +148,19 @@ class HumuApp(App):
 
     def _tick_spinner(self) -> None:
         self._spinner_frame = (self._spinner_frame + 1) % len(self._spinner_frames)
-        self._refresh_workspaces()
-        self._refresh_rooms()
+        spinner = self._spinner_frames[self._spinner_frame]
+        processing_ws = {ws for ws, _ in self._processing}
+        ws_name = self._current_workspace.name if self._current_workspace else None
+        processing_rooms = (
+            {room for ws, room in self._processing if ws == ws_name} if ws_name else set()
+        )
+        self.query_one(WorkspacePanel).update_spinner(
+            processing_ws, spinner, ws_name
+        )
+        self.query_one(RoomPanel).update_spinner(
+            processing_rooms, spinner,
+            self._current_room.name if self._current_room else None,
+        )
 
     def _refresh_agents(self) -> None:
         agent_panel = self.query_one(AgentPanel)
