@@ -8,8 +8,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.events import Key
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, OptionList
-from textual.widgets.option_list import Option
+from textual.widgets import Button, Input, Label, Static
 
 from humu.models.workspace import Workspace
 
@@ -114,24 +113,19 @@ class CreateWorkspaceScreen(ModalScreen[Workspace | None]):
     CreateWorkspaceScreen Button {
         margin: 1 1 0 0;
     }
-    CreateWorkspaceScreen #path-options {
-        height: auto;
-        max-height: 10;
-        display: none;
-        margin: 0 0 1 0;
-    }
-    CreateWorkspaceScreen #path-options.visible {
-        display: block;
-    }
-    CreateWorkspaceScreen #path-options.visible:focus-within {
-        border: solid $accent;
+    CreateWorkspaceScreen #path-suggestions {
+        height: 5;
+        margin: 0 0 0 0;
+        padding: 0 1;
+        color: $text-muted;
+        background: $surface-darken-1;
     }
     """
 
     def __init__(self) -> None:
         super().__init__()
-        self._dropdown_visible = False
         self._dirs: list[str] = []
+        self._dir_index: int = 0
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -140,31 +134,44 @@ class CreateWorkspaceScreen(ModalScreen[Workspace | None]):
             yield Input(placeholder="my-project", id="ws-name")
             yield Label("Root path:")
             yield Input(placeholder="~/projects/my-app", id="ws-path")
-            yield OptionList(id="path-options")
+            yield Static("", id="path-suggestions")
             yield Button("Create", variant="primary", id="btn-create")
             yield Button("Cancel", id="btn-cancel")
 
     def _update_suggestions(self, value: str) -> None:
-        options = self.query_one("#path-options", OptionList)
         self._dirs = _list_dirs(value)
-        options.clear_options()
-        if self._dirs:
-            for d in self._dirs:
-                options.add_option(Option(d))
-            options.add_class("visible")
-            self._dropdown_visible = True
-        else:
-            options.remove_class("visible")
-            self._dropdown_visible = False
+        self._dir_index = 0
+        self._render_suggestions()
 
-    def _accept_selection(self, value: str) -> None:
+    def _render_suggestions(self) -> None:
+        widget = self.query_one("#path-suggestions", Static)
+        if not self._dirs:
+            widget.update("")
+            return
+        window = 5
+        total = len(self._dirs)
+        start = max(0, min(self._dir_index - window // 2, total - window))
+        end = min(start + window, total)
+        lines = []
+        for i in range(start, end):
+            d = self._dirs[i]
+            if i == self._dir_index:
+                lines.append(f"[bold reverse] ❯ {d} [/bold reverse]")
+            else:
+                lines.append(f"   {d}")
+        widget.update("\n".join(lines))
+
+    def _accept_current(self) -> None:
+        if not self._dirs:
+            return
+        selected = self._dirs[self._dir_index]
         path_input = self.query_one("#ws-path", Input)
-        path_input.value = value
-        path_input.cursor_position = len(value)
+        path_input.value = selected
+        path_input.cursor_position = len(selected)
         path_input.focus()
-        options = self.query_one("#path-options", OptionList)
-        options.remove_class("visible")
-        self._dropdown_visible = False
+        self._dirs = []
+        self._dir_index = 0
+        self._render_suggestions()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "ws-path":
@@ -172,41 +179,23 @@ class CreateWorkspaceScreen(ModalScreen[Workspace | None]):
 
     def on_key(self, event: Key) -> None:
         path_input = self.query_one("#ws-path", Input)
-
-        # Only intercept when path input is focused and dropdown is visible
-        if path_input != self.focused:
+        if path_input != self.focused or not self._dirs:
             return
-        if not self._dropdown_visible:
-            if event.key == "tab" and self._dirs:
-                # Tab with no dropdown but dirs available: autocomplete first
-                event.prevent_default()
-                event.stop()
-                self._accept_selection(self._dirs[0])
-            return
-
-        options = self.query_one("#path-options", OptionList)
 
         if event.key == "down":
+            self._dir_index = (self._dir_index + 1) % len(self._dirs)
+            self._render_suggestions()
             event.prevent_default()
             event.stop()
-            options.action_cursor_down()
         elif event.key == "up":
+            self._dir_index = (self._dir_index - 1) % len(self._dirs)
+            self._render_suggestions()
             event.prevent_default()
             event.stop()
-            options.action_cursor_up()
-        elif event.key == "tab":
+        elif event.key in ("tab", "enter"):
+            self._accept_current()
             event.prevent_default()
             event.stop()
-            highlighted = options.highlighted
-            if highlighted is not None:
-                option = options.get_option_at_index(highlighted)
-                self._accept_selection(str(option.prompt))
-            elif self._dirs:
-                self._accept_selection(self._dirs[0])
-
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        if event.option_list.id == "path-options":
-            self._accept_selection(str(event.option.prompt))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-create":
