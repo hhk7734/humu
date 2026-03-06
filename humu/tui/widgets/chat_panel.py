@@ -141,15 +141,26 @@ class MessageContextMenu(ModalScreen[None]):
 
 
 class ChatInput(TextArea):
-    """TextArea that submits on Enter and inserts newline on Shift+Enter."""
+    """TextArea that submits on Enter and inserts newline on Shift+Enter.
+
+    Set ``suppress_enter = True`` while an autocomplete menu is active so
+    that Enter selects the completion instead of submitting the message.
+    """
 
     class Submitted(Message):
         def __init__(self, text: str) -> None:
             super().__init__()
             self.text = text
 
+    suppress_enter: bool = False
+
     def _on_key(self, event: Key) -> None:
         if event.key == "enter":
+            if self.suppress_enter:
+                # Prevent TextArea default (newline insertion) but let the
+                # event bubble up to ChatPanel.on_key for autocomplete selection
+                event.prevent_default()
+                return
             text = self.text.strip()
             if text:
                 self.load_text("")
@@ -431,7 +442,9 @@ class ChatPanel(Static):
             if " " not in partial and "\n" not in partial:
                 self._trigger_start = at_pos
                 self._trigger_char = "@"
-                autocomplete.show_paths(self._list_paths(partial))
+                paths = self._list_paths(partial)
+                autocomplete.show_paths(paths)
+                textarea.suppress_enter = bool(paths)
                 return
 
         # / skill trigger — only at start of text or after space/newline
@@ -443,10 +456,13 @@ class ChatPanel(Static):
                 if " " not in partial and "\n" not in partial:
                     self._trigger_start = slash_pos
                     self._trigger_char = "/"
-                    autocomplete.show_paths(self._list_skills(partial))
+                    skills = self._list_skills(partial)
+                    autocomplete.show_paths(skills)
+                    textarea.suppress_enter = bool(skills)
                     return
 
         autocomplete.clear()
+        textarea.suppress_enter = False
         self._trigger_start = -1
         self._trigger_char = ""
 
@@ -482,8 +498,14 @@ class ChatPanel(Static):
     def _apply_autocomplete(self, item: str) -> None:
         textarea = self.query_one("#chat-input", ChatInput)
         if self._trigger_start != -1:
-            # For skill entries the label includes description; keep only the name
-            insert = item.split("  ")[0] if self._trigger_char == "/" else item
+            if self._trigger_char == "/":
+                # Skill: strip description label, add trailing space
+                insert = item.split("  ")[0] + " "
+            elif self._trigger_char == "@":
+                # Path: add trailing space only for files (dirs end with "/")
+                insert = item if item.endswith("/") else item + " "
+            else:
+                insert = item
             text = textarea.text
             flat_pos = self._cursor_flat_pos(textarea)
             new_text = text[: self._trigger_start + 1] + insert + text[flat_pos:]
@@ -496,11 +518,15 @@ class ChatPanel(Static):
                     textarea.move_cursor((row, offset))
                     break
                 offset -= len(line) + 1
+        textarea = self.query_one("#chat-input", ChatInput)
+        textarea.suppress_enter = False
         self.query_one("#path-autocomplete", PathAutocomplete).clear()
         self._trigger_start = -1
         self._trigger_char = ""
 
     def on_chat_input_submitted(self, event: ChatInput.Submitted) -> None:
+        textarea = self.query_one("#chat-input", ChatInput)
+        textarea.suppress_enter = False
         self.query_one("#path-autocomplete", PathAutocomplete).clear()
         self._trigger_start = -1
         self._trigger_char = ""
@@ -512,6 +538,8 @@ class ChatPanel(Static):
             return
 
         if event.key == "escape":
+            textarea = self.query_one("#chat-input", ChatInput)
+            textarea.suppress_enter = False
             autocomplete.clear()
             self._trigger_start = -1
             self._trigger_char = ""
@@ -523,6 +551,13 @@ class ChatPanel(Static):
             autocomplete.move_up()
             event.prevent_default()
         elif event.key == "tab":
+            path = autocomplete.current_path()
+            if path:
+                self._apply_autocomplete(path)
+            event.prevent_default()
+            event.stop()
+        elif event.key == "enter":
+            # Enter selects from autocomplete (both @ and /) without submitting
             path = autocomplete.current_path()
             if path:
                 self._apply_autocomplete(path)
