@@ -19,7 +19,7 @@ This document names and describes every UI component in Humu so that developers 
 │                  │   │           │   │  │  [backend] I would  │  │   │                  │
 │                  │   │           │   │  │  recommend REST…    │  │   │                  │
 │                  │   │           │   │  └─────────────────────┘  │   │                  │
-│  + new           │   │ + new     │   │  ┌─────────────────────┐  │   │                  │
+│                  │   │           │   │  ┌─────────────────────┐  │   │                  │
 │                  │   │           │   │  │   #queue-display    │  │   │                  │
 │                  │   │           │   │  │  Queued (1) …       │  │   │                  │
 │                  │   │           │   │  ├─────────────────────┤  │   │                  │
@@ -68,7 +68,7 @@ Textual built-in bottom bar. Automatically renders the active key bindings defin
 | CSS id        | `#workspace-panel`                                |
 | Default width | 18 columns                                        |
 
-Lists all registered workspaces. The selected workspace is prefixed with `> ` and highlighted. Workspaces with an active processing task show a yellow braille spinner badge (e.g., `my-app ⠹`). The last item is always `+ new` (italic, muted) — clicking it fires `WorkspaceNewRequested`.
+Lists all registered workspaces. The selected workspace is prefixed with `> ` and highlighted. Workspaces with an active processing task show a yellow braille spinner badge (e.g., `my-app ⠹`). See [resource-management.md](resource-management.md) for CRUD operations.
 
 **Internal widgets:**
 
@@ -107,7 +107,7 @@ The `invert=True` flag on the rightmost handle means dragging **left** makes the
 | CSS id        | `#room-panel`                           |
 | Default width | 14 columns                              |
 
-Lists rooms in the currently selected workspace. Behavior mirrors `WorkspacePanel`: selected room prefixed `> `, spinner badge on processing rooms, `+ new` at the bottom.
+Lists rooms in the currently selected workspace. Behavior mirrors `WorkspacePanel`: selected room prefixed `> `, spinner badge on processing rooms.
 
 **Internal widgets:**
 
@@ -231,57 +231,9 @@ An animated placeholder appended to `#chat-messages` while an agent is processin
 
 Modal screens are pushed on top of the main layout and block interaction with panels beneath.
 
-### CreateWorkspaceScreen
+### CreateWorkspaceScreen / CreateRoomScreen / CreateAgentScreen / ConfirmScreen
 
-| Class   | `humu.tui.screens.create_workspace.CreateWorkspaceScreen` |
-| :------ | :-------------------------------------------------------- |
-| Trigger | `Ctrl+N` when focus is in `WorkspacePanel`, or fallback   |
-| Returns | `Workspace` on confirm, `None` on cancel / Escape         |
-
-Fields:
-- **Name** — workspace identifier.
-- **Root path** — filesystem path; a 5-line directory suggestion list updates as you type (prefix match then fuzzy subsequence, Up/Down to navigate, Enter/Tab to accept).
-
----
-
-### CreateRoomScreen
-
-| Class   | `humu.tui.screens.create_room.CreateRoomScreen`       |
-| :------ | :---------------------------------------------------- |
-| Trigger | `Ctrl+N` when focus is in `RoomPanel` or `ChatPanel`  |
-| Returns | `RoomCreateResult(name)` on confirm, `None` on cancel |
-
-Single field: **Room name**. A leader agent (`<room-name>-leader`) is automatically created by the app if it does not already exist.
-
----
-
-### CreateAgentScreen
-
-| Class            | `humu.tui.screens.create_agent.CreateAgentScreen` |
-| :--------------- | :------------------------------------------------ |
-| Trigger (create) | `Ctrl+N` when focus is in `AgentPanel`            |
-| Trigger (edit)   | Double-click an agent in `AgentPanel`             |
-| Returns          | `AgentConfig` on confirm, `None` on cancel        |
-
-Fields:
-- **Name** — unique identifier; disabled when editing.
-- **Description** — shown to the leader for routing decisions.
-- **System prompt** — multi-line `TextArea`.
-- **Model** — dropdown: `opus`, `sonnet`, `haiku`.
-- **Tools** — comma-separated tool names (default: `Read, Grep, Glob`).
-- **Enable streaming** — checkbox.
-- **Context usage bar** — shown in edit mode when token data is available: `Context: 12,345 / 200,000 tokens (6.2%)` plus a block-character bar.
-
----
-
-### ConfirmScreen
-
-| Class   | `humu.tui.screens.confirm.ConfirmScreen`                     |
-| :------ | :----------------------------------------------------------- |
-| Trigger | `Ctrl+D` when a workspace or room is selected                |
-| Returns | `True` (Delete pressed or Enter), `False` (Cancel or Escape) |
-
-Warning-bordered dialog with a custom message, **Delete** (error variant) and **Cancel** buttons.
+See [resource-management.md](resource-management.md) for creation, editing, and deletion workflows.
 
 ---
 
@@ -344,12 +296,10 @@ Sub-modal for registering a new marketplace. Requires a GitHub repo (`owner/repo
 
 Key Textual `Message` types used across widgets:
 
-| Message class           | Fired by         | Handled in  | Meaning                            |
-| :---------------------- | :--------------- | :---------- | :--------------------------------- |
-| `WorkspaceSelected`     | `WorkspacePanel` | `HumuApp`   | User clicked a workspace           |
-| `WorkspaceNewRequested` | `WorkspacePanel` | `HumuApp`   | User clicked `+ new` in Workspaces |
-| `RoomSelected`          | `RoomPanel`      | `HumuApp`   | User clicked a room                |
-| `RoomNewRequested`      | `RoomPanel`      | `HumuApp`   | User clicked `+ new` in Rooms      |
-| `MessageSubmitted`      | `ChatPanel`      | `HumuApp`   | User submitted a message           |
-| `AgentEditRequested`    | `AgentPanel`     | `HumuApp`   | User double-clicked an agent       |
-| `ChatInput.Submitted`   | `ChatInput`      | `ChatPanel` | Enter key in the chat input        |
+| Message class         | Fired by         | Handled in  | Meaning                      |
+| :-------------------- | :--------------- | :---------- | :--------------------------- |
+| `WorkspaceSelected`   | `WorkspacePanel` | `HumuApp`   | User clicked a workspace     |
+| `RoomSelected`        | `RoomPanel`      | `HumuApp`   | User clicked a room          |
+| `MessageSubmitted`    | `ChatPanel`      | `HumuApp`   | User submitted a message     |
+| `AgentEditRequested`  | `AgentPanel`     | `HumuApp`   | User double-clicked an agent |
+| `ChatInput.Submitted` | `ChatInput`      | `ChatPanel` | Enter key in the chat input  |

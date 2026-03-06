@@ -44,17 +44,12 @@ Right-clicking a chat message with tool steps opens a `MessageDetailScreen` moda
 
 ## Chat Commands
 
-In addition to the routing-based message flow, the following slash commands are handled directly by `HumuApp` without being forwarded to agents:
+Management commands (`/invite`, `/kick`, `/agents`, `/rooms`, `/status`) are documented in [resource-management.md](resource-management.md). Additional commands:
 
-| Command              | Description                                            |
-| :------------------- | :----------------------------------------------------- |
-| `/invite <agent>`    | Add an existing agent to the current room              |
-| `/kick <agent>`      | Remove an agent from the current room (not the leader) |
-| `/agents`            | List all defined agents with their descriptions        |
-| `/rooms`             | List all rooms in the current workspace                |
-| `/status`            | Show current workspace, path, room, leader, and agents |
-| `/compact`           | Summarize and clear conversation history               |
-| `/help`              | Show command reference                                 |
+| Command    | Description                          |
+| :--------- | :----------------------------------- |
+| `/compact` | Summarize and clear conversation history |
+| `/help`    | Show command reference               |
 
 Any unrecognised `/cmd` is treated as a skill invocation and forwarded to the router.
 
@@ -95,15 +90,15 @@ While any room is processing, a braille spinner (`⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ �
 
 Panel widths are saved to `~/.humu/last_session.json` under a `panel_widths` key whenever the user finishes a drag. On startup, `_restore_panel_widths()` reads these values and applies them. Default widths fall back to:
 
-| Panel              | Default width |
-| :----------------- | :------------ |
-| `workspace-panel`  | 18            |
-| `room-panel`       | 14            |
-| `agent-panel`      | 16            |
+| Panel             | Default width |
+| :---------------- | :------------ |
+| `workspace-panel` | 18            |
+| `room-panel`      | 14            |
+| `agent-panel`     | 16            |
 
 ## Delete Confirmation Dialog
 
-`Ctrl+D` now pushes a `ConfirmScreen` modal before deleting a workspace or room, showing a message like "Delete workspace 'my-app'? This cannot be undone." The delete operation only proceeds if the user confirms.
+See [resource-management.md](resource-management.md) for workspace and room deletion details (including what data is cleaned up).
 
 ## Token Usage Display
 
@@ -117,12 +112,7 @@ Context usage is displayed inline in each agent's chat message header rather tha
 
 ## Agent Edit (Double-Click)
 
-Double-clicking an agent name in the `AgentPanel` within 0.5 seconds emits an `AgentEditRequested` message. The app handles this with `on_agent_edit_requested()`:
-
-1. Loads the `AgentConfig` from storage.
-2. Fetches the current token usage from the router.
-3. Opens `CreateAgentScreen` in edit mode (name field is disabled; button label is "Save").
-4. If the agent has a known token count > 0, the edit dialog shows a context usage bar: `Context: 12,345 / 200,000 tokens (6.2%)` with a block-character progress bar.
+See [resource-management.md](resource-management.md) for agent edit details.
 
 ## Theme Persistence
 
@@ -169,30 +159,20 @@ The leader agent is always queried with `output_format` set to a JSON schema (`R
 
 Agent queries run in a background thread (`run_worker(..., thread=True)`) to avoid blocking the Textual event loop. UI updates (loading indicators, new messages) are dispatched back to the main thread via `call_from_thread`.
 
-## Auto-Leader Creation on Room Create
+## Auto-Leader Creation & Agent Model Display
 
-When a new room is created via `Ctrl+N` in the Room panel, Humu automatically:
-
-1. Derives the leader agent name as `<room-name>-leader`.
-2. Creates the agent with a default system prompt if it does not already exist.
-3. Saves the agent and creates the room with that leader.
-
-This ensures every room is immediately functional without manual agent setup.
-
-## Agent Model Display
-
-Each agent in the `AgentPanel` now shows its configured model name (e.g. `opus`, `sonnet`, `haiku`) below the agent name in muted text. The model information is loaded from `AgentConfig` via `storage.get_agent()` when `_refresh_agents()` is called and passed to `AgentPanel.set_agents()` as an `agent_models` dictionary.
+See [resource-management.md](resource-management.md) for room auto-leader creation and agent model display details.
 
 ## Key Bindings (Full Reference)
 
-| Key         | Action                                                        |
-| :---------- | :------------------------------------------------------------ |
-| `Ctrl+N`    | Create new item (context-aware: workspace / room / agent)     |
-| `Ctrl+D`    | Delete selected workspace or room (with confirmation dialog)  |
-| `Ctrl+R`    | Hot-reload (restarts app, reloads all humu modules)           |
-| `Ctrl+M`    | Open Plugin Manager                                           |
-| `Ctrl+C`    | Clear chat input / quit on second press within 2 s            |
-| `Escape`    | Cancel active processing task for the current room            |
-| `Tab`       | Move focus to next panel                                      |
-| `Shift+Tab` | Move focus to previous panel                                  |
-| `Enter`     | Submit message (in chat input)                                |
+| Key         | Action                                                       |
+| :---------- | :----------------------------------------------------------- |
+| `Ctrl+N`    | Create new item (context-aware: workspace / room / agent)    |
+| `Ctrl+D`    | Delete selected workspace or room (with confirmation dialog) |
+| `Ctrl+R`    | Hot-reload (restarts app, reloads all humu modules)          |
+| `Ctrl+M`    | Open Plugin Manager                                          |
+| `Ctrl+C`    | Clear chat input / quit on second press within 2 s           |
+| `Escape`    | Cancel active processing task for the current room           |
+| `Tab`       | Move focus to next panel                                     |
+| `Shift+Tab` | Move focus to previous panel                                 |
+| `Enter`     | Submit message (in chat input)                               |

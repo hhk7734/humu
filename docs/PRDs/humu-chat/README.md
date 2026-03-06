@@ -6,36 +6,12 @@ Humu is a terminal-based multi-agent chat application built with **Textual** and
 
 ## Core Concepts
 
-### Workspace
+Workspaces, rooms, and agents are the three core resources. See [resource-management.md](resource-management.md) for full CRUD details, storage paths, and deletion behavior.
 
-A workspace maps to a project root path (typically a git repo root). When agents operate in a workspace, their `cwd` is set to that path so they can read/edit files in the project.
-
-### Room
-
-A conversation space within a workspace. Each room has exactly one **leader agent** and zero or more **member agents**. Rooms maintain their own conversation history.
-
-### Agent
-
-A Claude-powered participant defined by:
-
-| Property      | Type        | Description                                         |
-| :------------ | :---------- | :-------------------------------------------------- |
-| `name`        | `str`       | Unique identifier (e.g., `backend-expert`)          |
-| `description` | `str`       | What the agent does (used by leader for routing)    |
-| `prompt`      | `str`       | System prompt defining role/personality             |
-| `model`       | `str`       | Claude model (`opus`, `sonnet`, `haiku`)            |
-| `tools`       | `list[str]` | Allowed tools (default: `["Read", "Grep", "Glob"]`) |
-| `streaming`   | `bool`      | Whether responses stream token-by-token             |
-
-All agents are **room-scoped** — one `ClaudeSDKClient` session per (agent, room) pair.
-
-### Leader Agent
-
-A special agent in each room. Reads user messages and decides:
-
-- **Direct answer** — respond to the user itself
-- **Forward** — route the message to one or more member agents
-- **Chain** — forward sequentially, passing one agent's output to the next
+- **Workspace** — maps to a project root path; agents run with `cwd` set to that path.
+- **Room** — a conversation space with one leader agent and zero or more member agents.
+- **Agent** — a Claude-powered participant with a name, prompt, model, and tools.
+- **Leader Agent** — routes user messages to the right member agents.
 
 ## Message Routing Flow
 
@@ -137,25 +113,7 @@ The leader agent uses `output_format` (JSON schema) to return structured decisio
 
 ## Persistence
 
-```
-~/.humu/
-+-- agents/                             # Agent definitions (shared)
-|   +-- leader.json
-|   +-- backend-expert.json
-|   +-- security-reviewer.json
-+-- workspaces.json                     # Workspace registry (name -> root path)
-+-- projects/
-    +-- <project>/                      # Per-project data
-        +-- rooms/
-            +-- <room>/
-                +-- agents/
-                    +-- <agent>/
-                        +-- files       # Session data, history
-```
-
-- **`~/.humu/agents/`** — agent definitions, reusable across workspaces/rooms
-- **`~/.humu/workspaces.json`** — maps workspace names to root paths
-- **`~/.humu/projects/<project>/rooms/<room>/agents/<agent>/files`** — per-agent-per-room session state
+See [resource-management.md](resource-management.md) for detailed storage paths and deletion behavior.
 
 ## Claude Agent SDK Integration
 
