@@ -96,7 +96,6 @@ Agents are **workspace-scoped** — stored under the workspace's project directo
 
 - **Trigger**: Double-click an agent name in `AgentPanel`.
 - **Screen**: `CreateAgentScreen` in edit mode (name field disabled, button label "Save").
-- When token data is available, a context usage bar is shown: `Context: 12,345 / 200,000 tokens (6.2%)`.
 
 ### Model Display
 

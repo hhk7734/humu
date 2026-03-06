@@ -284,7 +284,6 @@ class ChatMessage(Vertical):
         is_system: bool = False,
         raw: str | None = None,
         steps: list[dict] | None = None,
-        context_pct: float | None = None,
     ) -> None:
         super().__init__()
         self._sender = sender
@@ -292,14 +291,11 @@ class ChatMessage(Vertical):
         self._is_system = is_system
         self._raw = raw
         self._steps = steps or []
-        self._context_pct = context_pct
 
     def compose(self) -> ComposeResult:
         from rich.text import Text
 
         label = f"[{self._sender}]"
-        if self._context_pct is not None and self._context_pct > 0:
-            label += f" ({self._context_pct:.0f}%)"
 
         if self._sender == "error":
             yield Label(Text(label), classes="sender-error")
@@ -484,12 +480,9 @@ class ChatPanel(Static):
         is_system: bool = False,
         raw: str | None = None,
         steps: list[dict] | None = None,
-        context_pct: float | None = None,
     ) -> None:
         container = self.query_one("#chat-messages", Vertical)
-        msg = ChatMessage(
-            sender, text, is_system, raw=raw, steps=steps, context_pct=context_pct
-        )
+        msg = ChatMessage(sender, text, is_system, raw=raw, steps=steps)
         container.mount(msg)
         self.call_after_refresh(self._scroll_to_end)
 

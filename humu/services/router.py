@@ -38,55 +38,15 @@ class Router:
         self._live_steps_lock = threading.Lock()
         # Callback for system events: (room_key, agent_name, step_data) -> None
         self.on_system_event: Callable[[tuple[str, str], str, dict], None] | None = None
-        # Track latest token usage per agent: (ws_name, room_name, agent_name) -> total_tokens
-        self._agent_tokens: dict[tuple[str, str, str], int] = {}
-        self._agent_tokens_lock = threading.Lock()
 
     def _add_live_step(
         self, room_key: tuple[str, str], step: dict, agent_name: str = ""
     ) -> None:
         with self._live_steps_lock:
             self._live_steps.setdefault(room_key, []).append(step)
-        # Track token usage from task_progress steps
-        if step.get("type") == "task_progress" and "usage" in step and agent_name:
-            total = step["usage"].get("total_tokens", 0)
-            if total > 0:
-                with self._agent_tokens_lock:
-                    self._agent_tokens[(*room_key, agent_name)] = total
         # Detect system events (including compaction)
         if step.get("type") == "system" and self.on_system_event:
             self.on_system_event(room_key, agent_name, step)
-
-    def get_agent_tokens(self, ws_name: str, room_name: str, agent_name: str) -> int:
-        """Return the latest known total_tokens for an agent, or 0."""
-        with self._agent_tokens_lock:
-            return self._agent_tokens.get((ws_name, room_name, agent_name), 0)
-
-    def clear_agent_tokens(self, ws_name: str, room_name: str) -> None:
-        """Remove all cached token counts for a room."""
-        with self._agent_tokens_lock:
-            keys_to_remove = [
-                k for k in self._agent_tokens if k[0] == ws_name and k[1] == room_name
-            ]
-            for k in keys_to_remove:
-                del self._agent_tokens[k]
-
-    def _update_tokens_from_result(
-        self, room_key: tuple[str, str], agent_name: str, usage: dict | None
-    ) -> None:
-        """Extract token count from ResultMessage usage and store it."""
-        if not usage or not agent_name:
-            return
-        # Try common key names for total input tokens
-        total = (
-            usage.get("total_tokens")
-            or usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
-            or usage.get("totalTokens")
-            or 0
-        )
-        if total and total > 0:
-            with self._agent_tokens_lock:
-                self._agent_tokens[(*room_key, agent_name)] = total
 
     def get_live_steps(self, room_key: tuple[str, str]) -> list[dict]:
         with self._live_steps_lock:
@@ -253,7 +213,6 @@ When forwarding, include enough context in the "context" field for the agent to 
                     room_key, step, _name
                 ),
             )
-            self._update_tokens_from_result(room_key, leader.name, response.usage)
         except Exception as e:
             yield ChatMessage(
                 sender="error",
@@ -345,9 +304,6 @@ When forwarding, include enough context in the "context" field for the agent to 
                     ):
                         if chunk.done:
                             streaming_steps = chunk.steps
-                            self._update_tokens_from_result(
-                                room_key, target_name, chunk.usage
-                            )
                         else:
                             text_parts.append(chunk.text)
                             yield ChatMessage(sender=target_name, text=chunk.text)
@@ -370,9 +326,6 @@ When forwarding, include enough context in the "context" field for the agent to 
                             step_callback=lambda step, _name=agent_name_for_cb: (
                                 self._add_live_step(room_key, step, _name)
                             ),
-                        )
-                        self._update_tokens_from_result(
-                            room_key, target_name, agent_resp.usage
                         )
                         yield ChatMessage(
                             sender=target_name,
@@ -412,9 +365,6 @@ When forwarding, include enough context in the "context" field for the agent to 
                         step_callback=lambda step, _name=agent_name_for_cb: (
                             self._add_live_step(room_key, step, _name)
                         ),
-                    )
-                    self._update_tokens_from_result(
-                        room_key, leader.name, synthesis.usage
                     )
                     yield ChatMessage(
                         sender=room.leader,
@@ -504,9 +454,6 @@ When forwarding, include enough context in the "context" field for the agent to 
                     ):
                         if chunk.done:
                             chain_steps = chunk.steps
-                            self._update_tokens_from_result(
-                                room_key, agent_name, chunk.usage
-                            )
                         else:
                             text_parts_chain.append(chunk.text)
                             yield ChatMessage(sender=agent_name, text=chunk.text)
@@ -529,9 +476,6 @@ When forwarding, include enough context in the "context" field for the agent to 
                             step_callback=lambda step, _name=agent_name_for_cb: (
                                 self._add_live_step(room_key, step, _name)
                             ),
-                        )
-                        self._update_tokens_from_result(
-                            room_key, agent_name, agent_resp.usage
                         )
                         yield ChatMessage(
                             sender=agent_name,
@@ -571,9 +515,6 @@ When forwarding, include enough context in the "context" field for the agent to 
                         step_callback=lambda step, _name=agent_name_for_cb: (
                             self._add_live_step(room_key, step, _name)
                         ),
-                    )
-                    self._update_tokens_from_result(
-                        room_key, leader.name, synthesis.usage
                     )
                     yield ChatMessage(
                         sender=room.leader,

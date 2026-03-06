@@ -7,7 +7,6 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from humu.config import DEFAULT_CONTEXT_WINDOW, MODEL_CONTEXT_WINDOWS
 from humu.models.agent import AgentConfig
 from humu.models.room import Room
 from humu.models.workspace import Workspace
@@ -265,7 +264,6 @@ class Handler:
                 "is_system": True,
                 "raw": None,
                 "steps": [],
-                "context_pct": None,
             },
             ws.name,
             room.name,
@@ -299,7 +297,6 @@ class Handler:
                 "is_system": True,
                 "raw": None,
                 "steps": [],
-                "context_pct": None,
             },
             ws.name,
             room.name,
@@ -381,17 +378,6 @@ class Handler:
     # Internal processing
     # ------------------------------------------------------------------
 
-    def _get_context_pct(
-        self, workspace: Workspace, room: Room, agent_name: str
-    ) -> float | None:
-        tokens = self._router.get_agent_tokens(workspace.name, room.name, agent_name)
-        if tokens <= 0:
-            return None
-        agent_cfg = self._storage.get_agent(workspace, agent_name)
-        model = agent_cfg.model if agent_cfg else ""
-        ctx_size = MODEL_CONTEXT_WINDOWS.get(model, DEFAULT_CONTEXT_WINDOW)
-        return min(tokens / ctx_size * 100, 100)
-
     async def _process_message(
         self,
         workspace: Workspace,
@@ -416,7 +402,6 @@ class Handler:
                 "is_system": False,
                 "raw": None,
                 "steps": [],
-                "context_pct": None,
             },
             workspace.name,
             room.name,
@@ -438,11 +423,6 @@ class Handler:
                     )
                     continue
 
-                pct = (
-                    self._get_context_pct(workspace, room, msg.sender)
-                    if not msg.is_system and msg.sender != "you"
-                    else None
-                )
                 self._storage.append_chat_message(
                     workspace,
                     room.name,
@@ -464,7 +444,6 @@ class Handler:
                         "is_system": msg.is_system,
                         "raw": msg.raw,
                         "steps": msg.steps,
-                        "context_pct": pct,
                     },
                     workspace.name,
                     room.name,
@@ -497,7 +476,6 @@ class Handler:
                     "is_system": False,
                     "raw": None,
                     "steps": [],
-                    "context_pct": None,
                 },
                 workspace.name,
                 room.name,
@@ -527,7 +505,6 @@ class Handler:
                     "is_system": True,
                     "raw": None,
                     "steps": [],
-                    "context_pct": None,
                 },
                 workspace.name,
                 room.name,
@@ -584,7 +561,6 @@ class Handler:
                 "is_system": True,
                 "raw": None,
                 "steps": [],
-                "context_pct": None,
             },
             workspace.name,
             room.name,
@@ -630,7 +606,6 @@ class Handler:
             all_agents = [room.leader] + list(room.agents)
             for agent_name in all_agents:
                 self._storage.delete_session_id(workspace, room.name, agent_name)
-            self._router.clear_agent_tokens(workspace.name, room.name)
 
             summary_msg = {
                 "sender": "system",

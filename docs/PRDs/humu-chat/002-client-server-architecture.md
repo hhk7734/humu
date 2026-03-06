@@ -70,7 +70,7 @@ JSON messages over WebSocket. Each message has a `type` field.
 
 | Event                  | Fields                                                                            | Description                             |
 | :--------------------- | :-------------------------------------------------------------------------------- | :-------------------------------------- |
-| `message_added`        | `workspace`, `room`, `sender`, `text`, `is_system`, `raw`, `steps`, `context_pct` | New chat message                        |
+| `message_added`        | `workspace`, `room`, `sender`, `text`, `is_system`, `raw`, `steps`                | New chat message                        |
 | `stream_chunk`         | `workspace`, `room`, `sender`, `text`                                             | Streaming text chunk                    |
 | `processing_started`   | `workspace`, `room`, `sender`                                                     | Agent started processing (show loading) |
 | `processing_done`      | `workspace`, `room`                                                               | Processing finished (hide loading)      |

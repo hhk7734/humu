@@ -203,7 +203,6 @@ class HumuApp(App):
             event.get("is_system", False),
             event.get("raw"),
             event.get("steps", []),
-            context_pct=event.get("context_pct"),
         )
 
     # ------------------------------------------------------------------
@@ -764,9 +763,7 @@ class HumuApp(App):
 
                     self.run_worker(_save, thread=False)
 
-            self.push_screen(
-                CreateAgentScreen(existing=agent, total_tokens=0), _on_saved
-            )
+            self.push_screen(CreateAgentScreen(existing=agent), _on_saved)
 
         self.run_worker(_do, thread=False)
 

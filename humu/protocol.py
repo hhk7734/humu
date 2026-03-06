@@ -32,7 +32,7 @@ from __future__ import annotations
 # Server → Client events
 # ---------------------------------------------------------------------------
 
-# message_added:  workspace, room, sender, text, is_system, raw, steps, context_pct
+# message_added:  workspace, room, sender, text, is_system, raw, steps
 # stream_chunk:  workspace, room, sender, text
 # processing_started:  workspace, room, sender
 # processing_done:  workspace, room

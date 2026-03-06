@@ -96,16 +96,6 @@ Panel widths are saved to `~/.humu/last_session.json` under a `panel_widths` key
 | `room-panel`      | 14            |
 | `agent-panel`     | 16            |
 
-## Token Usage Display
-
-Context usage is displayed inline in each agent's chat message header rather than in the `AgentPanel`. When an agent message is added to the chat:
-
-- `_get_context_pct(agent_name)` is called inside `_process_message()` to compute the percentage at render time.
-- It reads `Router.get_agent_tokens(ws_name, room_name, agent_name)` and divides by the model's context window size (`MODEL_CONTEXT_WINDOWS` in `config.py`, all currently 200,000 tokens).
-- The result is passed as `context_pct` to `ChatPanel.add_message()` → `ChatMessage`, which renders `[leader] (42%)` in the sender label.
-- Only non-system, non-user messages receive a percentage; `is_system=True` and `sender == "you"` are excluded.
-- Token counts are accumulated by `Router._agent_tokens` from `TaskProgressMessage.usage` and `ResultMessage.usage` inside `AgentRunner`.
-
 ## Theme Persistence
 
 Textual's `watch_theme()` reactor is overridden to call `storage.save_theme(theme)` whenever the user changes the theme. The theme name is stored in `last_session.json["theme"]`. On mount, `storage.load_theme()` is called and applied to `self.theme` before UI is rendered.

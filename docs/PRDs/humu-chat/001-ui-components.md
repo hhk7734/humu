@@ -209,7 +209,6 @@ A vertical widget rendered for each message in `#chat-messages`. Contains:
   - **Normal agent/user** — bold, accent colour.
   - **System message** — italic, muted colour.
   - **Error** — bold, error colour.
-- When `context_pct` is provided (non-system, non-user agent messages), the label is rendered as `[agent-name] (42%)` to show how much of the agent's context window is consumed.
 - The message text below the label, indented by 2 characters.
 
 **Right-click** on any `ChatMessage` opens the `MessageDetailScreen` for that message.
