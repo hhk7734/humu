@@ -203,7 +203,9 @@ class CreateWorkspaceScreen(ModalScreen[Workspace | None]):
             name = self.query_one("#ws-name", Input).value.strip()
             path = self.query_one("#ws-path", Input).value.strip()
             if name and path:
-                self.dismiss(Workspace(name=name, root_path=str(Path(path).expanduser())))
+                self.dismiss(
+                    Workspace(name=name, root_path=str(Path(path).expanduser()))
+                )
             else:
                 self.notify("Name and path are required.", severity="error")
         else:

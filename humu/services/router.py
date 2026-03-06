@@ -42,7 +42,9 @@ class Router:
         self._agent_tokens: dict[tuple[str, str, str], int] = {}
         self._agent_tokens_lock = threading.Lock()
 
-    def _add_live_step(self, room_key: tuple[str, str], step: dict, agent_name: str = "") -> None:
+    def _add_live_step(
+        self, room_key: tuple[str, str], step: dict, agent_name: str = ""
+    ) -> None:
         with self._live_steps_lock:
             self._live_steps.setdefault(room_key, []).append(step)
         # Track token usage from task_progress steps
@@ -69,7 +71,9 @@ class Router:
             for k in keys_to_remove:
                 del self._agent_tokens[k]
 
-    def _update_tokens_from_result(self, room_key: tuple[str, str], agent_name: str, usage: dict | None) -> None:
+    def _update_tokens_from_result(
+        self, room_key: tuple[str, str], agent_name: str, usage: dict | None
+    ) -> None:
         """Extract token count from ResultMessage usage and store it."""
         if not usage or not agent_name:
             return
@@ -97,7 +101,11 @@ class Router:
         skills = self._storage.list_skills()
         if not skills:
             return ""
-        lines = ["## Available Skills", "Use these skills automatically when the user's request matches:", ""]
+        lines = [
+            "## Available Skills",
+            "Use these skills automatically when the user's request matches:",
+            "",
+        ]
         for s in skills:
             if not s.get("enabled", True):
                 continue
@@ -132,14 +140,18 @@ class Router:
         for agent_name in room.agents:
             agent = self._storage.get_agent(agent_name)
             if agent:
-                agent_descriptions.append(
-                    f"- **{agent.name}**: {agent.description}"
-                )
+                agent_descriptions.append(f"- **{agent.name}**: {agent.description}")
 
-        agents_section = "\n".join(agent_descriptions) if agent_descriptions else "No member agents available."
+        agents_section = (
+            "\n".join(agent_descriptions)
+            if agent_descriptions
+            else "No member agents available."
+        )
 
         # Skill descriptions are injected only once — when the session is first created
-        skill_section = f"\n{skill_context}\n" if (is_new_session and skill_context) else ""
+        skill_section = (
+            f"\n{skill_context}\n" if (is_new_session and skill_context) else ""
+        )
 
         prompt = f"""{leader.prompt}
 {skill_section}
@@ -212,9 +224,16 @@ When forwarding, include enough context in the "context" field for the agent to 
 
         room_key = (workspace.name, room.name)
 
-        leader_is_new = self._storage.get_session_id(workspace, room.name, leader.name) is None
+        leader_is_new = (
+            self._storage.get_session_id(workspace, room.name, leader.name) is None
+        )
         leader_prompt = self._build_leader_prompt(
-            leader, room, skill_context, skill_name, skill_body, is_new_session=leader_is_new
+            leader,
+            room,
+            skill_context,
+            skill_name,
+            skill_body,
+            is_new_session=leader_is_new,
         )
 
         self._clear_live_steps(room_key)
@@ -228,7 +247,9 @@ When forwarding, include enough context in the "context" field for the agent to 
                 user_message,
                 output_format={"type": "json_schema", "schema": ROUTING_SCHEMA},
                 system_prompt_override=leader_prompt,
-                step_callback=lambda step, _name=agent_name_for_cb: self._add_live_step(room_key, step, _name),
+                step_callback=lambda step, _name=agent_name_for_cb: self._add_live_step(
+                    room_key, step, _name
+                ),
             )
             self._update_tokens_from_result(room_key, leader.name, response.usage)
         except Exception as e:
@@ -292,8 +313,17 @@ When forwarding, include enough context in the "context" field for the agent to 
                     continue
 
                 forward_prompt = f"The leader agent forwarded the following to you.\n\nOriginal user message: {user_message}\n\nLeader's context: {context}"
-                agent_is_new = self._storage.get_session_id(workspace, room.name, target_name) is None
-                agent_system = self._build_agent_prompt(agent, skill_context, skill_name, skill_body, is_new_session=agent_is_new)
+                agent_is_new = (
+                    self._storage.get_session_id(workspace, room.name, target_name)
+                    is None
+                )
+                agent_system = self._build_agent_prompt(
+                    agent,
+                    skill_context,
+                    skill_name,
+                    skill_body,
+                    is_new_session=agent_is_new,
+                )
 
                 self._clear_live_steps(room_key)
                 agent_name_for_cb = target_name
@@ -302,13 +332,20 @@ When forwarding, include enough context in the "context" field for the agent to 
                     text_parts: list[str] = []
                     streaming_steps: list[dict] = []
                     async for chunk in self._runner.query_streaming(
-                        agent, workspace, room.name, forward_prompt,
+                        agent,
+                        workspace,
+                        room.name,
+                        forward_prompt,
                         system_prompt_override=agent_system,
-                        step_callback=lambda step, _name=agent_name_for_cb: self._add_live_step(room_key, step, _name),
+                        step_callback=lambda step, _name=agent_name_for_cb: (
+                            self._add_live_step(room_key, step, _name)
+                        ),
                     ):
                         if chunk.done:
                             streaming_steps = chunk.steps
-                            self._update_tokens_from_result(room_key, target_name, chunk.usage)
+                            self._update_tokens_from_result(
+                                room_key, target_name, chunk.usage
+                            )
                         else:
                             text_parts.append(chunk.text)
                             yield ChatMessage(sender=target_name, text=chunk.text)
@@ -323,11 +360,18 @@ When forwarding, include enough context in the "context" field for the agent to 
                 else:
                     try:
                         agent_resp = await self._runner.query(
-                            agent, workspace, room.name, forward_prompt,
+                            agent,
+                            workspace,
+                            room.name,
+                            forward_prompt,
                             system_prompt_override=agent_system,
-                            step_callback=lambda step, _name=agent_name_for_cb: self._add_live_step(room_key, step, _name),
+                            step_callback=lambda step, _name=agent_name_for_cb: (
+                                self._add_live_step(room_key, step, _name)
+                            ),
                         )
-                        self._update_tokens_from_result(room_key, target_name, agent_resp.usage)
+                        self._update_tokens_from_result(
+                            room_key, target_name, agent_resp.usage
+                        )
                         yield ChatMessage(
                             sender=target_name,
                             text=agent_resp.text,
@@ -346,9 +390,7 @@ When forwarding, include enough context in the "context" field for the agent to 
                 agent_responses.append((target_name, full_text))
 
             if agent_responses:
-                summary_parts = [
-                    f"[{name}]: {text}" for name, text in agent_responses
-                ]
+                summary_parts = [f"[{name}]: {text}" for name, text in agent_responses]
                 synthesis_prompt = (
                     f"The user asked: {user_message}\n\n"
                     f"Here are the responses from the agents you forwarded to:\n\n"
@@ -365,9 +407,13 @@ When forwarding, include enough context in the "context" field for the agent to 
                         workspace,
                         room.name,
                         synthesis_prompt,
-                        step_callback=lambda step, _name=agent_name_for_cb: self._add_live_step(room_key, step, _name),
+                        step_callback=lambda step, _name=agent_name_for_cb: (
+                            self._add_live_step(room_key, step, _name)
+                        ),
                     )
-                    self._update_tokens_from_result(room_key, leader.name, synthesis.usage)
+                    self._update_tokens_from_result(
+                        room_key, leader.name, synthesis.usage
+                    )
                     yield ChatMessage(
                         sender=room.leader,
                         text=synthesis.text,
@@ -426,8 +472,17 @@ When forwarding, include enough context in the "context" field for the agent to 
                     chain_prompt += (
                         f"\n\nOutput from previous agent:\n{previous_output}"
                     )
-                chain_is_new = self._storage.get_session_id(workspace, room.name, agent_name) is None
-                chain_agent_system = self._build_agent_prompt(agent, skill_context, skill_name, skill_body, is_new_session=chain_is_new)
+                chain_is_new = (
+                    self._storage.get_session_id(workspace, room.name, agent_name)
+                    is None
+                )
+                chain_agent_system = self._build_agent_prompt(
+                    agent,
+                    skill_context,
+                    skill_name,
+                    skill_body,
+                    is_new_session=chain_is_new,
+                )
 
                 self._clear_live_steps(room_key)
                 agent_name_for_cb = agent_name
@@ -436,13 +491,20 @@ When forwarding, include enough context in the "context" field for the agent to 
                     text_parts_chain: list[str] = []
                     chain_steps: list[dict] = []
                     async for chunk in self._runner.query_streaming(
-                        agent, workspace, room.name, chain_prompt,
+                        agent,
+                        workspace,
+                        room.name,
+                        chain_prompt,
                         system_prompt_override=chain_agent_system,
-                        step_callback=lambda step, _name=agent_name_for_cb: self._add_live_step(room_key, step, _name),
+                        step_callback=lambda step, _name=agent_name_for_cb: (
+                            self._add_live_step(room_key, step, _name)
+                        ),
                     ):
                         if chunk.done:
                             chain_steps = chunk.steps
-                            self._update_tokens_from_result(room_key, agent_name, chunk.usage)
+                            self._update_tokens_from_result(
+                                room_key, agent_name, chunk.usage
+                            )
                         else:
                             text_parts_chain.append(chunk.text)
                             yield ChatMessage(sender=agent_name, text=chunk.text)
@@ -457,11 +519,18 @@ When forwarding, include enough context in the "context" field for the agent to 
                 else:
                     try:
                         agent_resp = await self._runner.query(
-                            agent, workspace, room.name, chain_prompt,
+                            agent,
+                            workspace,
+                            room.name,
+                            chain_prompt,
                             system_prompt_override=chain_agent_system,
-                            step_callback=lambda step, _name=agent_name_for_cb: self._add_live_step(room_key, step, _name),
+                            step_callback=lambda step, _name=agent_name_for_cb: (
+                                self._add_live_step(room_key, step, _name)
+                            ),
                         )
-                        self._update_tokens_from_result(room_key, agent_name, agent_resp.usage)
+                        self._update_tokens_from_result(
+                            room_key, agent_name, agent_resp.usage
+                        )
                         yield ChatMessage(
                             sender=agent_name,
                             text=agent_resp.text,
@@ -480,9 +549,7 @@ When forwarding, include enough context in the "context" field for the agent to 
                 agent_results.append((agent_name, previous_output))
 
             if agent_results:
-                summary_parts = [
-                    f"[{name}]: {text}" for name, text in agent_results
-                ]
+                summary_parts = [f"[{name}]: {text}" for name, text in agent_results]
                 synthesis_prompt = (
                     f"The user asked: {user_message}\n\n"
                     f"Here are the chained responses from agents:\n\n"
@@ -499,9 +566,13 @@ When forwarding, include enough context in the "context" field for the agent to 
                         workspace,
                         room.name,
                         synthesis_prompt,
-                        step_callback=lambda step, _name=agent_name_for_cb: self._add_live_step(room_key, step, _name),
+                        step_callback=lambda step, _name=agent_name_for_cb: (
+                            self._add_live_step(room_key, step, _name)
+                        ),
                     )
-                    self._update_tokens_from_result(room_key, leader.name, synthesis.usage)
+                    self._update_tokens_from_result(
+                        room_key, leader.name, synthesis.usage
+                    )
                     yield ChatMessage(
                         sender=room.leader,
                         text=synthesis.text,

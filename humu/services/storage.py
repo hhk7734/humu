@@ -7,8 +7,13 @@ import shutil
 import subprocess
 
 from humu.config import (
-    AGENTS_DIR, HUMU_HOME, MARKETPLACES_FILE, PLUGINS_DIR, PROJECTS_DIR,
-    SKILLS_CONFIG_FILE, WORKSPACES_FILE,
+    AGENTS_DIR,
+    HUMU_HOME,
+    MARKETPLACES_FILE,
+    PLUGINS_DIR,
+    PROJECTS_DIR,
+    SKILLS_CONFIG_FILE,
+    WORKSPACES_FILE,
 )
 
 LAST_SESSION_FILE = HUMU_HOME / "last_session.json"
@@ -119,13 +124,7 @@ class Storage:
     def agent_room_dir(
         self, workspace: Workspace, room_name: str, agent_name: str
     ) -> Path:
-        d = (
-            self._project_dir(workspace)
-            / "rooms"
-            / room_name
-            / "agents"
-            / agent_name
-        )
+        d = self._project_dir(workspace) / "rooms" / room_name / "agents" / agent_name
         d.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -152,9 +151,7 @@ class Storage:
 
     # --- Chat history ---
 
-    def load_chat_history(
-        self, workspace: Workspace, room_name: str
-    ) -> list[dict]:
+    def load_chat_history(self, workspace: Workspace, room_name: str) -> list[dict]:
         d = self._project_dir(workspace) / "rooms" / room_name
         history_file = d / "history.json"
         if history_file.exists():
@@ -206,12 +203,16 @@ class Storage:
             return []
 
     def add_marketplace(self, marketplace_id: str, repo: str) -> None:
-        marketplaces = [m for m in self.list_marketplaces() if m["id"] != marketplace_id]
+        marketplaces = [
+            m for m in self.list_marketplaces() if m["id"] != marketplace_id
+        ]
         marketplaces.append({"id": marketplace_id, "repo": repo})
         MARKETPLACES_FILE.write_text(json.dumps(marketplaces, indent=2))
 
     def remove_marketplace(self, marketplace_id: str) -> None:
-        marketplaces = [m for m in self.list_marketplaces() if m["id"] != marketplace_id]
+        marketplaces = [
+            m for m in self.list_marketplaces() if m["id"] != marketplace_id
+        ]
         MARKETPLACES_FILE.write_text(json.dumps(marketplaces, indent=2))
 
     # --- Plugins ---
@@ -232,8 +233,16 @@ class Storage:
             return False, f"Already installed at {dest}"
         try:
             result = subprocess.run(
-                ["git", "clone", "--depth=1", f"https://github.com/{repo}.git", str(dest)],
-                capture_output=True, text=True, timeout=60,
+                [
+                    "git",
+                    "clone",
+                    "--depth=1",
+                    f"https://github.com/{repo}.git",
+                    str(dest),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=60,
             )
             if result.returncode == 0:
                 return True, f"Installed {repo}"
@@ -251,7 +260,9 @@ class Storage:
         try:
             result = subprocess.run(
                 ["git", "-C", str(dest), "pull", "--ff-only"],
-                capture_output=True, text=True, timeout=60,
+                capture_output=True,
+                text=True,
+                timeout=60,
             )
             if result.returncode == 0:
                 return True, (result.stdout or "Already up to date").strip()
@@ -347,16 +358,20 @@ class Storage:
         results: list[dict] = []
         for skill_md in PLUGINS_DIR.glob("*/skills/*/SKILL.md"):
             try:
-                marketplace = skill_md.parts[list(skill_md.parts).index(PLUGINS_DIR.name) + 1]
+                marketplace = skill_md.parts[
+                    list(skill_md.parts).index(PLUGINS_DIR.name) + 1
+                ]
                 skill_dir_name = skill_md.parent.name
                 full_name = f"{marketplace}:{skill_dir_name}"
                 _, description = self._parse_skill_frontmatter(skill_md.read_text())
-                results.append({
-                    "name": full_name,
-                    "description": description,
-                    "marketplace": marketplace,
-                    "enabled": full_name not in disabled,
-                })
+                results.append(
+                    {
+                        "name": full_name,
+                        "description": description,
+                        "marketplace": marketplace,
+                        "enabled": full_name not in disabled,
+                    }
+                )
             except Exception:
                 pass
         return sorted(results, key=lambda s: s["name"])
@@ -368,7 +383,9 @@ class Storage:
         """
         if ":" in name:
             marketplace_id, skill_dir_name = name.split(":", 1)
-            skill_md = PLUGINS_DIR / marketplace_id / "skills" / skill_dir_name / "SKILL.md"
+            skill_md = (
+                PLUGINS_DIR / marketplace_id / "skills" / skill_dir_name / "SKILL.md"
+            )
             try:
                 return self._parse_skill_body(skill_md.read_text())
             except Exception:

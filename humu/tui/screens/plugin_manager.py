@@ -68,7 +68,9 @@ class AddMarketplaceScreen(ModalScreen[tuple[str, str] | None]):
             yield Label("GitHub repo (e.g. hhk7734/hhk7734)")
             yield Input(placeholder="owner/repo", id="input-repo")
             with Vertical(id="id-section"):
-                yield Label("ID conflicts with an existing marketplace. Enter a different ID:")
+                yield Label(
+                    "ID conflicts with an existing marketplace. Enter a different ID:"
+                )
                 yield Input(placeholder="marketplace-id", id="input-id")
             with Horizontal(id="actions"):
                 yield Button("Add", variant="primary", id="btn-add")
@@ -99,7 +101,9 @@ class AddMarketplaceScreen(ModalScreen[tuple[str, str] | None]):
             if "visible" in id_section.classes:
                 mid = self.query_one("#input-id", Input).value.strip()
                 if not mid:
-                    self.notify("ID is required to resolve the conflict.", severity="warning")
+                    self.notify(
+                        "ID is required to resolve the conflict.", severity="warning"
+                    )
                     return
             else:
                 mid = auto_id
@@ -258,12 +262,18 @@ class PluginManagerScreen(ModalScreen[None]):
                     yield Label("Marketplaces", classes="pane-title")
                     yield ListView(id="marketplace-list")
                     with Horizontal(id="left-actions"):
-                        yield Button("+ Add", id="btn-add-marketplace", variant="primary")
-                        yield Button("- Remove", id="btn-remove-marketplace", variant="error")
+                        yield Button(
+                            "+ Add", id="btn-add-marketplace", variant="primary"
+                        )
+                        yield Button(
+                            "- Remove", id="btn-remove-marketplace", variant="error"
+                        )
                 with Vertical(id="right-pane"):
                     yield Label("Plugin Detail", classes="pane-title", id="right-title")
                     with VerticalScroll(id="plugin-scroll"):
-                        yield Static("Select a marketplace on the left.", id="placeholder")
+                        yield Static(
+                            "Select a marketplace on the left.", id="placeholder"
+                        )
                     with Horizontal(id="plugin-actions"):
                         yield Button("Install", id="btn-install", variant="primary")
                         yield Button("Update", id="btn-update")
@@ -280,10 +290,15 @@ class PluginManagerScreen(ModalScreen[None]):
         for m in self._storage.list_marketplaces():
             installed = self._storage.is_plugin_installed(m["id"])
             badge = " [green]✓[/green]" if installed else ""
-            lv.append(ListItem(
-                Static(f"{m['id']}{badge}\n[dim]{m['repo']}[/dim]", classes="marketplace-item"),
-                name=m["id"],
-            ))
+            lv.append(
+                ListItem(
+                    Static(
+                        f"{m['id']}{badge}\n[dim]{m['repo']}[/dim]",
+                        classes="marketplace-item",
+                    ),
+                    name=m["id"],
+                )
+            )
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         marketplace_id = event.item.name
@@ -306,7 +321,11 @@ class PluginManagerScreen(ModalScreen[None]):
         scroll.remove_children()
 
         if not installed:
-            scroll.mount(Static(f"Not installed.\nPress [bold]Install[/bold] to clone from github.com/{repo}"))
+            scroll.mount(
+                Static(
+                    f"Not installed.\nPress [bold]Install[/bold] to clone from github.com/{repo}"
+                )
+            )
             return
 
         # Show skills
@@ -325,7 +344,9 @@ class PluginManagerScreen(ModalScreen[None]):
             skill_md = skill_dir / "SKILL.md"
             _, description = "", ""
             if skill_md.exists():
-                _, description = self._storage._parse_skill_frontmatter(skill_md.read_text())
+                _, description = self._storage._parse_skill_frontmatter(
+                    skill_md.read_text()
+                )
             full_name = f"{mid}:{skill_dir.name}"
             enabled = self._storage.is_skill_enabled(full_name)
             # CSS IDs cannot contain ":" — encode it as "_COLON_"
@@ -343,8 +364,12 @@ class PluginManagerScreen(ModalScreen[None]):
                 block.mount(Static(description, classes="skill-desc"))
 
     def _update_plugin_buttons(self) -> None:
-        installed = self._selected and self._storage.is_plugin_installed(self._selected["id"])
-        self.query_one("#btn-install", Button).disabled = not self._selected or bool(installed)
+        installed = self._selected and self._storage.is_plugin_installed(
+            self._selected["id"]
+        )
+        self.query_one("#btn-install", Button).disabled = not self._selected or bool(
+            installed
+        )
         self.query_one("#btn-update", Button).disabled = not installed
         self.query_one("#btn-uninstall", Button).disabled = not installed
 
@@ -353,7 +378,9 @@ class PluginManagerScreen(ModalScreen[None]):
 
         if btn_id == "btn-add-marketplace":
             existing_ids = {m["id"] for m in self._storage.list_marketplaces()}
-            self.app.push_screen(AddMarketplaceScreen(existing_ids), self._on_marketplace_added)
+            self.app.push_screen(
+                AddMarketplaceScreen(existing_ids), self._on_marketplace_added
+            )
 
         elif btn_id == "btn-remove-marketplace":
             if self._selected:
@@ -364,14 +391,20 @@ class PluginManagerScreen(ModalScreen[None]):
                 self.query_one("#right-title", Label).update("Plugin Detail")
                 scroll = self.query_one("#plugin-scroll", VerticalScroll)
                 scroll.remove_children()
-                scroll.mount(Static("Select a marketplace on the left.", id="placeholder"))
+                scroll.mount(
+                    Static("Select a marketplace on the left.", id="placeholder")
+                )
                 self._set_status(f"Marketplace removed.")
 
         elif btn_id == "btn-install":
             if self._selected:
                 self._set_status(f"Installing {self._selected['repo']} ...")
-                ok, msg = self._storage.install_plugin(self._selected["id"], self._selected["repo"])
-                self._set_status(f"{'[green]' if ok else '[red]'}{msg}{'[/green]' if ok else '[/red]'}")
+                ok, msg = self._storage.install_plugin(
+                    self._selected["id"], self._selected["repo"]
+                )
+                self._set_status(
+                    f"{'[green]' if ok else '[red]'}{msg}{'[/green]' if ok else '[/red]'}"
+                )
                 if ok:
                     self._refresh_marketplace_list()
                     self._show_plugin_detail(self._selected)
@@ -381,14 +414,18 @@ class PluginManagerScreen(ModalScreen[None]):
             if self._selected:
                 self._set_status(f"Updating {self._selected['id']} ...")
                 ok, msg = self._storage.update_plugin(self._selected["id"])
-                self._set_status(f"{'[green]' if ok else '[red]'}{msg}{'[/green]' if ok else '[/red]'}")
+                self._set_status(
+                    f"{'[green]' if ok else '[red]'}{msg}{'[/green]' if ok else '[/red]'}"
+                )
                 if ok:
                     self._show_plugin_detail(self._selected)
 
         elif btn_id == "btn-uninstall":
             if self._selected:
                 ok, msg = self._storage.uninstall_plugin(self._selected["id"])
-                self._set_status(f"{'[green]' if ok else '[red]'}{msg}{'[/green]' if ok else '[/red]'}")
+                self._set_status(
+                    f"{'[green]' if ok else '[red]'}{msg}{'[/green]' if ok else '[/red]'}"
+                )
                 if ok:
                     self._refresh_marketplace_list()
                     self._show_plugin_detail(self._selected)
@@ -401,7 +438,9 @@ class PluginManagerScreen(ModalScreen[None]):
             self._refresh_marketplace_list()
             self._set_status(f"Installing {repo} ...")
             ok, msg = self._storage.install_plugin(mid, repo)
-            self._set_status(f"{'[green]' if ok else '[red]'}{msg}{'[/green]' if ok else '[/red]'}")
+            self._set_status(
+                f"{'[green]' if ok else '[red]'}{msg}{'[/green]' if ok else '[/red]'}"
+            )
             if ok:
                 self._refresh_marketplace_list()
                 # Select the newly added marketplace
@@ -421,7 +460,7 @@ class PluginManagerScreen(ModalScreen[None]):
         cid = event.switch.id or ""
         if not cid.startswith("skill-toggle-"):
             return
-        full_name = cid[len("skill-toggle-"):].replace("_COLON_", ":")
+        full_name = cid[len("skill-toggle-") :].replace("_COLON_", ":")
         if event.value:
             self._storage.enable_skill(full_name)
             self._set_status(f"Skill '/{full_name}' enabled.")

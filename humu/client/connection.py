@@ -45,7 +45,9 @@ class Connection:
     async def connect(self) -> None:
         """Connect to the Humu server via Unix domain socket."""
         self._ws = await unix_connect(
-            uri="ws://localhost/", path=str(SOCKET_PATH), max_size=64 * 1024 * 1024,
+            uri="ws://localhost/",
+            path=str(SOCKET_PATH),
+            max_size=64 * 1024 * 1024,
         )
         self._reader_task = asyncio.create_task(self._read_loop())
         logger.info("Connected to server at %s", SOCKET_PATH)

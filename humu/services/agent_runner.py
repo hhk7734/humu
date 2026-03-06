@@ -58,9 +58,7 @@ class AgentRunner:
         output_format: dict | None = None,
         system_prompt_override: str | None = None,
     ) -> ClaudeAgentOptions:
-        session_id = self._storage.get_session_id(
-            workspace, room_name, agent.name
-        )
+        session_id = self._storage.get_session_id(workspace, room_name, agent.name)
 
         opts = ClaudeAgentOptions(
             system_prompt=system_prompt_override or agent.prompt,
@@ -116,18 +114,34 @@ class AgentRunner:
 
             async for message in client.receive_response():
                 if isinstance(message, SystemMessage):
-                    s: dict = {"type": "system", "subtype": message.subtype, "data": message.data}
+                    s: dict = {
+                        "type": "system",
+                        "subtype": message.subtype,
+                        "data": message.data,
+                    }
                     steps.append(s)
                     if step_callback:
                         step_callback(s)
                 if isinstance(message, TaskProgressMessage):
-                    step: dict = {"type": "task_progress", "description": message.description}
+                    step: dict = {
+                        "type": "task_progress",
+                        "description": message.description,
+                    }
                     if message.last_tool_name:
                         step["tool"] = message.last_tool_name
                     usage_raw = message.usage
-                    logger.debug("Agent %s TaskProgress usage raw: %r (type=%s)", agent.name, usage_raw, type(usage_raw).__name__)
+                    logger.debug(
+                        "Agent %s TaskProgress usage raw: %r (type=%s)",
+                        agent.name,
+                        usage_raw,
+                        type(usage_raw).__name__,
+                    )
                     if usage_raw:
-                        total = usage_raw.get("total_tokens", 0) if isinstance(usage_raw, dict) else getattr(usage_raw, "total_tokens", 0)
+                        total = (
+                            usage_raw.get("total_tokens", 0)
+                            if isinstance(usage_raw, dict)
+                            else getattr(usage_raw, "total_tokens", 0)
+                        )
                         step["usage"] = {"total_tokens": total}
                     steps.append(step)
                     if step_callback:
@@ -142,7 +156,12 @@ class AgentRunner:
                             if step_callback:
                                 step_callback(s)
                         elif isinstance(block, ToolUseBlock):
-                            s = {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
+                            s = {
+                                "type": "tool_use",
+                                "id": block.id,
+                                "name": block.name,
+                                "input": block.input,
+                            }
                             steps.append(s)
                             if step_callback:
                                 step_callback(s)
@@ -150,7 +169,9 @@ class AgentRunner:
                             content = block.content
                             if isinstance(content, list):
                                 content = "\n".join(
-                                    c.get("text", str(c)) if isinstance(c, dict) else str(c)
+                                    c.get("text", str(c))
+                                    if isinstance(c, dict)
+                                    else str(c)
                                     for c in content
                                 )
                             s = {
@@ -169,7 +190,9 @@ class AgentRunner:
                     result_text = message.result
                     structured = message.structured_output
                     result_usage = message.usage
-                    logger.debug("Agent %s ResultMessage usage: %r", agent.name, result_usage)
+                    logger.debug(
+                        "Agent %s ResultMessage usage: %r", agent.name, result_usage
+                    )
 
             await client.disconnect()
             del self._clients[key]
@@ -182,6 +205,7 @@ class AgentRunner:
             # Prefer structured output, then result, then assembled text blocks
             if structured is not None:
                 import json
+
                 if isinstance(structured, str):
                     final_text = structured
                 else:
@@ -235,18 +259,34 @@ class AgentRunner:
 
             async for message in client.receive_response():
                 if isinstance(message, SystemMessage):
-                    s_sys: dict = {"type": "system", "subtype": message.subtype, "data": message.data}
+                    s_sys: dict = {
+                        "type": "system",
+                        "subtype": message.subtype,
+                        "data": message.data,
+                    }
                     steps.append(s_sys)
                     if step_callback:
                         step_callback(s_sys)
                 if isinstance(message, TaskProgressMessage):
-                    s2: dict = {"type": "task_progress", "description": message.description}
+                    s2: dict = {
+                        "type": "task_progress",
+                        "description": message.description,
+                    }
                     if message.last_tool_name:
                         s2["tool"] = message.last_tool_name
                     usage_raw2 = message.usage
-                    logger.debug("Agent %s streaming TaskProgress usage raw: %r (type=%s)", agent.name, usage_raw2, type(usage_raw2).__name__)
+                    logger.debug(
+                        "Agent %s streaming TaskProgress usage raw: %r (type=%s)",
+                        agent.name,
+                        usage_raw2,
+                        type(usage_raw2).__name__,
+                    )
                     if usage_raw2:
-                        total2 = usage_raw2.get("total_tokens", 0) if isinstance(usage_raw2, dict) else getattr(usage_raw2, "total_tokens", 0)
+                        total2 = (
+                            usage_raw2.get("total_tokens", 0)
+                            if isinstance(usage_raw2, dict)
+                            else getattr(usage_raw2, "total_tokens", 0)
+                        )
                         s2["usage"] = {"total_tokens": total2}
                     steps.append(s2)
                     if step_callback:
@@ -259,7 +299,12 @@ class AgentRunner:
                             if step_callback:
                                 step_callback(s2)
                         elif isinstance(block, ToolUseBlock):
-                            s2 = {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
+                            s2 = {
+                                "type": "tool_use",
+                                "id": block.id,
+                                "name": block.name,
+                                "input": block.input,
+                            }
                             steps.append(s2)
                             if step_callback:
                                 step_callback(s2)
@@ -267,7 +312,9 @@ class AgentRunner:
                             content = block.content
                             if isinstance(content, list):
                                 content = "\n".join(
-                                    c.get("text", str(c)) if isinstance(c, dict) else str(c)
+                                    c.get("text", str(c))
+                                    if isinstance(c, dict)
+                                    else str(c)
                                     for c in content
                                 )
                             s2 = {
@@ -284,7 +331,11 @@ class AgentRunner:
                 if isinstance(message, ResultMessage):
                     session_id = getattr(message, "session_id", None)
                     result_usage = message.usage
-                    logger.debug("Agent %s streaming ResultMessage usage: %r", agent.name, result_usage)
+                    logger.debug(
+                        "Agent %s streaming ResultMessage usage: %r",
+                        agent.name,
+                        result_usage,
+                    )
 
             if session_id:
                 self._storage.save_session_id(

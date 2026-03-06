@@ -74,11 +74,20 @@ class HumuApp(App):
         yield Header()
         with Horizontal(id="main-layout"):
             yield WorkspacePanel(id="workspace-panel")
-            yield ResizeHandle("workspace-panel", min_width=10, save_callback=self._save_panel_width)
+            yield ResizeHandle(
+                "workspace-panel", min_width=10, save_callback=self._save_panel_width
+            )
             yield RoomPanel(id="room-panel")
-            yield ResizeHandle("room-panel", min_width=8, save_callback=self._save_panel_width)
+            yield ResizeHandle(
+                "room-panel", min_width=8, save_callback=self._save_panel_width
+            )
             yield ChatPanel(get_skills=lambda: self._cached_skills)
-            yield ResizeHandle("agent-panel", min_width=10, invert=True, save_callback=self._save_panel_width)
+            yield ResizeHandle(
+                "agent-panel",
+                min_width=10,
+                invert=True,
+                save_callback=self._save_panel_width,
+            )
             yield AgentPanel(id="agent-panel")
         yield Footer()
 
@@ -162,7 +171,9 @@ class HumuApp(App):
                 self.query_one(ChatPanel).hide_loading()
         elif etype == "queue_updated":
             if self._is_viewing_key(ws, room):
-                self.query_one(ChatPanel).set_pending_queue(event.get("pending_messages", []))
+                self.query_one(ChatPanel).set_pending_queue(
+                    event.get("pending_messages", [])
+                )
         elif etype == "workspace_list":
             self._apply_workspace_list(event["workspaces"])
         elif etype == "room_list":
@@ -231,7 +242,9 @@ class HumuApp(App):
     async def _select_room(self, name: str) -> None:
         if not self._current_workspace:
             return
-        reply = await self._conn.send({"type": "list_rooms", "workspace": self._current_workspace.name})
+        reply = await self._conn.send(
+            {"type": "list_rooms", "workspace": self._current_workspace.name}
+        )
         if reply and reply.get("type") == "room_list":
             self._apply_room_list(reply["rooms"])
         for r in (reply or {}).get("rooms", []):
@@ -246,20 +259,24 @@ class HumuApp(App):
     def _subscribe_current_room(self) -> None:
         if self._current_workspace and self._current_room:
             asyncio.ensure_future(
-                self._conn.send_nowait({
-                    "type": "subscribe_room",
-                    "workspace": self._current_workspace.name,
-                    "room": self._current_room.name,
-                })
+                self._conn.send_nowait(
+                    {
+                        "type": "subscribe_room",
+                        "workspace": self._current_workspace.name,
+                        "room": self._current_room.name,
+                    }
+                )
             )
 
     def _unsubscribe_room(self, ws_name: str, room_name: str) -> None:
         asyncio.ensure_future(
-            self._conn.send_nowait({
-                "type": "unsubscribe_room",
-                "workspace": ws_name,
-                "room": room_name,
-            })
+            self._conn.send_nowait(
+                {
+                    "type": "unsubscribe_room",
+                    "workspace": ws_name,
+                    "room": room_name,
+                }
+            )
         )
 
     # ------------------------------------------------------------------
@@ -271,7 +288,9 @@ class HumuApp(App):
         selected = self._current_workspace.name if self._current_workspace else None
         processing_ws = {ws for ws, _ in self._processing}
         spinner = self._spinner_frames[self._spinner_frame]
-        self.query_one(WorkspacePanel).set_workspaces(names, selected, processing_ws, spinner)
+        self.query_one(WorkspacePanel).set_workspaces(
+            names, selected, processing_ws, spinner
+        )
 
     def _apply_room_list(self, rooms: list[dict]) -> None:
         names = [r["name"] for r in rooms]
@@ -301,7 +320,9 @@ class HumuApp(App):
         if not self._current_workspace:
             self.query_one(RoomPanel).set_rooms([])
             return
-        reply = await self._conn.send({"type": "list_rooms", "workspace": self._current_workspace.name})
+        reply = await self._conn.send(
+            {"type": "list_rooms", "workspace": self._current_workspace.name}
+        )
         if reply and reply.get("type") == "room_list":
             self._apply_room_list(reply["rooms"])
 
@@ -329,11 +350,13 @@ class HumuApp(App):
             return
         chat_panel.set_workspace_path(self._current_workspace.root_path)
         chat_panel.set_room(self._current_room.name)
-        reply = await self._conn.send({
-            "type": "get_chat_history",
-            "workspace": self._current_workspace.name,
-            "room": self._current_room.name,
-        })
+        reply = await self._conn.send(
+            {
+                "type": "get_chat_history",
+                "workspace": self._current_workspace.name,
+                "room": self._current_room.name,
+            }
+        )
         if reply and reply.get("type") == "chat_history":
             chat_panel.load_history(reply["messages"])
         # Re-show loading if room is processing
@@ -367,13 +390,14 @@ class HumuApp(App):
         processing_ws = {ws for ws, _ in self._processing}
         ws_name = self._current_workspace.name if self._current_workspace else None
         processing_rooms = (
-            {room for ws, room in self._processing if ws == ws_name} if ws_name else set()
+            {room for ws, room in self._processing if ws == ws_name}
+            if ws_name
+            else set()
         )
-        self.query_one(WorkspacePanel).update_spinner(
-            processing_ws, spinner, ws_name
-        )
+        self.query_one(WorkspacePanel).update_spinner(processing_ws, spinner, ws_name)
         self.query_one(RoomPanel).update_spinner(
-            processing_rooms, spinner,
+            processing_rooms,
+            spinner,
             self._current_room.name if self._current_room else None,
         )
 
@@ -405,7 +429,9 @@ class HumuApp(App):
     def on_workspace_selected(self, event: WorkspaceSelected) -> None:
         # Unsubscribe old room
         if self._current_workspace and self._current_room:
-            self._unsubscribe_room(self._current_workspace.name, self._current_room.name)
+            self._unsubscribe_room(
+                self._current_workspace.name, self._current_room.name
+            )
 
         async def _do() -> None:
             await self._select_workspace(event.name)
@@ -416,7 +442,11 @@ class HumuApp(App):
                 self._current_room = None
                 self._refresh_agents_sync()
                 chat = self.query_one(ChatPanel)
-                chat.set_workspace_path(self._current_workspace.root_path if self._current_workspace else None)
+                chat.set_workspace_path(
+                    self._current_workspace.root_path
+                    if self._current_workspace
+                    else None
+                )
                 chat.set_room(None)
                 chat.clear_messages()
 
@@ -433,7 +463,9 @@ class HumuApp(App):
             return
         # Unsubscribe old room
         if self._current_room:
-            self._unsubscribe_room(self._current_workspace.name, self._current_room.name)
+            self._unsubscribe_room(
+                self._current_workspace.name, self._current_room.name
+            )
 
         async def _do() -> None:
             await self._select_room(event.name)
@@ -449,7 +481,16 @@ class HumuApp(App):
 
         if text.startswith("/"):
             cmd = text.strip().split()[0].lower()
-            if cmd in {"/invite", "/kick", "/agents", "/rooms", "/status", "/help", "/skills", "/compact"}:
+            if cmd in {
+                "/invite",
+                "/kick",
+                "/agents",
+                "/rooms",
+                "/status",
+                "/help",
+                "/skills",
+                "/compact",
+            }:
                 await self._handle_command(text)
                 return
 
@@ -457,12 +498,14 @@ class HumuApp(App):
             self.notify("Select a workspace and room first.", severity="warning")
             return
 
-        await self._conn.send({
-            "type": "submit_message",
-            "workspace": self._current_workspace.name,
-            "room": self._current_room.name,
-            "text": text,
-        })
+        await self._conn.send(
+            {
+                "type": "submit_message",
+                "workspace": self._current_workspace.name,
+                "room": self._current_room.name,
+                "text": text,
+            }
+        )
 
     # ------------------------------------------------------------------
     # Commands (client-side handling that delegates to server)
@@ -485,7 +528,7 @@ class HumuApp(App):
         elif cmd == "/help":
             self._cmd_help()
         elif cmd == "/compact":
-            instructions = text.strip()[len("/compact"):].strip()
+            instructions = text.strip()[len("/compact") :].strip()
             await self._cmd_compact(instructions)
         else:
             self.notify(f"Unknown command: {cmd}", severity="error")
@@ -497,12 +540,14 @@ class HumuApp(App):
         if not self._current_workspace or not self._current_room:
             self.notify("Select a workspace and room first.", severity="warning")
             return
-        reply = await self._conn.send({
-            "type": "invite_agent",
-            "workspace": self._current_workspace.name,
-            "room": self._current_room.name,
-            "agent_name": parts[1],
-        })
+        reply = await self._conn.send(
+            {
+                "type": "invite_agent",
+                "workspace": self._current_workspace.name,
+                "room": self._current_room.name,
+                "agent_name": parts[1],
+            }
+        )
         if reply and reply.get("type") == "ok" and reply.get("room"):
             self._current_room = Room.from_dict(reply["room"])
             self._refresh_agents_sync()
@@ -516,12 +561,14 @@ class HumuApp(App):
         if not self._current_workspace or not self._current_room:
             self.notify("Select a workspace and room first.", severity="warning")
             return
-        reply = await self._conn.send({
-            "type": "kick_agent",
-            "workspace": self._current_workspace.name,
-            "room": self._current_room.name,
-            "agent_name": parts[1],
-        })
+        reply = await self._conn.send(
+            {
+                "type": "kick_agent",
+                "workspace": self._current_workspace.name,
+                "room": self._current_room.name,
+                "agent_name": parts[1],
+            }
+        )
         if reply and reply.get("type") == "ok" and reply.get("room"):
             self._current_room = Room.from_dict(reply["room"])
             self._refresh_agents_sync()
@@ -542,7 +589,9 @@ class HumuApp(App):
         if not self._current_workspace:
             self.notify("Select a workspace first.", severity="warning")
             return
-        reply = await self._conn.send({"type": "list_rooms", "workspace": self._current_workspace.name})
+        reply = await self._conn.send(
+            {"type": "list_rooms", "workspace": self._current_workspace.name}
+        )
         if reply and reply.get("type") == "room_list":
             rooms = reply["rooms"]
             if rooms:
@@ -584,12 +633,14 @@ class HumuApp(App):
         if not self._current_workspace or not self._current_room:
             self.notify("Select a workspace and room first.", severity="warning")
             return
-        reply = await self._conn.send({
-            "type": "compact",
-            "workspace": self._current_workspace.name,
-            "room": self._current_room.name,
-            "instructions": instructions,
-        })
+        reply = await self._conn.send(
+            {
+                "type": "compact",
+                "workspace": self._current_workspace.name,
+                "room": self._current_room.name,
+                "instructions": instructions,
+            }
+        )
         if reply and reply.get("type") == "error":
             self.notify(reply["message"], severity="error")
 
@@ -606,9 +657,7 @@ class HumuApp(App):
         node = focused
         while node is not None:
             if isinstance(node, WorkspacePanel):
-                self.push_screen(
-                    CreateWorkspaceScreen(), self._on_workspace_created
-                )
+                self.push_screen(CreateWorkspaceScreen(), self._on_workspace_created)
                 return
             if isinstance(node, RoomPanel):
                 if not self._current_workspace:
@@ -617,9 +666,7 @@ class HumuApp(App):
                 self.push_screen(CreateRoomScreen(), self._on_room_created)
                 return
             if isinstance(node, AgentPanel):
-                self.push_screen(
-                    CreateAgentScreen(), self._on_agent_created
-                )
+                self.push_screen(CreateAgentScreen(), self._on_agent_created)
                 return
             if isinstance(node, ChatPanel):
                 if not self._current_workspace:
@@ -633,12 +680,15 @@ class HumuApp(App):
 
     def _on_workspace_created(self, result: Workspace | None) -> None:
         if result:
+
             async def _do() -> None:
-                await self._conn.send({
-                    "type": "create_workspace",
-                    "name": result.name,
-                    "root_path": result.root_path,
-                })
+                await self._conn.send(
+                    {
+                        "type": "create_workspace",
+                        "name": result.name,
+                        "root_path": result.root_path,
+                    }
+                )
                 self._current_workspace = result
                 self._current_room = None
                 await self._refresh_workspaces()
@@ -654,18 +704,22 @@ class HumuApp(App):
             ws = self._current_workspace
 
             async def _do() -> None:
-                reply = await self._conn.send({
-                    "type": "create_room",
-                    "workspace": ws.name,
-                    "room_name": result.name,
-                })
+                reply = await self._conn.send(
+                    {
+                        "type": "create_room",
+                        "workspace": ws.name,
+                        "room_name": result.name,
+                    }
+                )
                 if reply and reply.get("type") == "ok" and reply.get("room"):
                     self._current_room = Room.from_dict(reply["room"])
                     await self._refresh_rooms()
                     self._refresh_agents_sync()
                     await self._refresh_chat()
                     self._subscribe_current_room()
-                    self._local_storage.save_last_session(ws.name, self._current_room.name)
+                    self._local_storage.save_last_session(
+                        ws.name, self._current_room.name
+                    )
                     self.notify(f"Room '{result.name}' created.")
 
             self.run_worker(_do, thread=False)
@@ -680,23 +734,34 @@ class HumuApp(App):
 
             def _on_saved(result: object) -> None:
                 if isinstance(result, AgentConfig):
+
                     async def _save() -> None:
-                        await self._conn.send({"type": "create_agent", "agent": result.to_dict()})
+                        await self._conn.send(
+                            {"type": "create_agent", "agent": result.to_dict()}
+                        )
                         self._refresh_agents_sync()
                         self.notify(f"Agent '{result.name}' saved.")
+
                     self.run_worker(_save, thread=False)
 
-            self.push_screen(CreateAgentScreen(existing=agent, total_tokens=0), _on_saved)
+            self.push_screen(
+                CreateAgentScreen(existing=agent, total_tokens=0), _on_saved
+            )
 
         self.run_worker(_do, thread=False)
 
     def _on_agent_created(self, result: object) -> None:
         from humu.models.agent import AgentConfig
+
         if isinstance(result, AgentConfig):
+
             async def _do() -> None:
-                await self._conn.send({"type": "create_agent", "agent": result.to_dict()})
+                await self._conn.send(
+                    {"type": "create_agent", "agent": result.to_dict()}
+                )
                 self._refresh_agents_sync()
                 self.notify(f"Agent '{result.name}' created.")
+
             self.run_worker(_do, thread=False)
 
     def action_delete_selected(self) -> None:
@@ -712,8 +777,12 @@ class HumuApp(App):
                 if self._current_workspace:
                     name = self._current_workspace.name
                     self.push_screen(
-                        ConfirmScreen(f"Delete workspace '{name}'?\nThis cannot be undone."),
-                        lambda confirmed, _name=name: self._delete_workspace(_name) if confirmed else None,
+                        ConfirmScreen(
+                            f"Delete workspace '{name}'?\nThis cannot be undone."
+                        ),
+                        lambda confirmed, _name=name: (
+                            self._delete_workspace(_name) if confirmed else None
+                        ),
                     )
                 return
             if isinstance(node, RoomPanel):
@@ -721,7 +790,9 @@ class HumuApp(App):
                     name = self._current_room.name
                     self.push_screen(
                         ConfirmScreen(f"Delete room '{name}'?\nThis cannot be undone."),
-                        lambda confirmed, _name=name: self._delete_room(_name) if confirmed else None,
+                        lambda confirmed, _name=name: (
+                            self._delete_room(_name) if confirmed else None
+                        ),
                     )
                 return
             node = node.parent
@@ -736,6 +807,7 @@ class HumuApp(App):
             await self._refresh_agents()
             await self._refresh_chat()
             self.notify(f"Workspace '{name}' deleted.")
+
         self.run_worker(_do, thread=False)
 
     def _delete_room(self, name: str) -> None:
@@ -744,12 +816,15 @@ class HumuApp(App):
         ws = self._current_workspace
 
         async def _do() -> None:
-            await self._conn.send({"type": "delete_room", "workspace": ws.name, "room_name": name})
+            await self._conn.send(
+                {"type": "delete_room", "workspace": ws.name, "room_name": name}
+            )
             self._current_room = None
             await self._refresh_rooms()
             await self._refresh_agents()
             await self._refresh_chat()
             self.notify(f"Room '{name}' deleted.")
+
         self.run_worker(_do, thread=False)
 
     def action_quit_or_warn(self) -> None:
@@ -758,6 +833,7 @@ class HumuApp(App):
             return
 
         from humu.tui.widgets.chat_panel import ChatInput
+
         chat_input = self.query_one("#chat-input", ChatInput)
         if chat_input.text:
             chat_input.load_text("")
@@ -771,6 +847,7 @@ class HumuApp(App):
 
     def action_plugin_manager(self) -> None:
         from humu.tui.screens.plugin_manager import PluginManagerScreen
+
         self.push_screen(PluginManagerScreen(self._local_storage))
 
     def action_cancel_processing(self) -> None:
@@ -778,11 +855,14 @@ class HumuApp(App):
             return
 
         async def _do() -> None:
-            await self._conn.send({
-                "type": "cancel_processing",
-                "workspace": self._current_workspace.name,
-                "room": self._current_room.name,
-            })
+            await self._conn.send(
+                {
+                    "type": "cancel_processing",
+                    "workspace": self._current_workspace.name,
+                    "room": self._current_room.name,
+                }
+            )
+
         self.run_worker(_do, thread=False)
 
     def action_restart(self) -> None:

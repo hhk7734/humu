@@ -5,7 +5,12 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, Select, Static, TextArea
 
-from humu.config import DEFAULT_CONTEXT_WINDOW, DEFAULT_MODEL, DEFAULT_TOOLS, MODEL_CONTEXT_WINDOWS
+from humu.config import (
+    DEFAULT_CONTEXT_WINDOW,
+    DEFAULT_MODEL,
+    DEFAULT_TOOLS,
+    MODEL_CONTEXT_WINDOWS,
+)
 from humu.models.agent import AgentConfig
 
 
@@ -56,7 +61,9 @@ class CreateAgentScreen(ModalScreen[AgentConfig | None]):
 
     MODELS = [("opus", "opus"), ("sonnet", "sonnet"), ("haiku", "haiku")]
 
-    def __init__(self, existing: AgentConfig | None = None, total_tokens: int = 0) -> None:
+    def __init__(
+        self, existing: AgentConfig | None = None, total_tokens: int = 0
+    ) -> None:
         super().__init__()
         self._existing = existing
         self._is_edit = existing is not None

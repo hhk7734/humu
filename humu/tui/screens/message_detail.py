@@ -140,7 +140,9 @@ class MessageDetailScreen(ModalScreen[None]):
                             continue
                         # Orphaned result — show standalone
                         step_num += 1
-                        yield from self._render_result_badge(step, step_num, indent=False)
+                        yield from self._render_result_badge(
+                            step, step_num, indent=False
+                        )
                         continue
 
                     step_num += 1
@@ -167,7 +169,10 @@ class MessageDetailScreen(ModalScreen[None]):
                             yield from self._render_structured_output_input(tool_input)
                         else:
                             try:
-                                yield Static(JSON(json.dumps(tool_input, ensure_ascii=False)), classes="step-body")
+                                yield Static(
+                                    JSON(json.dumps(tool_input, ensure_ascii=False)),
+                                    classes="step-body",
+                                )
                             except Exception:
                                 yield Static(str(tool_input), classes="step-text")
 
@@ -175,7 +180,9 @@ class MessageDetailScreen(ModalScreen[None]):
                         tool_id = step.get("id", "")
                         if tool_id and tool_id in result_map:
                             paired_ids.add(tool_id)
-                            yield from self._render_result_badge(result_map[tool_id], indent=True)
+                            yield from self._render_result_badge(
+                                result_map[tool_id], indent=True
+                            )
 
                     elif step_type == "task_progress":
                         tool = step.get("tool", "")
@@ -196,10 +203,18 @@ class MessageDetailScreen(ModalScreen[None]):
         body_cls = "result-body" if indent else "step-body"
         text_cls = "result-text" if indent else "step-text"
         if is_error:
-            badge_cls = "result-badge result-badge-err" if indent else "step-badge step-badge-error"
+            badge_cls = (
+                "result-badge result-badge-err"
+                if indent
+                else "step-badge step-badge-error"
+            )
             label = "✗ Error" if indent else f"[{step_num}] ✗ Tool Error"
         else:
-            badge_cls = "result-badge result-badge-ok" if indent else "step-badge step-badge-result"
+            badge_cls = (
+                "result-badge result-badge-ok"
+                if indent
+                else "step-badge step-badge-result"
+            )
             label = "✓ Result" if indent else f"[{step_num}] ✓ Tool Result"
         yield Static(label, classes=badge_cls)
         try:

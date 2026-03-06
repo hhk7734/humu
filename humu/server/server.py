@@ -28,7 +28,9 @@ class HumuServer:
         self._storage = Storage()
         self._runner = AgentRunner(self._storage)
         self._router = Router(self._runner, self._storage)
-        self._handler = Handler(self._storage, self._runner, self._router, self._broadcast)
+        self._handler = Handler(
+            self._storage, self._runner, self._router, self._broadcast
+        )
 
         # Connected clients and their room subscriptions
         self._clients: set[ServerConnection] = set()
@@ -81,7 +83,9 @@ class HumuServer:
                 try:
                     msg = json.loads(raw)
                 except (json.JSONDecodeError, TypeError):
-                    await websocket.send(json.dumps({"type": "error", "message": "Invalid JSON"}))
+                    await websocket.send(
+                        json.dumps({"type": "error", "message": "Invalid JSON"})
+                    )
                     continue
 
                 msg_type = msg.get("type", "")
@@ -146,7 +150,9 @@ class HumuServer:
 
 def run_server() -> None:
     """Entry point for ``humu serve``."""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     server = HumuServer()
 
     loop = asyncio.new_event_loop()
