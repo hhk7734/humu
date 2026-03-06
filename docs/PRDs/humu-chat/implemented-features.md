@@ -46,10 +46,9 @@ Right-clicking a chat message with tool steps opens a `MessageDetailScreen` moda
 
 Management commands (`/invite`, `/kick`, `/agents`, `/rooms`, `/status`) are documented in [003-resource-management.md](003-resource-management.md). Additional commands:
 
-| Command    | Description                          |
-| :--------- | :----------------------------------- |
-| `/compact` | Summarize and clear conversation history |
-| `/help`    | Show command reference               |
+| Command | Description        |
+| :------ | :----------------- |
+| `/help` | Show command reference |
 
 Any unrecognised `/cmd` is treated as a skill invocation and forwarded to the router.
 
@@ -100,9 +99,9 @@ Panel widths are saved to `~/.humu/last_session.json` under a `panel_widths` key
 
 Textual's `watch_theme()` reactor is overridden to call `storage.save_theme(theme)` whenever the user changes the theme. The theme name is stored in `last_session.json["theme"]`. On mount, `storage.load_theme()` is called and applied to `self.theme` before UI is rendered.
 
-## System Event Handling (Context Compaction)
+## System Event Handling
 
-The Claude SDK emits `SystemMessage` objects for lifecycle events such as context compaction. The flow:
+The Claude SDK emits `SystemMessage` objects for lifecycle events. The flow:
 
 1. `AgentRunner` catches `SystemMessage` and appends a step with `type: "system"`, `subtype`, and `data`.
 2. `Router._add_live_step()` detects `type == "system"` and fires the `on_system_event` callback with the room key, agent name, and step data.

@@ -18,7 +18,6 @@ from __future__ import annotations
 # invite_agent:  workspace, room, agent_name
 # kick_agent:  workspace, room, agent_name
 # create_agent:  agent (dict)
-# compact:  workspace, room, instructions
 # list_workspaces
 # list_rooms:  workspace
 # list_agents

@@ -494,7 +494,6 @@ class HumuApp(App):
                 "/status",
                 "/help",
                 "/skills",
-                "/compact",
             }:
                 await self._handle_command(text)
                 return
@@ -532,9 +531,6 @@ class HumuApp(App):
             self._cmd_status()
         elif cmd == "/help":
             self._cmd_help()
-        elif cmd == "/compact":
-            instructions = text.strip()[len("/compact") :].strip()
-            await self._cmd_compact(instructions)
         else:
             self.notify(f"Unknown command: {cmd}", severity="error")
 
@@ -631,28 +627,12 @@ class HumuApp(App):
             "  /agents          -- List all agents\n"
             "  /rooms           -- List rooms in workspace\n"
             "  /status          -- Show current state\n"
-            "  /compact [hint]  -- Summarize & clear history\n"
             "  /help            -- Show this help\n"
             "\n"
             "Keys:\n"
             "  Ctrl+N -- Create new item\n"
             "  Ctrl+D -- Delete selected item"
         )
-
-    async def _cmd_compact(self, instructions: str = "") -> None:
-        if not self._current_workspace or not self._current_room:
-            self.notify("Select a workspace and room first.", severity="warning")
-            return
-        reply = await self._conn.send(
-            {
-                "type": "compact",
-                "workspace": self._current_workspace.name,
-                "room": self._current_room.name,
-                "instructions": instructions,
-            }
-        )
-        if reply and reply.get("type") == "error":
-            self.notify(reply["message"], severity="error")
 
     # ------------------------------------------------------------------
     # Actions

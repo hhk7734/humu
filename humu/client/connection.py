@@ -146,7 +146,6 @@ class Connection:
             "kick_agent": "ok",
             "submit_message": "ok",
             "cancel_processing": "ok",
-            "compact": "ok",
         }
         expected = reply_map.get(cmd_type)
         return event_type == expected or event_type == "error"

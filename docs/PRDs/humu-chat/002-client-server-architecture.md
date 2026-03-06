@@ -57,7 +57,6 @@ JSON messages over WebSocket. Each message has a `type` field.
 | `invite_agent`      | `workspace`, `room`, `agent_name`   | Add agent to room                         |
 | `kick_agent`        | `workspace`, `room`, `agent_name`   | Remove agent from room                    |
 | `create_agent`      | `agent_config`                      | Create or update an agent                 |
-| `compact`           | `workspace`, `room`, `instructions` | Compact conversation                      |
 | `list_workspaces`   |                                     | Request workspace list                    |
 | `list_rooms`        | `workspace`                         | Request room list                         |
 | `list_agents`       |                                     | Request all agents                        |
@@ -82,7 +81,7 @@ JSON messages over WebSocket. Each message has a `type` field.
 | `chat_history`         | `workspace`, `room`, `messages`                                                   | Response to `get_chat_history`          |
 | `skills_list`          | `skills`                                                                          | Response to `get_skills`                |
 | `queue_updated`        | `workspace`, `room`, `pending_count`                                              | Pending message queue changed           |
-| `system_event`         | `workspace`, `room`, `agent`, `text`                                              | System event (compaction, etc.)         |
+| `system_event`         | `workspace`, `room`, `agent`, `text`                                              | System event                            |
 | `error`                | `message`                                                                         | Error response                          |
 
 ### Subscription Model

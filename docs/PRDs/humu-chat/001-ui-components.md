@@ -168,7 +168,7 @@ When `partial` contains `:`, only full-name prefix matching is applied (built-in
 
 Each autocomplete entry is displayed as `name  full description`. If an entry is wider than the widget, it is clipped and suffixed with `...` so each row always occupies exactly one line.
 
-Built-in commands: `invite`, `kick`, `agents`, `rooms`, `status`, `compact`, `help`.
+Built-in commands: `invite`, `kick`, `agents`, `rooms`, `status`, `help`.
 
 Navigate with **Up / Down**, confirm with **Enter** or **Tab**, dismiss with **Escape**.
 

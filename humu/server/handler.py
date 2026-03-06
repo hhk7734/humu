@@ -346,24 +346,6 @@ class Handler:
             task.cancel()
         return {"type": "ok"}
 
-    async def _cmd_compact(self, msg: dict) -> dict:
-        ws = self._storage.get_workspace(msg["workspace"])
-        if not ws:
-            return {
-                "type": "error",
-                "message": f"Workspace '{msg['workspace']}' not found",
-            }
-        room = self._storage.get_room(ws, msg["room"])
-        if not room:
-            return {"type": "error", "message": f"Room '{msg['room']}' not found"}
-        room_key = (ws.name, room.name)
-        if room_key in self._processing:
-            return {"type": "error", "message": "Cannot compact while processing"}
-
-        instructions = msg.get("instructions", "")
-        asyncio.create_task(self._do_compact(ws, room, instructions))
-        return {"type": "ok"}
-
     # ------------------------------------------------------------------
     # These are no-ops on server — clients track subscriptions in server.py
     # ------------------------------------------------------------------
@@ -544,108 +526,6 @@ class Handler:
         )
         asyncio.create_task(self._process_message(workspace, room, next_text))
 
-    async def _do_compact(
-        self, workspace: Workspace, room: Room, instructions: str
-    ) -> None:
-        room_key = (workspace.name, room.name)
-        self._processing.add(room_key)
-        self._active_tasks[room_key] = asyncio.current_task()  # type: ignore[arg-type]
-
-        self._broadcast(
-            {
-                "type": "message_added",
-                "workspace": workspace.name,
-                "room": room.name,
-                "sender": "system",
-                "text": "Compacting conversation history...",
-                "is_system": True,
-                "raw": None,
-                "steps": [],
-            },
-            workspace.name,
-            room.name,
-        )
-
-        try:
-            history = self._storage.load_chat_history(workspace, room.name)
-            lines: list[str] = []
-            for m in history:
-                sender = m.get("sender", "unknown")
-                text = m.get("text", "")
-                if m.get("is_system"):
-                    lines.append(f"[system] {text}")
-                else:
-                    lines.append(f"[{sender}] {text}")
-            conversation_text = "\n".join(lines)
-
-            prompt = (
-                "Summarize the following conversation concisely. "
-                "Capture the key topics discussed, decisions made, important context, "
-                "and any pending tasks or action items. "
-                "Write the summary in the same language as the conversation.\n"
-            )
-            if instructions:
-                prompt += f"\nAdditional instructions: {instructions}\n"
-            prompt += f"\n---\n{conversation_text}\n---"
-
-            leader_cfg = self._storage.get_agent(workspace, room.leader)
-            if not leader_cfg:
-                self._broadcast(
-                    {"type": "error", "message": "Leader agent not found"},
-                    workspace.name,
-                    room.name,
-                )
-                return
-
-            response = await self._runner.query(
-                leader_cfg, workspace, room.name, prompt
-            )
-            summary_text = response.text
-
-            # Clear sessions
-            all_agents = [room.leader] + list(room.agents)
-            for agent_name in all_agents:
-                self._storage.delete_session_id(workspace, room.name, agent_name)
-
-            summary_msg = {
-                "sender": "system",
-                "text": f"--- Conversation Summary ---\n{summary_text}",
-                "is_system": True,
-                "raw": None,
-                "steps": [],
-            }
-            self._storage.replace_chat_history(workspace, room.name, [summary_msg])
-
-            # Tell clients to reload history
-            self._broadcast(
-                {
-                    "type": "chat_history",
-                    "workspace": workspace.name,
-                    "room": room.name,
-                    "messages": [summary_msg],
-                },
-                workspace.name,
-                room.name,
-            )
-        except Exception as e:
-            logger.exception("Compact failed")
-            self._broadcast(
-                {"type": "error", "message": f"Compact failed: {e}"},
-                workspace.name,
-                room.name,
-            )
-        finally:
-            self._processing.discard(room_key)
-            self._active_tasks.pop(room_key, None)
-            self._broadcast(
-                {
-                    "type": "processing_done",
-                    "workspace": workspace.name,
-                    "room": room.name,
-                },
-                workspace.name,
-                room.name,
-            )
 
     # ------------------------------------------------------------------
     # System event callback (from Router)

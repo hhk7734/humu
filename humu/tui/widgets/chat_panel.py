@@ -633,7 +633,6 @@ class ChatPanel(Static):
         ("agents", "List all agents"),
         ("rooms", "List rooms in workspace"),
         ("status", "Show current state"),
-        ("compact", "Summarize & clear history"),
         ("help", "Show command help"),
     ]
 

@@ -44,7 +44,7 @@ class Router:
     ) -> None:
         with self._live_steps_lock:
             self._live_steps.setdefault(room_key, []).append(step)
-        # Detect system events (including compaction)
+        # Detect system events
         if step.get("type") == "system" and self.on_system_event:
             self.on_system_event(room_key, agent_name, step)
 
