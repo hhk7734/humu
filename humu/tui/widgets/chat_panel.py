@@ -4,7 +4,8 @@ from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.events import Click
 from textual.message import Message
-from textual.widgets import Input, Label, Static
+from textual.screen import ModalScreen
+from textual.widgets import Button, Input, Label, Static
 
 
 class MessageSubmitted(Message):
@@ -60,6 +61,72 @@ class LoadingChatMessage(Vertical):
         self.query_one(".loading-text", Static).update(f"{spinner} thinking...")
 
 
+class MessageContextMenu(ModalScreen[None]):
+    """Right-click context menu for a chat message."""
+
+    BINDINGS = [("escape", "dismiss", "Close")]
+
+    DEFAULT_CSS = """
+    MessageContextMenu {
+        align: center middle;
+        background: $background 50%;
+    }
+    MessageContextMenu #menu {
+        width: 24;
+        height: auto;
+        border: solid $accent;
+        background: $surface;
+        padding: 0;
+    }
+    MessageContextMenu Button {
+        width: 1fr;
+        background: transparent;
+        border: none;
+        text-align: left;
+        padding: 0 1;
+    }
+    MessageContextMenu Button:hover {
+        background: $accent 30%;
+    }
+    """
+
+    def __init__(
+        self,
+        sender: str,
+        text: str,
+        is_system: bool,
+        raw: str | None,
+        steps: list[dict] | None = None,
+    ) -> None:
+        super().__init__()
+        self._sender = sender
+        self._text = text
+        self._is_system = is_system
+        self._raw = raw
+        self._steps = steps or []
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="menu"):
+            yield Button("View Details", id="btn-details")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-details":
+            from humu.tui.screens.message_detail import MessageDetailScreen
+
+            self.dismiss()
+            self.app.push_screen(
+                MessageDetailScreen(
+                    self._sender, self._text, self._is_system,
+                    raw=self._raw, steps=self._steps,
+                )
+            )
+
+    def on_click(self, event: Click) -> None:
+        menu = self.query_one("#menu", Vertical)
+        if not menu.region.contains(event.screen_x, event.screen_y):
+            self.dismiss()
+
+
 class ChatMessage(Vertical):
     DEFAULT_CSS = """
     ChatMessage {
@@ -94,13 +161,19 @@ class ChatMessage(Vertical):
     """
 
     def __init__(
-        self, sender: str, text: str, is_system: bool = False, raw: str | None = None
+        self,
+        sender: str,
+        text: str,
+        is_system: bool = False,
+        raw: str | None = None,
+        steps: list[dict] | None = None,
     ) -> None:
         super().__init__()
         self._sender = sender
         self._text = text
         self._is_system = is_system
         self._raw = raw
+        self._steps = steps or []
 
     def compose(self) -> ComposeResult:
         from rich.text import Text
@@ -114,13 +187,13 @@ class ChatMessage(Vertical):
         yield Static(self._text, classes="msg-text")
 
     def on_click(self, event: Click) -> None:
-        from humu.tui.screens.message_detail import MessageDetailScreen
-
-        self.app.push_screen(
-            MessageDetailScreen(
-                self._sender, self._text, self._is_system, raw=self._raw
+        if event.button == 3:  # right-click
+            self.app.push_screen(
+                MessageContextMenu(
+                    self._sender, self._text, self._is_system,
+                    raw=self._raw, steps=self._steps,
+                )
             )
-        )
 
 
 class ChatPanel(Static):
@@ -169,10 +242,15 @@ class ChatPanel(Static):
         container.remove_children()
 
     def add_message(
-        self, sender: str, text: str, is_system: bool = False, raw: str | None = None
+        self,
+        sender: str,
+        text: str,
+        is_system: bool = False,
+        raw: str | None = None,
+        steps: list[dict] | None = None,
     ) -> None:
         container = self.query_one("#chat-messages", Vertical)
-        msg = ChatMessage(sender, text, is_system, raw=raw)
+        msg = ChatMessage(sender, text, is_system, raw=raw, steps=steps)
         container.mount(msg)
         self.call_after_refresh(self._scroll_to_end)
 
@@ -198,7 +276,11 @@ class ChatPanel(Static):
         self.clear_messages()
         for msg in messages:
             self.add_message(
-                msg["sender"], msg["text"], msg.get("is_system", False), raw=msg.get("raw")
+                msg["sender"],
+                msg["text"],
+                msg.get("is_system", False),
+                raw=msg.get("raw"),
+                steps=msg.get("steps"),
             )
 
     def on_input_submitted(self, event: Input.Submitted) -> None:

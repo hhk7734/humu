@@ -188,7 +188,7 @@ class HumuApp(App):
                     continue
                 self.call_from_thread(chat.hide_loading)
                 self.call_from_thread(
-                    chat.add_message, msg.sender, msg.text, msg.is_system, msg.raw,
+                    chat.add_message, msg.sender, msg.text, msg.is_system, msg.raw, msg.steps,
                 )
                 self._storage.append_chat_message(
                     workspace,
@@ -198,6 +198,7 @@ class HumuApp(App):
                         "text": msg.text,
                         "is_system": msg.is_system,
                         "raw": msg.raw,
+                        "steps": msg.steps,
                     },
                 )
         except Exception as e:

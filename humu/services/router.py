@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, AsyncIterator
 
 from humu.config import ROUTING_SCHEMA
@@ -25,6 +25,7 @@ class ChatMessage:
     is_system: bool = False
     raw: str | None = None
     is_loading: bool = False
+    steps: list[dict] = field(default_factory=list)
 
 
 class Router:
@@ -108,6 +109,7 @@ When forwarding, include enough context in the "context" field for the agent to 
                 sender=room.leader,
                 text=decision.get("message", response.text),
                 raw=raw_response,
+                steps=response.steps,
             )
 
         elif action == "forward":
@@ -149,22 +151,34 @@ When forwarding, include enough context in the "context" field for the agent to 
                 yield ChatMessage(sender=target_name, text="", is_loading=True)
                 if agent.streaming:
                     text_parts: list[str] = []
+                    streaming_steps: list[dict] = []
                     async for chunk in self._runner.query_streaming(
                         agent, workspace, room.name, forward_prompt
                     ):
-                        if not chunk.done:
+                        if chunk.done:
+                            streaming_steps = chunk.steps
+                        else:
                             text_parts.append(chunk.text)
-                            yield ChatMessage(
-                                sender=target_name,
-                                text=chunk.text,
-                            )
+                            yield ChatMessage(sender=target_name, text=chunk.text)
                     full_text = "".join(text_parts)
+                    if streaming_steps:
+                        yield ChatMessage(
+                            sender=target_name,
+                            text="Process log (right-click for details)",
+                            is_system=True,
+                            steps=streaming_steps,
+                        )
                 else:
                     try:
                         agent_resp = await self._runner.query(
                             agent, workspace, room.name, forward_prompt
                         )
-                        yield ChatMessage(sender=target_name, text=agent_resp.text, raw=agent_resp.text)
+                        yield ChatMessage(
+                            sender=target_name,
+                            text=agent_resp.text,
+                            raw=agent_resp.text,
+                            steps=agent_resp.steps,
+                        )
                         full_text = agent_resp.text
                     except Exception as e:
                         yield ChatMessage(
@@ -195,7 +209,12 @@ When forwarding, include enough context in the "context" field for the agent to 
                         room.name,
                         synthesis_prompt,
                     )
-                    yield ChatMessage(sender=room.leader, text=synthesis.text, raw=synthesis.text)
+                    yield ChatMessage(
+                        sender=room.leader,
+                        text=synthesis.text,
+                        raw=synthesis.text,
+                        steps=synthesis.steps,
+                    )
                 except Exception as e:
                     yield ChatMessage(
                         sender="error",
@@ -252,22 +271,34 @@ When forwarding, include enough context in the "context" field for the agent to 
                 yield ChatMessage(sender=agent_name, text="", is_loading=True)
                 if agent.streaming:
                     text_parts_chain: list[str] = []
+                    chain_steps: list[dict] = []
                     async for chunk in self._runner.query_streaming(
                         agent, workspace, room.name, chain_prompt
                     ):
-                        if not chunk.done:
+                        if chunk.done:
+                            chain_steps = chunk.steps
+                        else:
                             text_parts_chain.append(chunk.text)
-                            yield ChatMessage(
-                                sender=agent_name,
-                                text=chunk.text,
-                            )
+                            yield ChatMessage(sender=agent_name, text=chunk.text)
                     previous_output = "".join(text_parts_chain)
+                    if chain_steps:
+                        yield ChatMessage(
+                            sender=agent_name,
+                            text="Process log (right-click for details)",
+                            is_system=True,
+                            steps=chain_steps,
+                        )
                 else:
                     try:
                         agent_resp = await self._runner.query(
                             agent, workspace, room.name, chain_prompt
                         )
-                        yield ChatMessage(sender=agent_name, text=agent_resp.text, raw=agent_resp.text)
+                        yield ChatMessage(
+                            sender=agent_name,
+                            text=agent_resp.text,
+                            raw=agent_resp.text,
+                            steps=agent_resp.steps,
+                        )
                         previous_output = agent_resp.text
                     except Exception as e:
                         yield ChatMessage(
@@ -298,7 +329,12 @@ When forwarding, include enough context in the "context" field for the agent to 
                         room.name,
                         synthesis_prompt,
                     )
-                    yield ChatMessage(sender=room.leader, text=synthesis.text, raw=synthesis.text)
+                    yield ChatMessage(
+                        sender=room.leader,
+                        text=synthesis.text,
+                        raw=synthesis.text,
+                        steps=synthesis.steps,
+                    )
                 except Exception as e:
                     yield ChatMessage(
                         sender="error",

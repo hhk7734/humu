@@ -9,7 +9,11 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
     ResultMessage,
+    TaskProgressMessage,
     TextBlock,
+    ThinkingBlock,
+    ToolResultBlock,
+    ToolUseBlock,
 )
 
 from humu.models.agent import AgentConfig
@@ -23,12 +27,14 @@ logger = logging.getLogger(__name__)
 class AgentResponse:
     text: str
     session_id: str | None = None
+    steps: list[dict] = field(default_factory=list)
 
 
 @dataclass
 class StreamChunk:
     text: str
     done: bool = False
+    steps: list[dict] = field(default_factory=list)
 
 
 class AgentRunner:
@@ -100,13 +106,36 @@ class AgentRunner:
             session_id: str | None = None
             result_text: str | None = None
             structured: Any = None
+            steps: list[dict] = []
 
             async for message in client.receive_response():
+                if isinstance(message, TaskProgressMessage):
+                    step: dict = {"type": "task_progress", "description": message.description}
+                    if message.last_tool_name:
+                        step["tool"] = message.last_tool_name
+                    steps.append(step)
                 if isinstance(message, AssistantMessage):
                     if message.error:
                         logger.error("Agent %s error: %s", agent.name, message.error)
                     for block in message.content:
-                        if isinstance(block, TextBlock):
+                        if isinstance(block, ThinkingBlock):
+                            steps.append({"type": "thinking", "content": block.thinking})
+                        elif isinstance(block, ToolUseBlock):
+                            steps.append({"type": "tool_use", "name": block.name, "input": block.input})
+                        elif isinstance(block, ToolResultBlock):
+                            content = block.content
+                            if isinstance(content, list):
+                                content = "\n".join(
+                                    c.get("text", str(c)) if isinstance(c, dict) else str(c)
+                                    for c in content
+                                )
+                            steps.append({
+                                "type": "tool_result",
+                                "tool_use_id": block.tool_use_id,
+                                "content": content or "",
+                                "is_error": bool(block.is_error),
+                            })
+                        elif isinstance(block, TextBlock):
                             text_parts.append(block.text)
                 if isinstance(message, ResultMessage):
                     session_id = message.session_id
@@ -136,6 +165,7 @@ class AgentRunner:
             return AgentResponse(
                 text=final_text,
                 session_id=session_id,
+                steps=steps,
             )
         except Exception:
             logger.exception("Agent %s query failed", agent.name)
@@ -169,11 +199,34 @@ class AgentRunner:
             await client.query(prompt)
 
             session_id: str | None = None
+            steps: list[dict] = []
 
             async for message in client.receive_response():
+                if isinstance(message, TaskProgressMessage):
+                    step: dict = {"type": "task_progress", "description": message.description}
+                    if message.last_tool_name:
+                        step["tool"] = message.last_tool_name
+                    steps.append(step)
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
-                        if isinstance(block, TextBlock):
+                        if isinstance(block, ThinkingBlock):
+                            steps.append({"type": "thinking", "content": block.thinking})
+                        elif isinstance(block, ToolUseBlock):
+                            steps.append({"type": "tool_use", "name": block.name, "input": block.input})
+                        elif isinstance(block, ToolResultBlock):
+                            content = block.content
+                            if isinstance(content, list):
+                                content = "\n".join(
+                                    c.get("text", str(c)) if isinstance(c, dict) else str(c)
+                                    for c in content
+                                )
+                            steps.append({
+                                "type": "tool_result",
+                                "tool_use_id": block.tool_use_id,
+                                "content": content or "",
+                                "is_error": bool(block.is_error),
+                            })
+                        elif isinstance(block, TextBlock):
                             yield StreamChunk(text=block.text)
                 if isinstance(message, ResultMessage):
                     session_id = getattr(message, "session_id", None)
@@ -183,7 +236,7 @@ class AgentRunner:
                     workspace, room_name, agent.name, session_id
                 )
 
-            yield StreamChunk(text="", done=True)
+            yield StreamChunk(text="", done=True, steps=steps)
 
             await client.disconnect()
             del self._clients[key]
