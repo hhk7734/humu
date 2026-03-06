@@ -338,7 +338,18 @@ class ChatMessage(Vertical):
                 )
             )
         elif result == "prompt":
-            self.post_message(AgentPromptRequested(self._sender))
+            if self._query_input:
+                from humu.tui.screens.prompt_view import PromptViewScreen
+
+                self.app.push_screen(
+                    PromptViewScreen(
+                        self._sender,
+                        self._query_input.get("system_prompt", ""),
+                        self._query_input.get("user_message", ""),
+                    )
+                )
+            else:
+                self.post_message(AgentPromptRequested(self._sender))
 
 
 class ChatPanel(Static):

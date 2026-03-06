@@ -301,6 +301,10 @@ When forwarding, include enough context in the "context" field for the agent to 
 
                 self._clear_live_steps(room_key)
                 agent_name_for_cb = target_name
+                fwd_qi = {
+                    "system_prompt": agent_system,
+                    "user_message": forward_prompt,
+                }
                 yield ChatMessage(sender=target_name, text="", is_loading=True)
                 if agent.streaming:
                     text_parts: list[str] = []
@@ -321,10 +325,6 @@ When forwarding, include enough context in the "context" field for the agent to 
                             text_parts.append(chunk.text)
                             yield ChatMessage(sender=target_name, text=chunk.text)
                     full_text = "".join(text_parts)
-                    fwd_qi = {
-                        "system_prompt": agent_system,
-                        "user_message": forward_prompt,
-                    }
                     if streaming_steps:
                         yield ChatMessage(
                             sender=target_name,
@@ -345,10 +345,6 @@ When forwarding, include enough context in the "context" field for the agent to 
                                 self._add_live_step(room_key, step, _name)
                             ),
                         )
-                        fwd_qi = {
-                            "system_prompt": agent_system,
-                            "user_message": forward_prompt,
-                        }
                         yield ChatMessage(
                             sender=target_name,
                             text=agent_resp.text,
@@ -465,6 +461,10 @@ When forwarding, include enough context in the "context" field for the agent to 
 
                 self._clear_live_steps(room_key)
                 agent_name_for_cb = agent_name
+                chain_qi = {
+                    "system_prompt": chain_agent_system,
+                    "user_message": chain_prompt,
+                }
                 yield ChatMessage(sender=agent_name, text="", is_loading=True)
                 if agent.streaming:
                     text_parts_chain: list[str] = []
@@ -485,10 +485,6 @@ When forwarding, include enough context in the "context" field for the agent to 
                             text_parts_chain.append(chunk.text)
                             yield ChatMessage(sender=agent_name, text=chunk.text)
                     previous_output = "".join(text_parts_chain)
-                    chain_qi = {
-                        "system_prompt": chain_agent_system,
-                        "user_message": chain_prompt,
-                    }
                     if chain_steps:
                         yield ChatMessage(
                             sender=agent_name,
@@ -509,10 +505,6 @@ When forwarding, include enough context in the "context" field for the agent to 
                                 self._add_live_step(room_key, step, _name)
                             ),
                         )
-                        chain_qi = {
-                            "system_prompt": chain_agent_system,
-                            "user_message": chain_prompt,
-                        }
                         yield ChatMessage(
                             sender=agent_name,
                             text=agent_resp.text,

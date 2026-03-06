@@ -787,7 +787,7 @@ class HumuApp(App):
             agent = AgentConfig.from_dict(reply["agent"])
             from humu.tui.screens.prompt_view import PromptViewScreen
 
-            self.push_screen(PromptViewScreen(agent.name, agent.prompt))
+            self.push_screen(PromptViewScreen(agent.name, system_prompt=agent.prompt))
 
         self.run_worker(_do, thread=False)
 
