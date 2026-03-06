@@ -89,9 +89,30 @@ class HumuApp(App):
         if saved_theme:
             self.theme = saved_theme
         self.query_one(Header).icon = "Menu"
+        self._router.on_compaction = self._on_compaction
         self._refresh_workspaces()
         self._restore_last_session()
         self._restore_panel_widths()
+
+    def _on_compaction(self, room_key: tuple[str, str], agent_name: str) -> None:
+        """Called from worker thread when a compaction event is detected."""
+
+        def _show() -> None:
+            self._storage.append_chat_message(
+                self._current_workspace,
+                room_key[1],
+                {"sender": "system", "text": f"🔄 Context compacted ({agent_name})", "is_system": True, "raw": None, "steps": []},
+            )
+            if (
+                self._current_workspace
+                and self._current_room
+                and room_key == (self._current_workspace.name, self._current_room.name)
+            ):
+                self.query_one(ChatPanel).add_message(
+                    "system", f"🔄 Context compacted ({agent_name})", True
+                )
+
+        self.call_from_thread(_show)
 
     def watch_theme(self, theme: str) -> None:
         """Persist theme selection across restarts."""

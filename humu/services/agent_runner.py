@@ -10,6 +10,7 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
     ResultMessage,
+    SystemMessage,
     TaskProgressMessage,
     TextBlock,
     ThinkingBlock,
@@ -111,6 +112,11 @@ class AgentRunner:
             steps: list[dict] = []
 
             async for message in client.receive_response():
+                if isinstance(message, SystemMessage):
+                    s: dict = {"type": "system", "subtype": message.subtype, "data": message.data}
+                    steps.append(s)
+                    if step_callback:
+                        step_callback(s)
                 if isinstance(message, TaskProgressMessage):
                     step: dict = {"type": "task_progress", "description": message.description}
                     if message.last_tool_name:
@@ -216,6 +222,11 @@ class AgentRunner:
             steps: list[dict] = []
 
             async for message in client.receive_response():
+                if isinstance(message, SystemMessage):
+                    s_sys: dict = {"type": "system", "subtype": message.subtype, "data": message.data}
+                    steps.append(s_sys)
+                    if step_callback:
+                        step_callback(s_sys)
                 if isinstance(message, TaskProgressMessage):
                     s2: dict = {"type": "task_progress", "description": message.description}
                     if message.last_tool_name:
