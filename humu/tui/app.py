@@ -15,7 +15,7 @@ from humu.services.storage import Storage
 from humu.tui.screens.create_agent import CreateAgentScreen
 from humu.tui.screens.create_room import CreateRoomScreen, RoomCreateResult
 from humu.tui.screens.create_workspace import CreateWorkspaceScreen
-from humu.tui.widgets.agent_panel import AgentPanel
+from humu.tui.widgets.agent_panel import AgentEditRequested, AgentPanel
 from humu.tui.widgets.chat_panel import ChatPanel, MessageSubmitted
 from humu.tui.widgets.resize_handle import ResizeHandle
 from humu.tui.widgets.room_panel import RoomNewRequested, RoomPanel, RoomSelected
@@ -568,6 +568,23 @@ class HumuApp(App):
             self._refresh_chat()
             self._storage.save_last_session(self._current_workspace.name, room.name)
             self.notify(f"Room '{result.name}' created with leader '{leader_name}'.")
+
+    def on_agent_edit_requested(self, event: AgentEditRequested) -> None:
+        agent = self._storage.get_agent(event.name)
+        if not agent:
+            self.notify(f"Agent '{event.name}' not found.", severity="error")
+            return
+        from humu.tui.screens.create_agent import CreateAgentScreen
+
+        def _on_saved(result: object) -> None:
+            from humu.models.agent import AgentConfig
+
+            if isinstance(result, AgentConfig):
+                self._storage.save_agent(result)
+                self._refresh_agents()
+                self.notify(f"Agent '{result.name}' saved.")
+
+        self.push_screen(CreateAgentScreen(existing=agent), _on_saved)
 
     def _on_agent_created(self, result: object) -> None:
         from humu.models.agent import AgentConfig

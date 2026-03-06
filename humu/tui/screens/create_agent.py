@@ -45,36 +45,56 @@ class CreateAgentScreen(ModalScreen[AgentConfig | None]):
 
     MODELS = [("opus", "opus"), ("sonnet", "sonnet"), ("haiku", "haiku")]
 
+    def __init__(self, existing: AgentConfig | None = None) -> None:
+        super().__init__()
+        self._existing = existing
+        self._is_edit = existing is not None
+
     def compose(self) -> ComposeResult:
+        ex = self._existing
+        title = "Edit Agent" if self._is_edit else "Create Agent"
+        btn_label = "Save" if self._is_edit else "Create"
         with Vertical():
-            yield Label("Create Agent", id="title")
+            yield Label(title, id="title")
             yield Label("Name:")
-            yield Input(placeholder="backend-expert", id="agent-name")
+            yield Input(
+                value=ex.name if ex else "",
+                placeholder="backend-expert",
+                id="agent-name",
+                disabled=self._is_edit,  # name is the key, don't allow rename
+            )
             yield Label("Description:")
             yield Input(
+                value=ex.description if ex else "",
                 placeholder="Expert in backend development...",
                 id="agent-desc",
             )
             yield Label("System prompt:")
-            yield TextArea(id="agent-prompt")
+            yield TextArea(ex.prompt if ex else "", id="agent-prompt")
             yield Label("Model:")
             yield Select(
                 self.MODELS,
-                value=DEFAULT_MODEL,
+                value=ex.model if ex else DEFAULT_MODEL,
                 id="model-select",
             )
             yield Label("Tools (comma-separated):")
             yield Input(
-                value=", ".join(DEFAULT_TOOLS),
+                value=", ".join(ex.tools) if ex else ", ".join(DEFAULT_TOOLS),
                 id="agent-tools",
             )
-            yield Checkbox("Enable streaming", id="agent-streaming")
-            yield Button("Create", variant="primary", id="btn-create")
+            yield Checkbox(
+                "Enable streaming",
+                value=ex.streaming if ex else False,
+                id="agent-streaming",
+            )
+            yield Button(btn_label, variant="primary", id="btn-create")
             yield Button("Cancel", id="btn-cancel")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-create":
             name = self.query_one("#agent-name", Input).value.strip()
+            if not name and self._existing:
+                name = self._existing.name
             desc = self.query_one("#agent-desc", Input).value.strip()
             prompt = self.query_one("#agent-prompt", TextArea).text.strip()
             model = str(self.query_one("#model-select", Select).value)
