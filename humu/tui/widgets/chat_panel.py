@@ -201,20 +201,16 @@ class ChatInput(TextArea):
 
 
 class PathAutocomplete(Static):
-    """Fixed-height read-only area showing path completions below the input.
-
-    Always occupies exactly 5 lines so the input position never shifts.
-    """
+    """Fixed 3-line area showing path/skill completions below the input border."""
 
     DEFAULT_CSS = """
     PathAutocomplete {
-        display: none;
-    }
-    PathAutocomplete.active {
-        display: block;
-        height: 5;
+        height: 3;
         margin: 0 1;
         padding: 0 1;
+        color: $text-muted;
+    }
+    PathAutocomplete.active {
         background: $surface;
         border: solid $accent;
         color: $text;
@@ -239,7 +235,7 @@ class PathAutocomplete(Static):
     def clear(self) -> None:
         self._paths = []
         self._index = 0
-        self.update("")
+        self.update("\n\n")  # keep 3 lines height
         self.remove_class("active")
 
     def move_down(self) -> None:
@@ -259,7 +255,7 @@ class PathAutocomplete(Static):
 
     def _refresh_display(self) -> None:
         total = len(self._paths)
-        window = 5
+        window = 3
         start = max(0, min(self._index - window // 2, total - window))
         end = min(start + window, total)
         lines = []
@@ -269,6 +265,9 @@ class PathAutocomplete(Static):
                 lines.append(f"[bold reverse] ❯ {path} [/bold reverse]")
             else:
                 lines.append(f"   {path}")
+        # Pad to always fill 3 lines
+        while len(lines) < 3:
+            lines.append("")
         self.update("\n".join(lines))
 
 
