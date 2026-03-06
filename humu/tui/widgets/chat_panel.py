@@ -161,7 +161,6 @@ class PathAutocomplete(Static):
     }
     PathAutocomplete.active {
         background: $surface;
-        border: solid $accent;
         color: $text;
     }
     """
@@ -260,6 +259,7 @@ class ChatMessage(Vertical):
         is_system: bool = False,
         raw: str | None = None,
         steps: list[dict] | None = None,
+        context_pct: float | None = None,
     ) -> None:
         super().__init__()
         self._sender = sender
@@ -267,16 +267,21 @@ class ChatMessage(Vertical):
         self._is_system = is_system
         self._raw = raw
         self._steps = steps or []
+        self._context_pct = context_pct
 
     def compose(self) -> ComposeResult:
         from rich.text import Text
 
+        label = f"[{self._sender}]"
+        if self._context_pct is not None and self._context_pct > 0:
+            label += f" ({self._context_pct:.0f}%)"
+
         if self._sender == "error":
-            yield Label(Text(f"[{self._sender}]"), classes="sender-error")
+            yield Label(Text(label), classes="sender-error")
         elif self._is_system:
-            yield Label(Text(f"[{self._sender}]"), classes="sender-system")
+            yield Label(Text(label), classes="sender-system")
         else:
-            yield Label(Text(f"[{self._sender}]"), classes="sender")
+            yield Label(Text(label), classes="sender")
         yield Static(self._text, classes="msg-text")
 
     def on_click(self, event: Click) -> None:
@@ -444,9 +449,10 @@ class ChatPanel(Static):
         is_system: bool = False,
         raw: str | None = None,
         steps: list[dict] | None = None,
+        context_pct: float | None = None,
     ) -> None:
         container = self.query_one("#chat-messages", Vertical)
-        msg = ChatMessage(sender, text, is_system, raw=raw, steps=steps)
+        msg = ChatMessage(sender, text, is_system, raw=raw, steps=steps, context_pct=context_pct)
         container.mount(msg)
         self.call_after_refresh(self._scroll_to_end)
 
@@ -511,7 +517,7 @@ class ChatPanel(Static):
                 if " " not in partial and "\n" not in partial:
                     self._trigger_start = slash_pos
                     self._trigger_char = "/"
-                    skills = self._list_skills(partial)
+                    skills = self._list_slash_completions(partial)
                     autocomplete.show_paths(skills)
                     textarea.suppress_enter = bool(skills)
                     return
@@ -586,16 +592,30 @@ class ChatPanel(Static):
 
         return result
 
-    def _list_skills(self, partial: str) -> list[str]:
-        if not self._get_skills:
-            return []
-        results = []
-        for s in self._get_skills():
-            name = s.get("name", "")
-            desc = s.get("description", "")
+    _BUILTIN_COMMANDS = [
+        ("invite", "Invite agent to room"),
+        ("kick", "Remove agent from room"),
+        ("agents", "List all agents"),
+        ("rooms", "List rooms in workspace"),
+        ("status", "Show current state"),
+        ("compact", "Summarize & clear history"),
+        ("help", "Show command help"),
+    ]
+
+    def _list_slash_completions(self, partial: str) -> list[str]:
+        results: list[str] = []
+        # Built-in commands
+        for name, desc in self._BUILTIN_COMMANDS:
             if name.startswith(partial):
-                label = f"{name}  {desc[:60]}" if desc else name
-                results.append(label)
+                results.append(f"{name}  {desc}")
+        # Plugin skills
+        if self._get_skills:
+            for s in self._get_skills():
+                name = s.get("name", "")
+                desc = s.get("description", "")
+                if name.startswith(partial):
+                    label = f"{name}  {desc[:60]}" if desc else name
+                    results.append(label)
         return results
 
     def _apply_autocomplete(self, item: str) -> None:

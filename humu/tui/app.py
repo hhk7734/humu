@@ -220,19 +220,8 @@ class HumuApp(App):
         if not self._current_room:
             agent_panel.set_agents(None)
             return
-        usage: dict[str, tuple[int, str]] = {}
-        if self._current_workspace:
-            ws_name = self._current_workspace.name
-            room_name = self._current_room.name
-            all_agents = [self._current_room.leader] + list(self._current_room.agents)
-            for name in all_agents:
-                tokens = self._router.get_agent_tokens(ws_name, room_name, name)
-                if tokens > 0:
-                    agent_cfg = self._storage.get_agent(name)
-                    model = agent_cfg.model if agent_cfg else ""
-                    usage[name] = (tokens, model)
         agent_panel.set_agents(
-            self._current_room.leader, self._current_room.agents, usage=usage
+            self._current_room.leader, self._current_room.agents
         )
 
     def _refresh_queue_display(self) -> None:
@@ -307,7 +296,7 @@ class HumuApp(App):
             if cmd in {"/invite", "/kick", "/agents", "/rooms", "/status", "/help", "/skills", "/compact"}:
                 await self._handle_command(text)
                 return
-            # Unrecognized /cmd — treat as skill invocation, fall through to router
+            # Unrecognized /cmd — fall through to router as skill invocation
 
         if not self._current_workspace or not self._current_room:
             self.notify("Select a workspace and room first.", severity="warning")
@@ -388,6 +377,16 @@ class HumuApp(App):
                 chat = self.query_one(ChatPanel)
                 chat.hide_loading()
 
+        def _get_context_pct(agent_name: str) -> float | None:
+            from humu.config import MODEL_CONTEXT_WINDOWS, DEFAULT_CONTEXT_WINDOW
+            tokens = self._router.get_agent_tokens(workspace.name, room.name, agent_name)
+            if tokens <= 0:
+                return None
+            agent_cfg = self._storage.get_agent(agent_name)
+            model = agent_cfg.model if agent_cfg else ""
+            ctx_size = MODEL_CONTEXT_WINDOWS.get(model, DEFAULT_CONTEXT_WINDOW)
+            return min(tokens / ctx_size * 100, 100)
+
         def _add_message(sender: str, text: str, is_system: bool, raw: str | None, steps: list) -> None:
             self._storage.append_chat_message(
                 workspace,
@@ -396,7 +395,8 @@ class HumuApp(App):
             )
             if self._is_viewing(workspace, room):
                 chat = self.query_one(ChatPanel)
-                chat.add_message(sender, text, is_system, raw, steps)
+                pct = _get_context_pct(sender) if not is_system and sender != "you" else None
+                chat.add_message(sender, text, is_system, raw, steps, context_pct=pct)
 
         cancelled = False
         try:

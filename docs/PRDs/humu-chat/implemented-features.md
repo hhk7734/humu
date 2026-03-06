@@ -46,17 +46,19 @@ Right-clicking a chat message with tool steps opens a `MessageDetailScreen` moda
 
 In addition to the routing-based message flow, the following slash commands are handled directly by `HumuApp` without being forwarded to agents:
 
-| Command           | Description                                               |
-| :---------------- | :-------------------------------------------------------- |
-| `/invite <agent>` | Add an existing agent to the current room                 |
-| `/kick <agent>`   | Remove an agent from the current room (not the leader)    |
-| `/agents`         | List all defined agents with their descriptions           |
-| `/rooms`          | List all rooms in the current workspace                   |
-| `/status`         | Show current workspace, path, room, leader, and agents    |
-| `/help`           | Show command reference                                    |
-| `/skills`         | (forwarded to router as skill invocation if skill exists) |
+| Command              | Description                                            |
+| :------------------- | :----------------------------------------------------- |
+| `/invite <agent>`    | Add an existing agent to the current room              |
+| `/kick <agent>`      | Remove an agent from the current room (not the leader) |
+| `/agents`            | List all defined agents with their descriptions        |
+| `/rooms`             | List all rooms in the current workspace                |
+| `/status`            | Show current workspace, path, room, leader, and agents |
+| `/compact`           | Summarize and clear conversation history               |
+| `/help`              | Show command reference                                 |
 
 Any unrecognised `/cmd` is treated as a skill invocation and forwarded to the router.
+
+The `/` autocomplete dropdown (in `ChatInput`) surfaces both built-in commands and installed plugin skills in a single list, ordered: built-ins first, then skills.
 
 ## Double Ctrl+C to Quit
 
@@ -105,13 +107,13 @@ Panel widths are saved to `~/.humu/last_session.json` under a `panel_widths` key
 
 ## Token Usage Display
 
-After each message is processed, the `AgentPanel` shows how much of each agent's context window has been consumed:
+Context usage is displayed inline in each agent's chat message header rather than in the `AgentPanel`. When an agent message is added to the chat:
 
-- `Router._agent_tokens` stores `(ws_name, room_name, agent_name) → total_tokens`.
-- Token counts are extracted from `TaskProgressMessage.usage` and `ResultMessage.usage` inside `AgentRunner`.
-- `Router.get_agent_tokens()` is called by the app after processing finishes, and the result is passed to `AgentPanel.set_agents(usage=...)`.
-- `AgentPanel._format_label()` renders `* leader (42%)` when usage is available, where `42%` = `total_tokens / context_window × 100`.
-- Context window sizes per model are defined in `MODEL_CONTEXT_WINDOWS` in `config.py` (all currently 200,000 tokens).
+- `_get_context_pct(agent_name)` is called inside `_process_message()` to compute the percentage at render time.
+- It reads `Router.get_agent_tokens(ws_name, room_name, agent_name)` and divides by the model's context window size (`MODEL_CONTEXT_WINDOWS` in `config.py`, all currently 200,000 tokens).
+- The result is passed as `context_pct` to `ChatPanel.add_message()` → `ChatMessage`, which renders `[leader] (42%)` in the sender label.
+- Only non-system, non-user messages receive a percentage; `is_system=True` and `sender == "you"` are excluded.
+- Token counts are accumulated by `Router._agent_tokens` from `TaskProgressMessage.usage` and `ResultMessage.usage` inside `AgentRunner`.
 
 ## Agent Edit (Double-Click)
 
