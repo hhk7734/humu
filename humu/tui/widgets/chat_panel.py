@@ -9,8 +9,7 @@ from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.events import Click, Key
 from textual.message import Message
-from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Static, TextArea
+from textual.widgets import Label, Static, TextArea
 
 
 def _path_needle(text: str) -> str:
@@ -85,71 +84,6 @@ class LoadingChatMessage(Vertical):
                 MessageDetailScreen(self._sender, "", steps=steps)
             )
 
-
-class MessageContextMenu(ModalScreen[None]):
-    """Right-click context menu for a chat message."""
-
-    BINDINGS = [("escape", "dismiss", "Close")]
-
-    DEFAULT_CSS = """
-    MessageContextMenu {
-        align: center middle;
-        background: $background 50%;
-    }
-    MessageContextMenu #menu {
-        width: 24;
-        height: auto;
-        border: solid $accent;
-        background: $surface;
-        padding: 0;
-    }
-    MessageContextMenu Button {
-        width: 1fr;
-        background: transparent;
-        border: none;
-        text-align: left;
-        padding: 0 1;
-    }
-    MessageContextMenu Button:hover {
-        background: $accent 30%;
-    }
-    """
-
-    def __init__(
-        self,
-        sender: str,
-        text: str,
-        is_system: bool,
-        raw: str | None,
-        steps: list[dict] | None = None,
-    ) -> None:
-        super().__init__()
-        self._sender = sender
-        self._text = text
-        self._is_system = is_system
-        self._raw = raw
-        self._steps = steps or []
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="menu"):
-            yield Button("View Details", id="btn-details")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn-details":
-            from humu.tui.screens.message_detail import MessageDetailScreen
-
-            self.dismiss()
-            self.app.push_screen(
-                MessageDetailScreen(
-                    self._sender, self._text, self._is_system,
-                    raw=self._raw, steps=self._steps,
-                )
-            )
-
-    def on_click(self, event: Click) -> None:
-        menu = self.query_one("#menu", Vertical)
-        if not menu.region.contains(event.screen_x, event.screen_y):
-            self.dismiss()
 
 
 class ChatInput(TextArea):
@@ -346,8 +280,9 @@ class ChatMessage(Vertical):
 
     def on_click(self, event: Click) -> None:
         if event.button == 3:  # right-click
+            from humu.tui.screens.message_detail import MessageDetailScreen
             self.app.push_screen(
-                MessageContextMenu(
+                MessageDetailScreen(
                     self._sender, self._text, self._is_system,
                     raw=self._raw, steps=self._steps,
                 )
