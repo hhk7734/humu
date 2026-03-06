@@ -97,9 +97,11 @@ class HumuApp(App):
     def _refresh_chat(self) -> None:
         chat_panel = self.query_one(ChatPanel)
         if not self._current_workspace or not self._current_room:
+            chat_panel.set_workspace_path(None)
             chat_panel.set_room(None)
             chat_panel.clear_messages()
             return
+        chat_panel.set_workspace_path(self._current_workspace.root_path)
         chat_panel.set_room(self._current_room.name)
         history = self._storage.load_chat_history(
             self._current_workspace, self._current_room.name
