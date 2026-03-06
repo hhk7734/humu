@@ -52,12 +52,14 @@ class ResizeHandle(Widget):
         self._save_callback = save_callback
         self._drag_start_x: int | None = None
         self._drag_origin_width: int = 0
+        self._last_set_width: int | None = None  # avoid redundant layout refreshes
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
         self.capture_mouse()
         self._drag_start_x = event.screen_x
         target = self.app.query_one(f"#{self._target_id}")
         self._drag_origin_width = target.size.width
+        self._last_set_width = self._drag_origin_width
         event.stop()
 
     def on_mouse_move(self, event: events.MouseMove) -> None:
@@ -67,6 +69,11 @@ class ResizeHandle(Widget):
         if self._invert:
             delta = -delta
         new_width = max(self._min_width, self._drag_origin_width + delta)
+        # Skip the style update (and resulting layout refresh) when width hasn't changed
+        if new_width == self._last_set_width:
+            event.stop()
+            return
+        self._last_set_width = new_width
         target = self.app.query_one(f"#{self._target_id}")
         target.styles.width = new_width
         event.stop()
@@ -79,4 +86,5 @@ class ResizeHandle(Widget):
         target = self.app.query_one(f"#{self._target_id}")
         if self._save_callback:
             self._save_callback(self._target_id, target.size.width)
+        self._last_set_width = None
         event.stop()
