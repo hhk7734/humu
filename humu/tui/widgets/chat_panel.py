@@ -369,7 +369,7 @@ class ChatPanel(Static):
         height: auto;
         border-top: solid $accent 50%;
         border-bottom: solid $accent 50%;
-        padding: 1 0 0 0;
+        padding: 1 0;
     }
     ChatPanel #chat-input {
         margin: 0 1;
