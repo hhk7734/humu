@@ -3,7 +3,10 @@ name = "humu"
 version = "0.1.0"
 description = "TUI multi-agent chat application"
 requires-python = ">=3.11"
-dependencies = ["claude-agent-sdk>=0.1.40", "textual>=3.0.0"]
+dependencies = [
+    "claude-agent-sdk>=0.1.40",
+    "textual>=3.0.0",
+]
 
 [project.scripts]
 humu = "humu.main:main"
