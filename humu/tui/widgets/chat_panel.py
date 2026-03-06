@@ -604,16 +604,23 @@ class ChatPanel(Static):
 
     def _list_slash_completions(self, partial: str) -> list[str]:
         results: list[str] = []
-        # Built-in commands
-        for name, desc in self._BUILTIN_COMMANDS:
-            if name.startswith(partial):
-                results.append(f"{name}  {desc}")
-        # Plugin skills
+        # Built-in commands — only matched when partial has no ":"
+        if ":" not in partial:
+            for name, desc in self._BUILTIN_COMMANDS:
+                if name.startswith(partial):
+                    results.append(f"{name}  {desc}")
+        # Plugin skills — format: "marketplace:skill-dir"
+        # Match rules:
+        #   - partial contains ":" → prefix match on full name ("my-mp:sk" matches "my-mp:skill")
+        #   - partial has no ":" → prefix match on full name OR on skill-dir part after ":"
         if self._get_skills:
             for s in self._get_skills():
-                name = s.get("name", "")
+                name = s.get("name", "")  # "marketplace:skill-dir"
                 desc = s.get("description", "")
-                if name.startswith(partial):
+                skill_part = name.split(":", 1)[1] if ":" in name else name
+                if name.startswith(partial) or (
+                    ":" not in partial and skill_part.startswith(partial)
+                ):
                     label = f"{name}  {desc[:60]}" if desc else name
                     results.append(label)
         return results

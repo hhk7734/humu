@@ -154,7 +154,19 @@ Custom `TextArea` subclass (`humu.tui.widgets.chat_panel.ChatInput`):
 
 Three-line dropdown that appears below the input when:
 - `@` is typed — shows file/directory paths relative to the workspace root (exact prefix match then fuzzy subsequence search, max 15 results).
-- `/` is typed at the start or after whitespace — shows built-in commands first, then installed plugin skills. Built-in commands: `invite`, `kick`, `agents`, `rooms`, `status`, `compact`, `help`.
+- `/` is typed at the start or after whitespace — shows built-in commands and installed plugin skills.
+
+**`/` matching rules:**
+
+| Input typed       | Matches                                              |
+| :---------------- | :--------------------------------------------------- |
+| `/sk`             | Built-in commands starting with `sk` **+** any skill whose `skill-dir` part starts with `sk` (e.g. `my-mp:skill-name`) |
+| `/my-mp:sk`       | Skills whose full name starts with `my-mp:sk` (e.g. `my-mp:skill-name`) |
+| `/my-mp:`         | All skills in the `my-mp` marketplace                |
+
+When `partial` contains `:`, only full-name prefix matching is applied (built-in commands are excluded). When `partial` has no `:`, both the full name and the skill-dir part after `:` are checked.
+
+Built-in commands: `invite`, `kick`, `agents`, `rooms`, `status`, `compact`, `help`.
 
 Navigate with **Up / Down**, confirm with **Enter** or **Tab**, dismiss with **Escape**.
 

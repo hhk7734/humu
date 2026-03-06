@@ -114,7 +114,15 @@ The router:
 
 If the skill is not found (wrong name or not installed), a system error message is shown and no agents are queried.
 
-The `/` autocomplete in `ChatInput` shows all available skills in `marketplace:skill  description` format alongside built-in commands.
+The `/` autocomplete in `ChatInput` shows built-in commands and available skills. Skills can be discovered two ways:
+
+| Input          | What matches                                                      |
+| :------------- | :---------------------------------------------------------------- |
+| `/sk`          | Any skill whose **skill-dir part** starts with `sk` — e.g. `my-mp:skill-name`, `other-mp:skill-other` |
+| `/my-mp:sk`    | Skills whose **full name** starts with `my-mp:sk` — e.g. `my-mp:skill-name` |
+| `/my-mp:`      | All skills in the `my-mp` marketplace                             |
+
+When the partial text contains `:`, only full-name prefix matching is applied and built-in commands are excluded from results.
 
 ## Skill Context Injection
 
