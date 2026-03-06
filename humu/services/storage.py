@@ -46,10 +46,18 @@ class Storage:
         )
 
     def delete_workspace(self, name: str) -> None:
+        import shutil
+
+        ws = self.get_workspace(name)
         workspaces = [w for w in self.list_workspaces() if w.name != name]
         WORKSPACES_FILE.write_text(
             json.dumps([w.to_dict() for w in workspaces], indent=2)
         )
+        # Remove all room data, chat histories, and agent sessions
+        if ws:
+            project_dir = self._project_dir(ws)
+            if project_dir.exists():
+                shutil.rmtree(project_dir)
 
     def get_workspace(self, name: str) -> Workspace | None:
         for w in self.list_workspaces():
@@ -108,9 +116,15 @@ class Storage:
         path.write_text(json.dumps(room.to_dict(), indent=2))
 
     def delete_room(self, workspace: Workspace, room_name: str) -> None:
+        import shutil
+
         path = self._room_file(workspace, room_name)
         if path.exists():
             path.unlink()
+        # Remove chat history and agent session data
+        room_data_dir = self._project_dir(workspace) / "rooms" / room_name
+        if room_data_dir.exists():
+            shutil.rmtree(room_data_dir)
 
     def get_room(self, workspace: Workspace, room_name: str) -> Room | None:
         path = self._room_file(workspace, room_name)
