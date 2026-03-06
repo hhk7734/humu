@@ -364,6 +364,10 @@ class ChatPanel(Static):
     ChatPanel #bottom-area {
         dock: bottom;
         height: auto;
+        padding: 0;
+    }
+    ChatPanel #input-box {
+        height: auto;
         border-top: solid $accent 50%;
         border-bottom: solid $accent 50%;
         padding: 1 0 0 0;
@@ -408,8 +412,9 @@ class ChatPanel(Static):
         with VerticalScroll(id="chat-scroll"):
             yield Vertical(id="chat-messages")
         with Vertical(id="bottom-area"):
-            yield Static("", id="queue-display")
-            yield ChatInput(id="chat-input", show_line_numbers=False)
+            with Vertical(id="input-box"):
+                yield Static("", id="queue-display")
+                yield ChatInput(id="chat-input", show_line_numbers=False)
             yield PathAutocomplete(id="path-autocomplete")
 
     def on_mount(self) -> None:
