@@ -630,6 +630,7 @@ class ChatPanel(Static):
             self._trigger_start = -1
             self._trigger_char = ""
             event.prevent_default()
+            event.stop()
         elif event.key == "down":
             autocomplete.move_down()
             event.prevent_default()

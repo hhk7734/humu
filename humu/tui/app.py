@@ -42,6 +42,7 @@ class HumuApp(App):
         Binding("ctrl+r", "restart", "Reload", show=True),
         Binding("ctrl+m", "plugin_manager", "Plugins", show=True),
         Binding("ctrl+c", "quit_or_warn", "Quit (x2)", show=True),
+        Binding("escape", "cancel_processing", "Cancel", show=False),
         Binding("tab", "focus_next", "Next Panel", show=False),
         Binding("shift+tab", "focus_previous", "Prev Panel", show=False),
     ]
@@ -65,6 +66,11 @@ class HumuApp(App):
         self._spinner_timer: object | None = None
         # Per-room message queue (messages waiting while room is processing)
         self._pending_messages: dict[tuple[str, str], list[str]] = {}
+        # Per-room (event_loop, asyncio.Task) for cancellation support
+        self._active_tasks: dict[
+            tuple[str, str],
+            tuple[asyncio.AbstractEventLoop, "asyncio.Task[None]"],
+        ] = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -275,9 +281,14 @@ class HumuApp(App):
         def _process_sync() -> None:
             loop = asyncio.new_event_loop()
             try:
-                loop.run_until_complete(self._process_message(workspace, room, text))
+                task = loop.create_task(self._process_message(workspace, room, text))
+                self._active_tasks[room_key] = (loop, task)
+                loop.run_until_complete(task)
+            except asyncio.CancelledError:
+                pass
             finally:
                 loop.close()
+                self._active_tasks.pop(room_key, None)
 
         self.run_worker(_process_sync, thread=True)
 
@@ -331,6 +342,7 @@ class HumuApp(App):
                 chat = self.query_one(ChatPanel)
                 chat.add_message(sender, text, is_system, raw, steps)
 
+        cancelled = False
         try:
             async for msg in self._router.handle_message(workspace, room, text):
                 if msg.is_loading:
@@ -340,6 +352,11 @@ class HumuApp(App):
                 self.call_from_thread(
                     _add_message, msg.sender, msg.text, msg.is_system, msg.raw, msg.steps,
                 )
+        except asyncio.CancelledError:
+            cancelled = True
+            # Drain the pending queue for this room on cancellation
+            self._pending_messages.pop(room_key, None)
+            self.call_from_thread(self._refresh_queue_display)
         except Exception as e:
             import traceback
             err_detail = f"{e}\n{traceback.format_exc()}"
@@ -354,7 +371,8 @@ class HumuApp(App):
             else:
                 self.call_from_thread(self._refresh_workspaces)
                 self.call_from_thread(self._refresh_rooms)
-            self.call_from_thread(self._process_next_queued, workspace, room)
+            if not cancelled:
+                self.call_from_thread(self._process_next_queued, workspace, room)
 
     # --- Commands ---
 
@@ -619,6 +637,16 @@ class HumuApp(App):
         from humu.tui.screens.plugin_manager import PluginManagerScreen
 
         self.push_screen(PluginManagerScreen(self._storage))
+
+    def action_cancel_processing(self) -> None:
+        """Cancel the active processing task for the current room (Escape)."""
+        if not self._current_workspace or not self._current_room:
+            return
+        room_key = (self._current_workspace.name, self._current_room.name)
+        entry = self._active_tasks.get(room_key)
+        if entry:
+            loop, task = entry
+            loop.call_soon_threadsafe(task.cancel)
 
     def action_restart(self) -> None:
         self.exit(result=RELOAD_EXIT_CODE)
