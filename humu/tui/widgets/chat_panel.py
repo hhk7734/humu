@@ -621,7 +621,7 @@ class ChatPanel(Static):
                 if name.startswith(partial) or (
                     ":" not in partial and skill_part.startswith(partial)
                 ):
-                    label = f"{name}  {desc[:60]}" if desc else name
+                    label = f"{name}  {desc}" if desc else name
                     results.append(label)
         return results
 

@@ -166,6 +166,8 @@ Three-line dropdown that appears below the input when:
 
 When `partial` contains `:`, only full-name prefix matching is applied (built-in commands are excluded). When `partial` has no `:`, both the full name and the skill-dir part after `:` are checked.
 
+Each autocomplete entry is displayed as `name  full description` — the description is shown in full without truncation.
+
 Built-in commands: `invite`, `kick`, `agents`, `rooms`, `status`, `compact`, `help`.
 
 Navigate with **Up / Down**, confirm with **Enter** or **Tab**, dismiss with **Escape**.
