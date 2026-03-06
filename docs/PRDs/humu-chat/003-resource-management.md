@@ -82,9 +82,9 @@ Agents are **workspace-scoped** — stored under the workspace's project directo
 
 ### Storage
 
-| Path                                              | Contents         |
-| :------------------------------------------------ | :--------------- |
-| `~/.humu/projects/<slug>/agents/<name>.json`      | Agent definition |
+| Path                                         | Contents         |
+| :------------------------------------------- | :--------------- |
+| `~/.humu/projects/<slug>/agents/<name>.json` | Agent definition |
 
 ### Create
 
