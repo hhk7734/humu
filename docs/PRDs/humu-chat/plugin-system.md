@@ -128,12 +128,14 @@ When the partial text contains `:`, only full-name prefix matching is applied an
 
 Skills influence agent behavior at two levels:
 
-| Level         | Content injected                                         | Timing                                           |
-| :------------ | :------------------------------------------------------- | :----------------------------------------------- |
-| Session-level | `## Available Skills` with all `marketplace:skill` names | New session only (first query)                   |
-| Message-level | `## Active Skill: <marketplace>:<skill>` with full body  | Every message that uses `/<marketplace>:<skill>` |
+| Level         | Content injected                                                                                           | Timing                                           |
+| :------------ | :--------------------------------------------------------------------------------------------------------- | :----------------------------------------------- |
+| Session-level | `## Available Skills` — enabled skills listed as `**<marketplace>:<skill>**: <description>` (one per line) | New session only (first query)                   |
+| Message-level | `## Active Skill: <marketplace>:<skill>` with full body                                                    | Every message that uses `/<marketplace>:<skill>` |
 
-The **session-level** injection happens once so the leader knows what skills exist for routing decisions. The **message-level** injection happens on every invocation to provide the detailed instructions.
+The **session-level** injection happens once so the leader knows what enabled skills exist for routing decisions — only `name` and `description` are passed, not the skill body. The **message-level** injection happens on every invocation to provide the full detailed instructions.
+
+Disabled skills are excluded from the session-level `## Available Skills` section entirely.
 
 ## Storage
 

@@ -99,6 +99,8 @@ class Router:
             return ""
         lines = ["## Available Skills", "Use these skills automatically when the user's request matches:", ""]
         for s in skills:
+            if not s.get("enabled", True):
+                continue
             lines.append(f"- **{s['name']}**: {s['description']}")
         return "\n".join(lines)
 
