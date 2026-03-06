@@ -114,7 +114,7 @@ The router:
 
 If the skill is not found (wrong name or not installed), a system error message is shown and no agents are queried.
 
-The `/` autocomplete in `ChatInput` shows built-in commands and available skills. Each entry is displayed as `name  full description` (description is never truncated). Skills can be discovered two ways:
+The `/` autocomplete in `ChatInput` shows built-in commands and available skills. Each entry is displayed as `name  full description`. If an entry is wider than the autocomplete widget it is clipped and suffixed with `…`. Skills can be discovered two ways:
 
 | Input          | What matches                                                      |
 | :------------- | :---------------------------------------------------------------- |

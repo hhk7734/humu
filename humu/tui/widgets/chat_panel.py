@@ -220,15 +220,16 @@ class PathAutocomplete(Static):
             raw = f" ❯ {path} " if is_selected else f"   {path}"
             # Manually clip to widget content width — no_wrap on Text is not
             # honoured reliably in Textual's rendering pipeline.
-            if width > 0:
+            # When clipped, append "…" (1 cell) so the truncation is visible.
+            if width > 0 and cell_len(raw) > width:
                 clipped, w = "", 0
                 for ch in raw:
                     cw = cell_len(ch)
-                    if w + cw > width:
+                    if w + cw > width - 1:  # reserve 1 cell for "…"
                         break
                     clipped += ch
                     w += cw
-                raw = clipped
+                raw = clipped + "…"
             content.append(raw, style="bold reverse" if is_selected else "")
             rendered += 1
         # Pad to always fill 3 lines
