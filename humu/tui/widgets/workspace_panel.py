@@ -40,6 +40,9 @@ class WorkspacePanel(Static):
     WorkspacePanel ListView > ListItem.--highlight {
         background: $accent 25%;
     }
+    WorkspacePanel ListView > ListItem.selected {
+        background: $accent 20%;
+    }
     WorkspacePanel .new-item {
         color: $text-muted;
         text-style: italic;
@@ -68,7 +71,10 @@ class WorkspacePanel(Static):
         for name in names:
             prefix = "> " if name == selected else "  "
             badge = f" [yellow]{spinner}[/yellow]" if name in processing else ""
-            lv.append(ListItem(Label(f"{prefix}{name}{badge}"), name=name))
+            item = ListItem(Label(f"{prefix}{name}{badge}"), name=name)
+            if name == selected:
+                item.add_class("selected")
+            lv.append(item)
         lv.append(ListItem(Label("+ new", classes="new-item"), name=NEW_ITEM))
 
     def update_spinner(
