@@ -87,14 +87,26 @@ class Handler:
         }
 
     async def _cmd_list_agents(self, msg: dict) -> dict:
-        agents = self._storage.list_agents()
+        ws = self._storage.get_workspace(msg["workspace"])
+        if not ws:
+            return {
+                "type": "error",
+                "message": f"Workspace '{msg['workspace']}' not found",
+            }
+        agents = self._storage.list_agents(ws)
         return {
             "type": "agent_list",
             "agents": [a.to_dict() for a in agents],
         }
 
     async def _cmd_get_agent(self, msg: dict) -> dict:
-        agent = self._storage.get_agent(msg["name"])
+        ws = self._storage.get_workspace(msg["workspace"])
+        if not ws:
+            return {
+                "type": "error",
+                "message": f"Workspace '{msg['workspace']}' not found",
+            }
+        agent = self._storage.get_agent(ws, msg["name"])
         return {
             "type": "agent_info",
             "agent": agent.to_dict() if agent else None,
@@ -164,7 +176,7 @@ class Handler:
             }
         room_name = msg["room_name"]
         leader_name = f"{room_name}-leader"
-        if not self._storage.get_agent(leader_name):
+        if not self._storage.get_agent(ws, leader_name):
             leader = AgentConfig(
                 name=leader_name,
                 description=f"Leader agent for room '{room_name}'. Routes messages to the right agents.",
@@ -174,7 +186,7 @@ class Handler:
                     "or forward to a specialist agent in the room."
                 ),
             )
-            self._storage.save_agent(leader)
+            self._storage.save_agent(ws, leader)
         room = Room(name=room_name, leader=leader_name)
         self._storage.save_room(ws, room)
         self._broadcast(
@@ -208,14 +220,20 @@ class Handler:
         return {"type": "ok"}
 
     async def _cmd_create_agent(self, msg: dict) -> dict:
+        ws = self._storage.get_workspace(msg["workspace"])
+        if not ws:
+            return {
+                "type": "error",
+                "message": f"Workspace '{msg['workspace']}' not found",
+            }
         agent = AgentConfig.from_dict(msg["agent"])
-        self._storage.save_agent(agent)
+        self._storage.save_agent(ws, agent)
         self._broadcast(
             {
                 "type": "agent_list",
-                "agents": [a.to_dict() for a in self._storage.list_agents()],
+                "agents": [a.to_dict() for a in self._storage.list_agents(ws)],
             },
-            None,
+            ws.name,
             None,
         )
         return {"type": "ok"}
@@ -231,7 +249,7 @@ class Handler:
         if not room:
             return {"type": "error", "message": f"Room '{msg['room']}' not found"}
         agent_name = msg["agent_name"]
-        if not self._storage.get_agent(agent_name):
+        if not self._storage.get_agent(ws, agent_name):
             return {"type": "error", "message": f"Agent '{agent_name}' not found"}
         if agent_name in room.agents or agent_name == room.leader:
             return {"type": "error", "message": f"Agent '{agent_name}' already in room"}
@@ -369,7 +387,7 @@ class Handler:
         tokens = self._router.get_agent_tokens(workspace.name, room.name, agent_name)
         if tokens <= 0:
             return None
-        agent_cfg = self._storage.get_agent(agent_name)
+        agent_cfg = self._storage.get_agent(workspace, agent_name)
         model = agent_cfg.model if agent_cfg else ""
         ctx_size = MODEL_CONTEXT_WINDOWS.get(model, DEFAULT_CONTEXT_WINDOW)
         return min(tokens / ctx_size * 100, 100)
@@ -594,7 +612,7 @@ class Handler:
                 prompt += f"\nAdditional instructions: {instructions}\n"
             prompt += f"\n---\n{conversation_text}\n---"
 
-            leader_cfg = self._storage.get_agent(room.leader)
+            leader_cfg = self._storage.get_agent(workspace, room.leader)
             if not leader_cfg:
                 self._broadcast(
                     {"type": "error", "message": "Leader agent not found"},

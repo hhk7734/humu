@@ -328,13 +328,19 @@ class HumuApp(App):
 
     async def _refresh_agents(self) -> None:
         agent_panel = self.query_one(AgentPanel)
-        if not self._current_room:
+        if not self._current_workspace or not self._current_room:
             agent_panel.set_agents(None)
             return
         all_agent_names = [self._current_room.leader] + list(self._current_room.agents)
         agent_models: dict[str, str] = {}
         for aname in all_agent_names:
-            reply = await self._conn.send({"type": "get_agent", "name": aname})
+            reply = await self._conn.send(
+                {
+                    "type": "get_agent",
+                    "workspace": self._current_workspace.name,
+                    "name": aname,
+                }
+            )
             if reply and reply.get("type") == "agent_info" and reply.get("agent"):
                 agent_models[aname] = reply["agent"].get("model", "")
         agent_panel.set_agents(
@@ -576,7 +582,12 @@ class HumuApp(App):
             self.notify(reply["message"], severity="error")
 
     async def _cmd_list_agents(self) -> None:
-        reply = await self._conn.send({"type": "list_agents"})
+        if not self._current_workspace:
+            self.notify("Select a workspace first.", severity="warning")
+            return
+        reply = await self._conn.send(
+            {"type": "list_agents", "workspace": self._current_workspace.name}
+        )
         if reply and reply.get("type") == "agent_list":
             agents = reply["agents"]
             if agents:
@@ -726,7 +737,12 @@ class HumuApp(App):
 
     def on_agent_edit_requested(self, event: AgentEditRequested) -> None:
         async def _do() -> None:
-            reply = await self._conn.send({"type": "get_agent", "name": event.name})
+            if not self._current_workspace:
+                return
+            ws_name = self._current_workspace.name
+            reply = await self._conn.send(
+                {"type": "get_agent", "workspace": ws_name, "name": event.name}
+            )
             if not reply or reply.get("type") != "agent_info" or not reply.get("agent"):
                 self.notify(f"Agent '{event.name}' not found.", severity="error")
                 return
@@ -737,7 +753,11 @@ class HumuApp(App):
 
                     async def _save() -> None:
                         await self._conn.send(
-                            {"type": "create_agent", "agent": result.to_dict()}
+                            {
+                                "type": "create_agent",
+                                "workspace": ws_name,
+                                "agent": result.to_dict(),
+                            }
                         )
                         self._refresh_agents_sync()
                         self.notify(f"Agent '{result.name}' saved.")
@@ -753,11 +773,15 @@ class HumuApp(App):
     def _on_agent_created(self, result: object) -> None:
         from humu.models.agent import AgentConfig
 
-        if isinstance(result, AgentConfig):
+        if isinstance(result, AgentConfig) and self._current_workspace:
 
             async def _do() -> None:
                 await self._conn.send(
-                    {"type": "create_agent", "agent": result.to_dict()}
+                    {
+                        "type": "create_agent",
+                        "workspace": self._current_workspace.name,
+                        "agent": result.to_dict(),
+                    }
                 )
                 self._refresh_agents_sync()
                 self.notify(f"Agent '{result.name}' created.")

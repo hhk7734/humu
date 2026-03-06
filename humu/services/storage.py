@@ -7,7 +7,6 @@ import shutil
 import subprocess
 
 from humu.config import (
-    AGENTS_DIR,
     HUMU_HOME,
     MARKETPLACES_FILE,
     PLUGINS_DIR,
@@ -26,7 +25,6 @@ class Storage:
     def __init__(self) -> None:
         HUMU_HOME.mkdir(parents=True, exist_ok=True)
         PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
-        AGENTS_DIR.mkdir(parents=True, exist_ok=True)
         PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
         if not WORKSPACES_FILE.exists():
             WORKSPACES_FILE.write_text("[]")
@@ -65,26 +63,32 @@ class Storage:
                 return w
         return None
 
-    # --- Agents ---
+    # --- Agents (workspace-scoped) ---
 
-    def list_agents(self) -> list[AgentConfig]:
+    def _agents_dir(self, workspace: Workspace) -> Path:
+        d = self._project_dir(workspace) / "agents"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def list_agents(self, workspace: Workspace) -> list[AgentConfig]:
         agents = []
-        for f in AGENTS_DIR.glob("*.json"):
+        agents_dir = self._agents_dir(workspace)
+        for f in agents_dir.glob("*.json"):
             data = json.loads(f.read_text())
             agents.append(AgentConfig.from_dict(data))
         return agents
 
-    def save_agent(self, agent: AgentConfig) -> None:
-        path = AGENTS_DIR / f"{agent.name}.json"
+    def save_agent(self, workspace: Workspace, agent: AgentConfig) -> None:
+        path = self._agents_dir(workspace) / f"{agent.name}.json"
         path.write_text(json.dumps(agent.to_dict(), indent=2))
 
-    def delete_agent(self, name: str) -> None:
-        path = AGENTS_DIR / f"{name}.json"
+    def delete_agent(self, workspace: Workspace, name: str) -> None:
+        path = self._agents_dir(workspace) / f"{name}.json"
         if path.exists():
             path.unlink()
 
-    def get_agent(self, name: str) -> AgentConfig | None:
-        path = AGENTS_DIR / f"{name}.json"
+    def get_agent(self, workspace: Workspace, name: str) -> AgentConfig | None:
+        path = self._agents_dir(workspace) / f"{name}.json"
         if path.exists():
             data = json.loads(path.read_text())
             return AgentConfig.from_dict(data)

@@ -129,6 +129,7 @@ class Router:
 
     def _build_leader_prompt(
         self,
+        workspace: Workspace,
         leader: AgentConfig,
         room: Room,
         skill_context: str = "",
@@ -138,7 +139,7 @@ class Router:
     ) -> str:
         agent_descriptions = []
         for agent_name in room.agents:
-            agent = self._storage.get_agent(agent_name)
+            agent = self._storage.get_agent(workspace, agent_name)
             if agent:
                 agent_descriptions.append(f"- **{agent.name}**: {agent.description}")
 
@@ -200,7 +201,7 @@ When forwarding, include enough context in the "context" field for the agent to 
         room: Room,
         user_message: str,
     ) -> AsyncIterator[ChatMessage]:
-        leader = self._storage.get_agent(room.leader)
+        leader = self._storage.get_agent(workspace, room.leader)
         if not leader:
             yield ChatMessage(
                 sender="system",
@@ -228,6 +229,7 @@ When forwarding, include enough context in the "context" field for the agent to 
             self._storage.get_session_id(workspace, room.name, leader.name) is None
         )
         leader_prompt = self._build_leader_prompt(
+            workspace,
             leader,
             room,
             skill_context,
@@ -303,7 +305,7 @@ When forwarding, include enough context in the "context" field for the agent to 
                     )
                     continue
 
-                agent = self._storage.get_agent(target_name)
+                agent = self._storage.get_agent(workspace, target_name)
                 if not agent:
                     yield ChatMessage(
                         sender="error",
@@ -454,7 +456,7 @@ When forwarding, include enough context in the "context" field for the agent to 
                     )
                     continue
 
-                agent = self._storage.get_agent(agent_name)
+                agent = self._storage.get_agent(workspace, agent_name)
                 if not agent:
                     yield ChatMessage(
                         sender="error",
