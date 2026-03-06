@@ -220,8 +220,14 @@ class HumuApp(App):
         if not self._current_room:
             agent_panel.set_agents(None)
             return
+        all_agent_names = [self._current_room.leader] + list(self._current_room.agents)
+        agent_models: dict[str, str] = {}
+        for aname in all_agent_names:
+            agent_cfg = self._storage.get_agent(aname)
+            if agent_cfg:
+                agent_models[aname] = agent_cfg.model
         agent_panel.set_agents(
-            self._current_room.leader, self._current_room.agents
+            self._current_room.leader, self._current_room.agents, agent_models
         )
 
     def _refresh_queue_display(self) -> None:

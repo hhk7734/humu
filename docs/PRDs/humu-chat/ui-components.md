@@ -9,12 +9,12 @@ This document names and describes every UI component in Humu so that developers 
 │                  │   │           │   │                           │   │                  │
 │  WorkspacePanel  │⠿  │ RoomPanel │⠿  │         ChatPanel         │⠿  │   AgentPanel     │
 │                  │   │           │   │  ┌─────────────────────┐  │   │                  │
-│  > my-app    ⠹   │   │ > design  │   │  │   #chat-messages    │  │   │  * leader (12%)  │
-│    infra         │   │   dev     │   │  │                     │  │   │    backend        │
-│    docs          │   │   review  │   │  │  [you] How should   │  │   │    security       │
-│                  │   │           │   │  │  we structure this? │  │   │                  │
-│                  │   │           │   │  │                     │  │   │                  │
-│                  │   │           │   │  │  [leader] Routing…  │  │   │                  │
+│  > my-app    ⠹   │   │ > design  │   │  │   #chat-messages    │  │   │  * leader        │
+│    infra         │   │   dev     │   │  │                     │  │   │    opus          │
+│    docs          │   │   review  │   │  │  [you] How should   │  │   │    backend       │
+│                  │   │           │   │  │  we structure this? │  │   │    sonnet        │
+│                  │   │           │   │  │                     │  │   │    security      │
+│                  │   │           │   │  │  [leader] Routing…  │  │   │    haiku         │
 │                  │   │           │   │  │                     │  │   │                  │
 │                  │   │           │   │  │  [backend] I would  │  │   │                  │
 │                  │   │           │   │  │  recommend REST…    │  │   │                  │
@@ -182,7 +182,7 @@ Navigate with **Up / Down**, confirm with **Enter** or **Tab**, dismiss with **E
 | CSS id        | `#agent-panel`                            |
 | Default width | 16 columns                                |
 
-Lists agents in the currently selected room. The leader is prefixed with `*`; member agents with two spaces.
+Lists agents in the currently selected room. The leader is prefixed with `*`; member agents with two spaces. Below each agent name, the configured model (e.g. `opus`, `sonnet`) is displayed in muted text.
 
 **Double-click** on any item fires `AgentEditRequested`, which opens the agent edit dialog.
 
@@ -192,6 +192,8 @@ Lists agents in the currently selected room. The leader is prefixed with `*`; me
 | :------------ | :--------- | :-------------------------------------------------- |
 | *(title)*     | `Label`    | "Agents", bold, accent background                   |
 | `#agent-list` | `ListView` | Scrollable list of agent items (height: 2 per item) |
+
+Each `ListItem` contains two `Label` widgets: the agent name and the model name (`.agent-model` class, `$text-muted` colour, left-padded).
 
 ---
 

@@ -32,6 +32,10 @@ class AgentPanel(Static):
     AgentPanel ListView > ListItem {
         height: 2;
     }
+    AgentPanel .agent-model {
+        color: $text-muted;
+        padding: 0 0 0 2;
+    }
     """
 
     def __init__(self, **kwargs: object) -> None:
@@ -47,13 +51,27 @@ class AgentPanel(Static):
         self,
         leader: str | None,
         agents: list[str] | None = None,
+        agent_models: dict[str, str] | None = None,
     ) -> None:
+        models = agent_models or {}
         lv = self.query_one("#agent-list", ListView)
         lv.clear()
         if leader:
-            lv.append(ListItem(Label(f"* {leader}"), name=leader))
+            model = models.get(leader, "")
+            lv.append(
+                ListItem(
+                    Label(f"* {leader}"),
+                    Label(model, classes="agent-model"),
+                    name=leader,
+                )
+            )
         for name in agents or []:
-            lv.append(ListItem(Label(f"  {name}"), name=name))
+            model = models.get(name, "")
+            lv.append(
+                ListItem(
+                    Label(f"  {name}"), Label(model, classes="agent-model"), name=name
+                )
+            )
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         name = event.item.name

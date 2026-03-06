@@ -179,6 +179,10 @@ When a new room is created via `Ctrl+N` in the Room panel, Humu automatically:
 
 This ensures every room is immediately functional without manual agent setup.
 
+## Agent Model Display
+
+Each agent in the `AgentPanel` now shows its configured model name (e.g. `opus`, `sonnet`, `haiku`) below the agent name in muted text. The model information is loaded from `AgentConfig` via `storage.get_agent()` when `_refresh_agents()` is called and passed to `AgentPanel.set_agents()` as an `agent_models` dictionary.
+
 ## Key Bindings (Full Reference)
 
 | Key         | Action                                                        |
