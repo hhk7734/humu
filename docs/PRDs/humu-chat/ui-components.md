@@ -158,15 +158,15 @@ Three-line dropdown that appears below the input when:
 
 **`/` matching rules:**
 
-| Input typed       | Matches                                              |
-| :---------------- | :--------------------------------------------------- |
-| `/sk`             | Built-in commands starting with `sk` **+** any skill whose `skill-dir` part starts with `sk` (e.g. `my-mp:skill-name`) |
-| `/my-mp:sk`       | Skills whose full name starts with `my-mp:sk` (e.g. `my-mp:skill-name`) |
-| `/my-mp:`         | All skills in the `my-mp` marketplace                |
+| Input typed | Matches                                                                                                                |
+| :---------- | :--------------------------------------------------------------------------------------------------------------------- |
+| `/sk`       | Built-in commands starting with `sk` **+** any skill whose `skill-dir` part starts with `sk` (e.g. `my-mp:skill-name`) |
+| `/my-mp:sk` | Skills whose full name starts with `my-mp:sk` (e.g. `my-mp:skill-name`)                                                |
+| `/my-mp:`   | All skills in the `my-mp` marketplace                                                                                  |
 
 When `partial` contains `:`, only full-name prefix matching is applied (built-in commands are excluded). When `partial` has no `:`, both the full name and the skill-dir part after `:` are checked.
 
-Each autocomplete entry is displayed as `name  full description`. If an entry is wider than the widget, it is clipped and suffixed with `…` so each row always occupies exactly one line.
+Each autocomplete entry is displayed as `name  full description`. If an entry is wider than the widget, it is clipped and suffixed with `...` so each row always occupies exactly one line.
 
 Built-in commands: `invite`, `kick`, `agents`, `rooms`, `status`, `compact`, `help`.
 
@@ -219,7 +219,7 @@ A vertical widget rendered for each message in `#chat-messages`. Contains:
 | Class | `humu.tui.widgets.chat_panel.LoadingChatMessage` |
 | :---- | :----------------------------------------------- |
 
-An animated placeholder appended to `#chat-messages` while an agent is processing. Shows a braille spinner (`⠋ ⠙ ⠹ …`) at 10 fps next to "thinking…". Removed when the agent's response arrives.
+An animated placeholder appended to `#chat-messages` while an agent is processing. Shows a braille spinner (`⠋ ⠙ ⠹ …`) at 10 fps next to "thinking...". Removed when the agent's response arrives.
 
 **Right-click** opens `MessageDetailScreen` with the live step log accumulated so far.
 

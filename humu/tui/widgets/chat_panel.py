@@ -14,7 +14,13 @@ from textual.widgets import Label, Static, TextArea
 
 def _path_needle(text: str) -> str:
     """Normalise a path/partial for subsequence matching (lowercase, strip separators/punctuation)."""
-    return text.lower().replace(os.sep, "").replace("/", "").replace("-", "").replace("_", "")
+    return (
+        text.lower()
+        .replace(os.sep, "")
+        .replace("/", "")
+        .replace("-", "")
+        .replace("_", "")
+    )
 
 
 def _is_subsequence(needle: str, haystack: str) -> bool:
@@ -56,7 +62,9 @@ class LoadingChatMessage(Vertical):
 
     SPINNERS = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
-    def __init__(self, sender: str, get_steps: Callable[[], list[dict]] | None = None) -> None:
+    def __init__(
+        self, sender: str, get_steps: Callable[[], list[dict]] | None = None
+    ) -> None:
         super().__init__()
         self._sender = sender
         self._spin_index = 0
@@ -76,15 +84,12 @@ class LoadingChatMessage(Vertical):
         spinner = self.SPINNERS[self._spin_index]
         self.query_one(".loading-text", Static).update(f"{spinner} thinking...")
 
-
     def on_click(self, event: Click) -> None:
         if event.button == 3 and self._get_steps:  # right-click
             from humu.tui.screens.message_detail import MessageDetailScreen
-            steps = self._get_steps()
-            self.app.push_screen(
-                MessageDetailScreen(self._sender, "", steps=steps)
-            )
 
+            steps = self._get_steps()
+            self.app.push_screen(MessageDetailScreen(self._sender, "", steps=steps))
 
 
 class ChatInput(TextArea):
@@ -220,16 +225,16 @@ class PathAutocomplete(Static):
             raw = f" ❯ {path} " if is_selected else f"   {path}"
             # Manually clip to widget content width — no_wrap on Text is not
             # honoured reliably in Textual's rendering pipeline.
-            # When clipped, append "…" (1 cell) so the truncation is visible.
+            # When clipped, append "..." so the truncation is visible.
             if width > 0 and cell_len(raw) > width:
                 clipped, w = "", 0
                 for ch in raw:
                     cw = cell_len(ch)
-                    if w + cw > width - 1:  # reserve 1 cell for "…"
+                    if w + cw > width - 3:  # reserve 3 cells for "..."
                         break
                     clipped += ch
                     w += cw
-                raw = clipped + "…"
+                raw = clipped + "..."
             content.append(raw, style="bold reverse" if is_selected else "")
             rendered += 1
         # Pad to always fill 3 lines
@@ -307,10 +312,14 @@ class ChatMessage(Vertical):
     def on_click(self, event: Click) -> None:
         if event.button == 3:  # right-click
             from humu.tui.screens.message_detail import MessageDetailScreen
+
             self.app.push_screen(
                 MessageDetailScreen(
-                    self._sender, self._text, self._is_system,
-                    raw=self._raw, steps=self._steps,
+                    self._sender,
+                    self._text,
+                    self._is_system,
+                    raw=self._raw,
+                    steps=self._steps,
                 )
             )
 
@@ -376,12 +385,12 @@ class ChatPanel(Static):
         self._room_name: str | None = None
         self._workspace_path: str | None = None
         self._trigger_start: int = -1  # flat position of trigger char
-        self._trigger_char: str = ""   # "@" or "/"
+        self._trigger_char: str = ""  # "@" or "/"
         self._get_skills = get_skills
         # Input history (Up/Down to recall previous messages)
         self._input_history: list[str] = []
-        self._history_index: int = -1   # -1 = not navigating
-        self._history_draft: str = ""   # saved draft while navigating history
+        self._history_index: int = -1  # -1 = not navigating
+        self._history_draft: str = ""  # saved draft while navigating history
 
     def compose(self) -> ComposeResult:
         yield Label("Chat", classes="panel-title")
@@ -433,7 +442,9 @@ class ChatPanel(Static):
 
     def on_mouse_up(self) -> None:
         """Clicking or dragging anywhere in the chat panel refocuses the input."""
-        self.call_after_refresh(lambda: self.query_one("#chat-input", ChatInput).focus())
+        self.call_after_refresh(
+            lambda: self.query_one("#chat-input", ChatInput).focus()
+        )
 
     def set_pending_queue(self, messages: list[str]) -> None:
         """Show or hide the pending message queue above the input."""
@@ -444,7 +455,7 @@ class ChatPanel(Static):
             return
         lines = []
         for i, msg in enumerate(messages, 1):
-            preview = msg[:60] + "…" if len(msg) > 60 else msg
+            preview = msg[:60] + "..." if len(msg) > 60 else msg
             lines.append(f"[dim]{i}.[/dim] {preview}")
         header = f"[bold]Queued ({len(messages)})[/bold]"
         display.update(header + "\n" + "\n".join(lines))
@@ -472,7 +483,9 @@ class ChatPanel(Static):
         context_pct: float | None = None,
     ) -> None:
         container = self.query_one("#chat-messages", Vertical)
-        msg = ChatMessage(sender, text, is_system, raw=raw, steps=steps, context_pct=context_pct)
+        msg = ChatMessage(
+            sender, text, is_system, raw=raw, steps=steps, context_pct=context_pct
+        )
         container.mount(msg)
         self.call_after_refresh(self._scroll_to_end)
 
@@ -480,7 +493,9 @@ class ChatPanel(Static):
         scroll = self.query_one("#chat-scroll", VerticalScroll)
         scroll.scroll_end(animate=False)
 
-    def show_loading(self, agent_name: str, get_steps: Callable[[], list[dict]] | None = None) -> None:
+    def show_loading(
+        self, agent_name: str, get_steps: Callable[[], list[dict]] | None = None
+    ) -> None:
         self.hide_loading()
         container = self.query_one("#chat-messages", Vertical)
         loading = LoadingChatMessage(agent_name, get_steps=get_steps)
@@ -519,7 +534,7 @@ class ChatPanel(Static):
         # @ path trigger
         at_pos = prefix.rfind("@")
         if at_pos != -1:
-            partial = prefix[at_pos + 1:]
+            partial = prefix[at_pos + 1 :]
             if " " not in partial and "\n" not in partial:
                 self._trigger_start = at_pos
                 self._trigger_char = "@"
@@ -533,7 +548,7 @@ class ChatPanel(Static):
         if slash_pos != -1:
             before = prefix[:slash_pos]
             if before == "" or before[-1] in (" ", "\n"):
-                partial = prefix[slash_pos + 1:]
+                partial = prefix[slash_pos + 1 :]
                 if " " not in partial and "\n" not in partial:
                     self._trigger_start = slash_pos
                     self._trigger_char = "/"
@@ -598,7 +613,10 @@ class ChatPanel(Static):
             while q and len(result) < MAX_RESULTS:
                 cur_dir, depth = q.popleft()
                 try:
-                    entries = sorted(os.scandir(cur_dir), key=lambda e: (not e.is_dir(follow_symlinks=False), e.name))
+                    entries = sorted(
+                        os.scandir(cur_dir),
+                        key=lambda e: (not e.is_dir(follow_symlinks=False), e.name),
+                    )
                 except OSError:
                     continue
                 for entry in entries:
@@ -681,7 +699,9 @@ class ChatPanel(Static):
         self._trigger_start = -1
         self._trigger_char = ""
         # Add to history (avoid consecutive duplicates)
-        if event.text and (not self._input_history or self._input_history[-1] != event.text):
+        if event.text and (
+            not self._input_history or self._input_history[-1] != event.text
+        ):
             self._input_history.append(event.text)
         self._history_index = -1
         self._history_draft = ""

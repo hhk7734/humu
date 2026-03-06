@@ -114,13 +114,13 @@ The router:
 
 If the skill is not found (wrong name or not installed), a system error message is shown and no agents are queried.
 
-The `/` autocomplete in `ChatInput` shows built-in commands and available skills. Each entry is displayed as `name  full description`. If an entry is wider than the autocomplete widget it is clipped and suffixed with `…`. Skills can be discovered two ways:
+The `/` autocomplete in `ChatInput` shows built-in commands and available skills. Each entry is displayed as `name  full description`. If an entry is wider than the autocomplete widget it is clipped and suffixed with `...`. Skills can be discovered two ways:
 
-| Input          | What matches                                                      |
-| :------------- | :---------------------------------------------------------------- |
-| `/sk`          | Any skill whose **skill-dir part** starts with `sk` — e.g. `my-mp:skill-name`, `other-mp:skill-other` |
-| `/my-mp:sk`    | Skills whose **full name** starts with `my-mp:sk` — e.g. `my-mp:skill-name` |
-| `/my-mp:`      | All skills in the `my-mp` marketplace                             |
+| Input       | What matches                                                                                          |
+| :---------- | :---------------------------------------------------------------------------------------------------- |
+| `/sk`       | Any skill whose **skill-dir part** starts with `sk` — e.g. `my-mp:skill-name`, `other-mp:skill-other` |
+| `/my-mp:sk` | Skills whose **full name** starts with `my-mp:sk` — e.g. `my-mp:skill-name`                           |
+| `/my-mp:`   | All skills in the `my-mp` marketplace                                                                 |
 
 When the partial text contains `:`, only full-name prefix matching is applied and built-in commands are excluded from results.
 
@@ -128,10 +128,10 @@ When the partial text contains `:`, only full-name prefix matching is applied an
 
 Skills influence agent behavior at two levels:
 
-| Level         | Content injected                                          | Timing                                      |
-| :------------ | :-------------------------------------------------------- | :------------------------------------------ |
-| Session-level | `## Available Skills` with all `marketplace:skill` names  | New session only (first query)              |
-| Message-level | `## Active Skill: <marketplace>:<skill>` with full body   | Every message that uses `/<marketplace>:<skill>` |
+| Level         | Content injected                                         | Timing                                           |
+| :------------ | :------------------------------------------------------- | :----------------------------------------------- |
+| Session-level | `## Available Skills` with all `marketplace:skill` names | New session only (first query)                   |
+| Message-level | `## Active Skill: <marketplace>:<skill>` with full body  | Every message that uses `/<marketplace>:<skill>` |
 
 The **session-level** injection happens once so the leader knows what skills exist for routing decisions. The **message-level** injection happens on every invocation to provide the detailed instructions.
 
@@ -146,12 +146,12 @@ The **session-level** injection happens once so the leader knows what skills exi
 
 ## Error Handling
 
-| Scenario                            | Behavior                                                             |
-| :---------------------------------- | :------------------------------------------------------------------- |
-| `/<marketplace>:<skill>` not found  | System error in chat; agents not queried                             |
-| `git clone` fails                   | Status bar shows error message; marketplace stays registered         |
-| `git pull` fails                    | Status bar shows error; installed files unchanged                    |
-| `SKILL.md` missing or malformed     | Skill silently skipped during discovery                              |
+| Scenario                               | Behavior                                                             |
+| :------------------------------------- | :------------------------------------------------------------------- |
+| `/<marketplace>:<skill>` not found     | System error in chat; agents not queried                             |
+| `git clone` fails                      | Status bar shows error message; marketplace stays registered         |
+| `git pull` fails                       | Status bar shows error; installed files unchanged                    |
+| `SKILL.md` missing or malformed        | Skill silently skipped during discovery                              |
 | Disabled skill invoked with `/mp:name` | Skill body is still loaded (disable only hides from session context) |
 
 ## Non-Goals
