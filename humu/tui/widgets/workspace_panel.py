@@ -76,10 +76,12 @@ class WorkspacePanel(Static):
         for item in lv.query(ListItem):
             if not item.name or item.name == NEW_ITEM:
                 continue
-            label = item.query_one(Label)
+            labels = item.query(Label)
+            if not labels:
+                continue
             prefix = "> " if item.name == selected else "  "
             badge = f" [yellow]{spinner}[/yellow]" if item.name in processing else ""
-            label.update(f"{prefix}{item.name}{badge}")
+            labels.first().update(f"{prefix}{item.name}{badge}")
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         if event.item.name == NEW_ITEM:
