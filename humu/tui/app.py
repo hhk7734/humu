@@ -136,7 +136,10 @@ class HumuApp(App):
         ws = self._storage.get_workspace(event.name)
         if ws:
             self._current_workspace = ws
-            self._current_room = None
+            last_room_name = self._storage.load_last_room(ws.name)
+            self._current_room = (
+                self._storage.get_room(ws, last_room_name) if last_room_name else None
+            )
             self._refresh_workspaces()
             self._refresh_rooms()
             self._refresh_agents()

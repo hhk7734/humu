@@ -168,20 +168,33 @@ class Storage:
 
     # --- Last session ---
 
+    def _load_session_data(self) -> dict:
+        if not LAST_SESSION_FILE.exists():
+            return {}
+        try:
+            return json.loads(LAST_SESSION_FILE.read_text())
+        except Exception:
+            return {}
+
+    def _save_session_data(self, data: dict) -> None:
+        LAST_SESSION_FILE.write_text(json.dumps(data, indent=2))
+
     def save_last_session(self, workspace_name: str, room_name: str) -> None:
-        LAST_SESSION_FILE.write_text(
-            json.dumps({"workspace": workspace_name, "room": room_name}, indent=2)
-        )
+        data = self._load_session_data()
+        data["last_workspace"] = workspace_name
+        if "rooms" not in data:
+            data["rooms"] = {}
+        data["rooms"][workspace_name] = room_name
+        self._save_session_data(data)
 
     def load_last_session(self) -> tuple[str, str] | None:
-        if not LAST_SESSION_FILE.exists():
-            return None
-        try:
-            data = json.loads(LAST_SESSION_FILE.read_text())
-            workspace = data.get("workspace", "")
-            room = data.get("room", "")
-            if workspace and room:
-                return workspace, room
-        except Exception:
-            pass
+        data = self._load_session_data()
+        workspace = data.get("last_workspace", "")
+        room = data.get("rooms", {}).get(workspace, "")
+        if workspace and room:
+            return workspace, room
         return None
+
+    def load_last_room(self, workspace_name: str) -> str | None:
+        data = self._load_session_data()
+        return data.get("rooms", {}).get(workspace_name) or None
