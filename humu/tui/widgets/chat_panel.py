@@ -208,12 +208,13 @@ class PathAutocomplete(Static):
 
     DEFAULT_CSS = """
     PathAutocomplete {
+        display: none;
+    }
+    PathAutocomplete.active {
+        display: block;
         height: 5;
         margin: 0 1;
         padding: 0 1;
-        color: $text-muted;
-    }
-    PathAutocomplete.active {
         background: $surface;
         border: solid $accent;
         color: $text;
@@ -365,7 +366,7 @@ class ChatPanel(Static):
         height: auto;
         border-top: solid $accent 50%;
         border-bottom: solid $accent 50%;
-        padding: 1 0;
+        padding: 1 0 0 0;
     }
     ChatPanel #chat-input {
         margin: 0 1;
