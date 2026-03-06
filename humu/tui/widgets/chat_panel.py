@@ -363,10 +363,13 @@ class ChatPanel(Static):
     ChatPanel #bottom-area {
         dock: bottom;
         height: auto;
+        border-top: solid $accent 50%;
+        border-bottom: solid $accent 50%;
+        padding: 1 0;
     }
     ChatPanel #chat-input {
         margin: 0 1;
-        height: auto;
+        height: 4;
         max-height: 10;
         border: none;
     }
