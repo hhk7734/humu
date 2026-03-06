@@ -2,7 +2,7 @@ from pathlib import Path
 
 HUMU_HOME = Path.home() / ".humu"
 WORKSPACES_FILE = HUMU_HOME / "workspaces.json"
-PROJECTS_DIR = HUMU_HOME / "projects"
+WORKSPACES_DIR = HUMU_HOME / "workspaces"
 MARKETPLACES_FILE = HUMU_HOME / "marketplaces.json"
 PLUGINS_DIR = HUMU_HOME / "plugins"
 SKILLS_CONFIG_FILE = HUMU_HOME / "skills_config.json"

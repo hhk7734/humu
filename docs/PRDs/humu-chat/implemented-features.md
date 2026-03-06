@@ -137,7 +137,7 @@ The Claude SDK emits `SystemMessage` objects for lifecycle events such as contex
 
 ## Chat History Persistence
 
-Every message (user and agent) is appended to `~/.humu/projects/<workspace_slug>/rooms/<room_name>/history.json` immediately as it arrives. When the user switches to a room, the full history is loaded and rendered in the `ChatPanel`.
+Every message (user and agent) is appended to `~/.humu/workspaces/<workspace_slug>/rooms/<room_name>/history.json` immediately as it arrives. When the user switches to a room, the full history is loaded and rendered in the `ChatPanel`.
 
 History entries include:
 

@@ -11,7 +11,7 @@ A workspace maps to a project root path (typically a git repo root). When agents
 | Path                       | Contents                              |
 | :------------------------- | :------------------------------------ |
 | `~/.humu/workspaces.json`  | Workspace registry (name → root path) |
-| `~/.humu/projects/<slug>/` | Per-workspace data (rooms, sessions)  |
+| `~/.humu/workspaces/<slug>/` | Per-workspace data (rooms, sessions)  |
 
 ### Create
 
@@ -29,7 +29,7 @@ A workspace maps to a project root path (typically a git repo root). When agents
 - **Trigger**: `Ctrl+D` when focus is in `WorkspacePanel`.
 - **Confirmation**: `ConfirmScreen` — "Delete workspace '...'? This cannot be undone."
 - **Server command**: `delete_workspace` with `name`.
-- **What is deleted**: the workspace entry from `workspaces.json` AND the entire `~/.humu/projects/<slug>/` directory (all rooms, chat histories, and agent session data).
+- **What is deleted**: the workspace entry from `workspaces.json` AND the entire `~/.humu/workspaces/<slug>/` directory (all rooms, chat histories, and agent session data).
 
 ---
 
@@ -41,9 +41,9 @@ A conversation space within a workspace. Each room has exactly one **leader agen
 
 | Path                                                   | Contents                     |
 | :----------------------------------------------------- | :--------------------------- |
-| `~/.humu/projects/<slug>/rooms/<room>.json`            | Room config (leader, agents) |
-| `~/.humu/projects/<slug>/rooms/<room>/history.json`    | Chat history                 |
-| `~/.humu/projects/<slug>/rooms/<room>/agents/<agent>/` | Per-agent session data       |
+| `~/.humu/workspaces/<slug>/rooms/<room>.json`            | Room config (leader, agents) |
+| `~/.humu/workspaces/<slug>/rooms/<room>/history.json`    | Chat history                 |
+| `~/.humu/workspaces/<slug>/rooms/<room>/agents/<agent>/` | Per-agent session data       |
 
 ### Create
 
@@ -84,7 +84,7 @@ Agents are **workspace-scoped** — stored under the workspace's project directo
 
 | Path                                         | Contents         |
 | :------------------------------------------- | :--------------- |
-| `~/.humu/projects/<slug>/agents/<name>.json` | Agent definition |
+| `~/.humu/workspaces/<slug>/agents/<name>.json` | Agent definition |
 
 ### Create
 

@@ -10,7 +10,7 @@ from humu.config import (
     HUMU_HOME,
     MARKETPLACES_FILE,
     PLUGINS_DIR,
-    PROJECTS_DIR,
+    WORKSPACES_DIR,
     SKILLS_CONFIG_FILE,
     WORKSPACES_FILE,
 )
@@ -25,7 +25,7 @@ class Storage:
     def __init__(self) -> None:
         HUMU_HOME.mkdir(parents=True, exist_ok=True)
         PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
-        PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+        WORKSPACES_DIR.mkdir(parents=True, exist_ok=True)
         if not WORKSPACES_FILE.exists():
             WORKSPACES_FILE.write_text("[]")
 
@@ -97,7 +97,7 @@ class Storage:
     # --- Rooms ---
 
     def _project_dir(self, workspace: Workspace) -> Path:
-        return PROJECTS_DIR / workspace.slug
+        return WORKSPACES_DIR / workspace.slug
 
     def _rooms_dir(self, workspace: Workspace) -> Path:
         d = self._project_dir(workspace) / "rooms"
