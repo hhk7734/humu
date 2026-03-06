@@ -323,20 +323,21 @@ class PluginManagerScreen(ModalScreen[None]):
 
         for skill_dir in skill_dirs:
             skill_md = skill_dir / "SKILL.md"
-            name, description = "", ""
+            _, description = "", ""
             if skill_md.exists():
-                name, description = self._storage._parse_skill_frontmatter(skill_md.read_text())
-            if not name:
-                name = skill_dir.name
-            enabled = self._storage.is_skill_enabled(name)
+                _, description = self._storage._parse_skill_frontmatter(skill_md.read_text())
+            full_name = f"{mid}:{skill_dir.name}"
+            enabled = self._storage.is_skill_enabled(full_name)
+            # CSS IDs cannot contain ":" — encode it as "_COLON_"
+            toggle_id = f"skill-toggle-{full_name.replace(':', '_COLON_')}"
             # Build widgets separately; mount parent first, then children.
             block = Vertical(classes="skill-item")
             scroll.mount(block)
             header = Horizontal(classes="skill-header")
             block.mount(header)
             header.mount(
-                Switch(value=enabled, id=f"skill-toggle-{name}", classes="skill-switch"),
-                Static(f"/{name}", classes="skill-name"),
+                Switch(value=enabled, id=toggle_id, classes="skill-switch"),
+                Static(f"/{full_name}", classes="skill-name"),
             )
             if description:
                 block.mount(Static(description, classes="skill-desc"))
@@ -420,13 +421,13 @@ class PluginManagerScreen(ModalScreen[None]):
         cid = event.switch.id or ""
         if not cid.startswith("skill-toggle-"):
             return
-        name = cid[len("skill-toggle-"):]
+        full_name = cid[len("skill-toggle-"):].replace("_COLON_", ":")
         if event.value:
-            self._storage.enable_skill(name)
-            self._set_status(f"Skill '/{name}' enabled.")
+            self._storage.enable_skill(full_name)
+            self._set_status(f"Skill '/{full_name}' enabled.")
         else:
-            self._storage.disable_skill(name)
-            self._set_status(f"Skill '/{name}' disabled.")
+            self._storage.disable_skill(full_name)
+            self._set_status(f"Skill '/{full_name}' disabled.")
 
     def _set_status(self, msg: str) -> None:
         self.query_one("#status-bar", Static).update(msg)

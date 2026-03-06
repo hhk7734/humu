@@ -35,7 +35,7 @@ Each `SKILL.md` file follows this format:
 
 ```markdown
 ---
-name: skill-name
+name: (optional display label — not used as identifier)
 description: One-line description shown to leader agents for routing decisions.
 ---
 
@@ -47,7 +47,20 @@ the skill is active.
 
 Skills are discovered by scanning `~/.humu/plugins/*/skills/*/SKILL.md`.
 
-Individual skills can be **enabled** or **disabled** without uninstalling the plugin. Disabled skill names are persisted in `~/.humu/skills_config.json`.
+#### Skill Naming
+
+A skill's **registered name** is `{marketplace_id}:{skill_dir_name}` — derived from the directory structure, not the frontmatter `name` field. The frontmatter `name` field is ignored at runtime; only `description` and the body content are used.
+
+```
+~/.humu/plugins/my-mp/skills/code-review/SKILL.md
+                 ↑          ↑
+          marketplace_id  skill_dir_name
+          → full name: "my-mp:code-review"
+```
+
+#### Enable / Disable
+
+Individual skills can be **enabled** or **disabled** without uninstalling the plugin. The `disabled` list in `~/.humu/skills_config.json` stores full `marketplace:skill` names.
 
 ## Plugin Manager UI
 
@@ -56,12 +69,12 @@ Opened with `Ctrl+M`. A full-screen modal with two panes:
 ```
 +-- Marketplaces ------+-- Plugin Detail ---------------------------+
 |                      |                                            |
-| my-marketplace  [+]  | Plugin — my-marketplace  (owner/repo)     |
+| my-mp  [✓]           | Plugin — my-mp  (owner/my-mp)             |
 | another-mp           |                                            |
-|                      |   [ON]  /code-review                      |
+|                      |   [ON]  /my-mp:code-review                |
 |                      |         Review PRs for bugs and style.    |
 |                      |                                            |
-|                      |   [OFF] /brainstorm                       |
+|                      |   [OFF] /my-mp:brainstorm                 |
 |                      |         Explore ideas before coding.      |
 |                      |                                            |
 + Add  |  Remove ------+ Install | Update | Uninstall -------------+
@@ -83,32 +96,34 @@ Opened with `Ctrl+M`. A full-screen modal with two panes:
 
 ## Skill Invocation
 
-Users invoke a skill by prefixing their message with `/<skill-name>`:
+Users invoke a skill by prefixing their message with `/<marketplace>:<skill>`:
 
 ```
-/code-review What should I look for in this PR?
+/my-mp:code-review What should I look for in this PR?
 ```
 
 The router:
 
-1. Strips the `/<skill-name>` prefix.
-2. Loads the skill body from `SKILL.md`.
+1. Strips the `/<marketplace>:<skill>` prefix.
+2. Loads the skill body from `~/.humu/plugins/<marketplace>/skills/<skill>/SKILL.md`.
 3. Injects the skill body into the leader and relevant member agent prompts as:
    ```
-   ## Active Skill: <skill-name>
+   ## Active Skill: <marketplace>:<skill>
    <skill body>
    ```
 
-If the skill is not found, a system error message is shown and no agents are queried.
+If the skill is not found (wrong name or not installed), a system error message is shown and no agents are queried.
+
+The `/` autocomplete in `ChatInput` shows all available skills in `marketplace:skill  description` format alongside built-in commands.
 
 ## Skill Context Injection
 
 Skills influence agent behavior at two levels:
 
-| Level         | Content injected                            | Timing                          |
-| :------------ | :------------------------------------------ | :------------------------------ |
-| Session-level | `## Available Skills` with all descriptions | New session only (first query)  |
-| Message-level | `## Active Skill: <name>` with full body    | Every message that uses `/name` |
+| Level         | Content injected                                          | Timing                                      |
+| :------------ | :-------------------------------------------------------- | :------------------------------------------ |
+| Session-level | `## Available Skills` with all `marketplace:skill` names  | New session only (first query)              |
+| Message-level | `## Active Skill: <marketplace>:<skill>` with full body   | Every message that uses `/<marketplace>:<skill>` |
 
 The **session-level** injection happens once so the leader knows what skills exist for routing decisions. The **message-level** injection happens on every invocation to provide the detailed instructions.
 
@@ -119,17 +134,17 @@ The **session-level** injection happens once so the leader knows what skills exi
 | `~/.humu/marketplaces.json`              | `[{"id": "...", "repo": "owner/repo"}, ...]` |
 | `~/.humu/plugins/<id>/`                  | Cloned marketplace repository                |
 | `~/.humu/plugins/<id>/skills/*/SKILL.md` | Skill definitions                            |
-| `~/.humu/skills_config.json`             | `{"disabled": ["skill-a", "skill-b"]}`       |
+| `~/.humu/skills_config.json`             | `{"disabled": ["mp:skill-a", "mp:skill-b"]}` |
 
 ## Error Handling
 
 | Scenario                            | Behavior                                                             |
 | :---------------------------------- | :------------------------------------------------------------------- |
-| `/skill-name` not found             | System error in chat; agents not queried                             |
+| `/<marketplace>:<skill>` not found  | System error in chat; agents not queried                             |
 | `git clone` fails                   | Status bar shows error message; marketplace stays registered         |
 | `git pull` fails                    | Status bar shows error; installed files unchanged                    |
 | `SKILL.md` missing or malformed     | Skill silently skipped during discovery                              |
-| Disabled skill invoked with `/name` | Skill body is still loaded (disable only hides from session context) |
+| Disabled skill invoked with `/mp:name` | Skill body is still loaded (disable only hides from session context) |
 
 ## Non-Goals
 

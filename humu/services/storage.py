@@ -338,30 +338,42 @@ class Storage:
         self._save_skills_config(config)
 
     def list_skills(self) -> list[dict]:
-        """Return enabled skills from ~/.humu/plugins/*/skills/*/SKILL.md.
+        """Return skills from ~/.humu/plugins/*/skills/*/SKILL.md.
 
-        Each entry: {"name": str, "description": str, "marketplace": str}
+        Each entry: {"name": str, "description": str, "marketplace": str, "enabled": bool}
+        The name is "{marketplace_id}:{skill_dir_name}".
         """
         disabled = set(self._load_skills_config().get("disabled", []))
-        seen: dict[str, dict] = {}
+        results: list[dict] = []
         for skill_md in PLUGINS_DIR.glob("*/skills/*/SKILL.md"):
             try:
                 marketplace = skill_md.parts[list(skill_md.parts).index(PLUGINS_DIR.name) + 1]
-                content = skill_md.read_text()
-                name, description = self._parse_skill_frontmatter(content)
-                if name and name not in seen:
-                    seen[name] = {
-                        "name": name,
-                        "description": description,
-                        "marketplace": marketplace,
-                        "enabled": name not in disabled,
-                    }
+                skill_dir_name = skill_md.parent.name
+                full_name = f"{marketplace}:{skill_dir_name}"
+                _, description = self._parse_skill_frontmatter(skill_md.read_text())
+                results.append({
+                    "name": full_name,
+                    "description": description,
+                    "marketplace": marketplace,
+                    "enabled": full_name not in disabled,
+                })
             except Exception:
                 pass
-        return sorted(seen.values(), key=lambda s: s["name"])
+        return sorted(results, key=lambda s: s["name"])
 
     def get_skill_content(self, name: str) -> str | None:
-        """Return the body of SKILL.md (frontmatter stripped) for the named skill."""
+        """Return the body of SKILL.md (frontmatter stripped) for the named skill.
+
+        *name* must be in "{marketplace_id}:{skill_dir_name}" format.
+        """
+        if ":" in name:
+            marketplace_id, skill_dir_name = name.split(":", 1)
+            skill_md = PLUGINS_DIR / marketplace_id / "skills" / skill_dir_name / "SKILL.md"
+            try:
+                return self._parse_skill_body(skill_md.read_text())
+            except Exception:
+                return None
+        # Fallback: glob search (backward compatibility)
         for skill_md in PLUGINS_DIR.glob(f"*/skills/{name}/SKILL.md"):
             try:
                 return self._parse_skill_body(skill_md.read_text())
