@@ -37,6 +37,9 @@ class RoomPanel(Static):
     RoomPanel ListView > ListItem {
         height: 2;
     }
+    RoomPanel ListView > ListItem.--highlight {
+        background: $accent 25%;
+    }
     RoomPanel .new-item {
         color: $text-muted;
         text-style: italic;

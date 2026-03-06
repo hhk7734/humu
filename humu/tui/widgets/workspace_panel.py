@@ -37,6 +37,9 @@ class WorkspacePanel(Static):
     WorkspacePanel ListView > ListItem {
         height: 2;
     }
+    WorkspacePanel ListView > ListItem.--highlight {
+        background: $accent 25%;
+    }
     WorkspacePanel .new-item {
         color: $text-muted;
         text-style: italic;
