@@ -369,7 +369,7 @@ class ChatPanel(Static):
     }
     ChatPanel #chat-input {
         margin: 0 1;
-        height: 4;
+        height: 3;
         max-height: 10;
         border: none;
     }
