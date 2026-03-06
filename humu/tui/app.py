@@ -85,9 +85,16 @@ class HumuApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        saved_theme = self._storage.load_theme()
+        if saved_theme:
+            self.theme = saved_theme
         self._refresh_workspaces()
         self._restore_last_session()
         self._restore_panel_widths()
+
+    def watch_theme(self, theme: str) -> None:
+        """Persist theme selection across restarts."""
+        self._storage.save_theme(theme)
 
     def _restore_panel_widths(self) -> None:
         widths = self._storage.load_panel_widths()

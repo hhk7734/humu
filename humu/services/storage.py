@@ -392,6 +392,14 @@ class Storage:
         "agent-panel": 16,
     }
 
+    def save_theme(self, theme_name: str) -> None:
+        data = self._load_session_data()
+        data["theme"] = theme_name
+        self._save_session_data(data)
+
+    def load_theme(self) -> str | None:
+        return self._load_session_data().get("theme")
+
     def save_panel_width(self, panel_id: str, width: int) -> None:
         data = self._load_session_data()
         data.setdefault("panel_widths", {})[panel_id] = width
