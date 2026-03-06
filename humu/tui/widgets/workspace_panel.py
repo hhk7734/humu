@@ -54,7 +54,7 @@ class WorkspacePanel(Static):
         self._workspaces: list[str] = []
 
     def compose(self) -> ComposeResult:
-        yield Label("Workspace", classes="panel-title")
+        yield Label("Workspaces", classes="panel-title")
         yield ListView(id="workspace-list")
 
     def set_workspaces(
