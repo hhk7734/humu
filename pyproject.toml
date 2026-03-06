@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "claude-agent-sdk>=0.1.40",
     "textual>=3.0.0",
+    "websockets>=15.0",
 ]
 
 [project.scripts]
