@@ -88,6 +88,7 @@ class HumuApp(App):
         saved_theme = self._storage.load_theme()
         if saved_theme:
             self.theme = saved_theme
+        self.query_one(Header).icon = "Menu"
         self._refresh_workspaces()
         self._restore_last_session()
         self._restore_panel_widths()
