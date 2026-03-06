@@ -246,7 +246,7 @@ class HumuApp(App):
             self._active_loading[room_key] = sender
             if self._is_viewing(workspace, room):
                 chat = self.query_one(ChatPanel)
-                chat.show_loading(sender, self._router.get_live_steps)
+                chat.show_loading(sender, lambda: self._router.get_live_steps(room_key))
 
         def _hide_loading() -> None:
             self._active_loading.pop(room_key, None)
