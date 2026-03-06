@@ -15,9 +15,6 @@ class RoomNewRequested(Message):
     pass
 
 
-NEW_ITEM = "__new__"
-
-
 class RoomPanel(Static):
     DEFAULT_CSS = """
     RoomPanel {
@@ -42,10 +39,6 @@ class RoomPanel(Static):
     }
     RoomPanel ListView > ListItem.selected {
         background: $accent 20%;
-    }
-    RoomPanel .new-item {
-        color: $text-muted;
-        text-style: italic;
     }
     """
 
@@ -75,7 +68,6 @@ class RoomPanel(Static):
             if name == selected:
                 item.add_class("selected")
             lv.append(item)
-        lv.append(ListItem(Label("+ new", classes="new-item"), name=NEW_ITEM))
 
     def update_spinner(
         self,
@@ -86,7 +78,7 @@ class RoomPanel(Static):
         """Update only the spinner badge on existing items without rebuilding the list."""
         lv = self.query_one("#room-list", ListView)
         for item in lv.query(ListItem):
-            if not item.name or item.name == NEW_ITEM:
+            if not item.name:
                 continue
             labels = item.query(Label)
             if not labels:
@@ -96,7 +88,5 @@ class RoomPanel(Static):
             labels.first().update(f"{prefix}{item.name}{badge}")
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
-        if event.item.name == NEW_ITEM:
-            self.post_message(RoomNewRequested())
-        elif event.item.name:
+        if event.item.name:
             self.post_message(RoomSelected(event.item.name))
