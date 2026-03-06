@@ -20,6 +20,9 @@ class AgentPanel(Static):
         background: $accent;
         color: $text;
     }
+    AgentPanel ListView > ListItem {
+        height: 2;
+    }
     """
 
     def __init__(self, **kwargs: object) -> None:
