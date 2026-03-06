@@ -51,11 +51,12 @@ class HumuApp(App):
         self._router = Router(self._runner, self._storage)
         self._current_workspace: Workspace | None = None
         self._current_room: Room | None = None
-        self._processing = False
+        # Set of (workspace_name, room_name) currently being processed
+        self._processing: set[tuple[str, str]] = set()
         self._quit_pending = False
         self._quit_timer: object | None = None
-        # Tracks which (workspace, room, sender) is currently showing a loading indicator
-        self._active_loading: tuple[str, str, str] | None = None
+        # Maps (workspace_name, room_name) -> sender for active loading indicators
+        self._active_loading: dict[tuple[str, str], str] = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -129,13 +130,10 @@ class HumuApp(App):
         )
         chat_panel.load_history(history)
         # Re-show loading indicator if this room is still processing
-        if self._active_loading:
-            ws_name, room_name, sender = self._active_loading
-            if (
-                ws_name == self._current_workspace.name
-                and room_name == self._current_room.name
-            ):
-                chat_panel.show_loading(sender, self._router.get_live_steps)
+        room_key = (self._current_workspace.name, self._current_room.name)
+        sender = self._active_loading.get(room_key)
+        if sender:
+            chat_panel.show_loading(sender, self._router.get_live_steps)
 
     # --- Event handlers ---
 
@@ -183,46 +181,71 @@ class HumuApp(App):
             self.notify("Select a workspace and room first.", severity="warning")
             return
 
-        if self._processing:
+        workspace = self._current_workspace
+        room = self._current_room
+        room_key = (workspace.name, room.name)
+
+        if room_key in self._processing:
             self.notify("Processing previous message...", severity="warning")
             return
 
-        self._processing = True
+        self._processing.add(room_key)
         chat = self.query_one(ChatPanel)
 
         chat.add_message("you", text)
         self._storage.append_chat_message(
-            self._current_workspace,
-            self._current_room.name,
+            workspace,
+            room.name,
             {"sender": "you", "text": text},
         )
-
-        workspace = self._current_workspace
-        room = self._current_room
 
         def _process_sync() -> None:
             loop = asyncio.new_event_loop()
             try:
-                loop.run_until_complete(self._process_message(workspace, room, text, chat))
+                loop.run_until_complete(self._process_message(workspace, room, text))
             finally:
                 loop.close()
 
         self.run_worker(_process_sync, thread=True)
+
+    def _is_viewing(self, workspace: Workspace, room: Room) -> bool:
+        """Return True if the user is currently viewing this workspace+room."""
+        return (
+            self._current_workspace is not None
+            and self._current_room is not None
+            and self._current_workspace.name == workspace.name
+            and self._current_room.name == room.name
+        )
 
     async def _process_message(
         self,
         workspace: Workspace,
         room: Room,
         text: str,
-        chat: ChatPanel,
     ) -> None:
+        room_key = (workspace.name, room.name)
+
         def _show_loading(sender: str) -> None:
-            self._active_loading = (workspace.name, room.name, sender)
-            chat.show_loading(sender, self._router.get_live_steps)
+            self._active_loading[room_key] = sender
+            if self._is_viewing(workspace, room):
+                chat = self.query_one(ChatPanel)
+                chat.show_loading(sender, self._router.get_live_steps)
 
         def _hide_loading() -> None:
-            self._active_loading = None
-            chat.hide_loading()
+            self._active_loading.pop(room_key, None)
+            if self._is_viewing(workspace, room):
+                chat = self.query_one(ChatPanel)
+                chat.hide_loading()
+
+        def _add_message(sender: str, text: str, is_system: bool, raw: str | None, steps: list) -> None:
+            self._storage.append_chat_message(
+                workspace,
+                room.name,
+                {"sender": sender, "text": text, "is_system": is_system, "raw": raw, "steps": steps},
+            )
+            if self._is_viewing(workspace, room):
+                chat = self.query_one(ChatPanel)
+                chat.add_message(sender, text, is_system, raw, steps)
 
         try:
             async for msg in self._router.handle_message(workspace, room, text):
@@ -231,26 +254,17 @@ class HumuApp(App):
                     continue
                 self.call_from_thread(_hide_loading)
                 self.call_from_thread(
-                    chat.add_message, msg.sender, msg.text, msg.is_system, msg.raw, msg.steps,
-                )
-                self._storage.append_chat_message(
-                    workspace,
-                    room.name,
-                    {
-                        "sender": msg.sender,
-                        "text": msg.text,
-                        "is_system": msg.is_system,
-                        "raw": msg.raw,
-                        "steps": msg.steps,
-                    },
+                    _add_message, msg.sender, msg.text, msg.is_system, msg.raw, msg.steps,
                 )
         except Exception as e:
             import traceback
             err_detail = f"{e}\n{traceback.format_exc()}"
-            self.call_from_thread(chat.add_message, "error", err_detail, True)
+            self.call_from_thread(
+                _add_message, "error", err_detail, True, None, [],
+            )
         finally:
             self.call_from_thread(_hide_loading)
-            self._processing = False
+            self._processing.discard(room_key)
 
     # --- Commands ---
 
