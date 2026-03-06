@@ -417,6 +417,8 @@ class ChatPanel(Static):
         if autocomplete.is_active or not self._input_history:
             return False
         textarea = self.query_one("#chat-input", ChatInput)
+        if textarea.cursor_location[0] > 0:
+            return False
         if self._history_index == -1:
             self._history_draft = textarea.text
             self._history_index = len(self._input_history) - 1
@@ -431,6 +433,8 @@ class ChatPanel(Static):
         if autocomplete.is_active or self._history_index == -1:
             return False
         textarea = self.query_one("#chat-input", ChatInput)
+        if textarea.cursor_location[0] < textarea.document.line_count - 1:
+            return False
         if self._history_index < len(self._input_history) - 1:
             self._history_index += 1
             textarea.load_text(self._input_history[self._history_index])
