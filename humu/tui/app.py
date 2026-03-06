@@ -357,7 +357,7 @@ class HumuApp(App):
             # Drain the pending queue for this room on cancellation
             self._pending_messages.pop(room_key, None)
             self.call_from_thread(self._refresh_queue_display)
-            self.call_from_thread(_add_message, "system", "⛔ Cancelled", True, None, [])
+            self.call_from_thread(_add_message, room.leader, "⛔ Cancelled", False, None, [])
         except Exception as e:
             import traceback
             err_detail = f"{e}\n{traceback.format_exc()}"
