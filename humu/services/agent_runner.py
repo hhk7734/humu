@@ -41,6 +41,23 @@ class StreamChunk:
     usage: dict | None = None
 
 
+def _normalize_escapes(obj: Any) -> Any:
+    """Replace literal ``\\n`` / ``\\t`` with real newlines/tabs in string values.
+
+    LLMs sometimes double-escape newlines when producing JSON tool inputs
+    (e.g. ``"line1\\nline2"`` instead of ``"line1\nline2"``).  This helper
+    recursively walks the structured output and normalises those sequences so
+    that the text is displayed correctly in the UI.
+    """
+    if isinstance(obj, str):
+        return obj.replace("\\n", "\n").replace("\\t", "\t")
+    if isinstance(obj, dict):
+        return {k: _normalize_escapes(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_normalize_escapes(v) for v in obj]
+    return obj
+
+
 class AgentRunner:
     def __init__(self, storage: Storage) -> None:
         self._storage = storage
@@ -206,6 +223,7 @@ class AgentRunner:
             if structured is not None:
                 import json
 
+                structured = _normalize_escapes(structured)
                 if isinstance(structured, str):
                     final_text = structured
                 else:
