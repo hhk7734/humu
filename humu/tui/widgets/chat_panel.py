@@ -202,22 +202,34 @@ class PathAutocomplete(Static):
         return None
 
     def _refresh_display(self) -> None:
+        from rich.cells import cell_len
         from rich.text import Text
 
+        width = self.content_size.width
         total = len(self._paths)
         window = 3
         start = max(0, min(self._index - window // 2, total - window))
         end = min(start + window, total)
-        content = Text(no_wrap=True, overflow="crop")
+        content = Text()
         rendered = 0
         for i in range(start, end):
             if rendered > 0:
                 content.append("\n")
             path = self._paths[i]
-            if i == self._index:
-                content.append(f" ❯ {path} ", style="bold reverse")
-            else:
-                content.append(f"   {path}")
+            is_selected = i == self._index
+            raw = f" ❯ {path} " if is_selected else f"   {path}"
+            # Manually clip to widget content width — no_wrap on Text is not
+            # honoured reliably in Textual's rendering pipeline.
+            if width > 0:
+                clipped, w = "", 0
+                for ch in raw:
+                    cw = cell_len(ch)
+                    if w + cw > width:
+                        break
+                    clipped += ch
+                    w += cw
+                raw = clipped
+            content.append(raw, style="bold reverse" if is_selected else "")
             rendered += 1
         # Pad to always fill 3 lines
         while rendered < 3:
