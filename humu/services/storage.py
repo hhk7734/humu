@@ -173,6 +173,24 @@ class Storage:
         history.append(message)
         history_file.write_text(json.dumps(history, indent=2))
 
+    def replace_chat_history(
+        self, workspace: Workspace, room_name: str, messages: list[dict]
+    ) -> None:
+        """Replace the entire chat history with the given messages."""
+        d = self._project_dir(workspace) / "rooms" / room_name
+        d.mkdir(parents=True, exist_ok=True)
+        history_file = d / "history.json"
+        history_file.write_text(json.dumps(messages, indent=2))
+
+    def delete_session_id(
+        self, workspace: Workspace, room_name: str, agent_name: str
+    ) -> None:
+        """Remove the stored session ID so the agent starts a fresh conversation."""
+        d = self.agent_room_dir(workspace, room_name, agent_name)
+        session_file = d / "session.json"
+        if session_file.exists():
+            session_file.unlink()
+
     # --- Marketplaces ---
 
     def list_marketplaces(self) -> list[dict]:

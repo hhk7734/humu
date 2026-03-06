@@ -304,7 +304,7 @@ class HumuApp(App):
 
         if text.startswith("/"):
             cmd = text.strip().split()[0].lower()
-            if cmd in {"/invite", "/kick", "/agents", "/rooms", "/status", "/help", "/skills"}:
+            if cmd in {"/invite", "/kick", "/agents", "/rooms", "/status", "/help", "/skills", "/compact"}:
                 await self._handle_command(text)
                 return
             # Unrecognized /cmd — treat as skill invocation, fall through to router
@@ -452,6 +452,9 @@ class HumuApp(App):
             self._cmd_status()
         elif cmd == "/help":
             self._cmd_help()
+        elif cmd == "/compact":
+            instructions = text.strip()[len("/compact"):].strip()
+            self._cmd_compact(instructions)
         else:
             self.notify(f"Unknown command: {cmd}", severity="error")
 
@@ -539,12 +542,112 @@ class HumuApp(App):
             "  /agents          — List all agents\n"
             "  /rooms           — List rooms in workspace\n"
             "  /status          — Show current state\n"
+            "  /compact [hint]  — Summarize & clear history\n"
             "  /help            — Show this help\n"
             "\n"
             "Keys:\n"
             "  Ctrl+N — Create new item\n"
             "  Ctrl+D — Delete selected item"
         )
+
+    def _cmd_compact(self, instructions: str = "") -> None:
+        """/compact — Summarize conversation history, clear it, and reset agent sessions."""
+        if not self._current_workspace or not self._current_room:
+            self.notify("Select a workspace and room first.", severity="warning")
+            return
+
+        workspace = self._current_workspace
+        room = self._current_room
+        room_key = (workspace.name, room.name)
+
+        if room_key in self._processing:
+            self.notify("Cannot compact while processing.", severity="warning")
+            return
+
+        history = self._storage.load_chat_history(workspace, room.name)
+        if not history:
+            self.notify("No conversation history to compact.", severity="warning")
+            return
+
+        chat = self.query_one(ChatPanel)
+        chat.add_message("system", "Compacting conversation history...", is_system=True)
+
+        def _do_compact() -> None:
+            import asyncio as _asyncio
+
+            # Build a text representation of the conversation
+            lines: list[str] = []
+            for msg in history:
+                sender = msg.get("sender", "unknown")
+                text = msg.get("text", "")
+                if msg.get("is_system"):
+                    lines.append(f"[system] {text}")
+                else:
+                    lines.append(f"[{sender}] {text}")
+            conversation_text = "\n".join(lines)
+
+            # Ask the leader agent to summarize
+            prompt = (
+                "Summarize the following conversation concisely. "
+                "Capture the key topics discussed, decisions made, important context, "
+                "and any pending tasks or action items. "
+                "Write the summary in the same language as the conversation.\n"
+            )
+            if instructions:
+                prompt += f"\nAdditional instructions: {instructions}\n"
+            prompt += f"\n---\n{conversation_text}\n---"
+
+            leader_cfg = self._storage.get_agent(room.leader)
+            if not leader_cfg:
+                self.call_from_thread(
+                    lambda: self.notify("Leader agent not found.", severity="error")
+                )
+                return
+
+            loop = _asyncio.new_event_loop()
+            try:
+                response = loop.run_until_complete(
+                    self._runner.query(
+                        leader_cfg, workspace, room.name, prompt,
+                    )
+                )
+                summary_text = response.text
+            except Exception as e:
+                self.call_from_thread(
+                    lambda: self.notify(f"Compact failed: {e}", severity="error")
+                )
+                return
+            finally:
+                loop.close()
+
+            # Clear all agent session IDs for this room
+            all_agents = [room.leader] + list(room.agents)
+            for agent_name in all_agents:
+                self._storage.delete_session_id(workspace, room.name, agent_name)
+
+            # Clear token tracking
+            self._router.clear_agent_tokens(workspace.name, room.name)
+
+            # Replace chat history with just the summary
+            summary_msg = {
+                "sender": "system",
+                "text": f"--- Conversation Summary ---\n{summary_text}",
+                "is_system": True,
+                "raw": None,
+                "steps": [],
+            }
+            self._storage.replace_chat_history(workspace, room.name, [summary_msg])
+
+            # Update UI
+            def _update_ui() -> None:
+                if self._is_viewing(workspace, room):
+                    self._refresh_chat()
+                    self._refresh_agents()
+                self.notify("Conversation compacted.")
+
+            self.call_from_thread(_update_ui)
+
+        self.run_worker(_do_compact, thread=True)
 
     # --- Actions ---
 

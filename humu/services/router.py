@@ -60,6 +60,15 @@ class Router:
         with self._agent_tokens_lock:
             return self._agent_tokens.get((ws_name, room_name, agent_name), 0)
 
+    def clear_agent_tokens(self, ws_name: str, room_name: str) -> None:
+        """Remove all cached token counts for a room."""
+        with self._agent_tokens_lock:
+            keys_to_remove = [
+                k for k in self._agent_tokens if k[0] == ws_name and k[1] == room_name
+            ]
+            for k in keys_to_remove:
+                del self._agent_tokens[k]
+
     def _update_tokens_from_result(self, room_key: tuple[str, str], agent_name: str, usage: dict | None) -> None:
         """Extract token count from ResultMessage usage and store it."""
         if not usage or not agent_name:
