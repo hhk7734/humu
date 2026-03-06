@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 
 from humu.config import AGENTS_DIR, HUMU_HOME, PROJECTS_DIR, WORKSPACES_FILE
+
+LAST_SESSION_FILE = HUMU_HOME / "last_session.json"
 from humu.models.agent import AgentConfig
 from humu.models.room import Room
 from humu.models.workspace import Workspace
@@ -163,3 +165,23 @@ class Storage:
             history = json.loads(history_file.read_text())
         history.append(message)
         history_file.write_text(json.dumps(history, indent=2))
+
+    # --- Last session ---
+
+    def save_last_session(self, workspace_name: str, room_name: str) -> None:
+        LAST_SESSION_FILE.write_text(
+            json.dumps({"workspace": workspace_name, "room": room_name}, indent=2)
+        )
+
+    def load_last_session(self) -> tuple[str, str] | None:
+        if not LAST_SESSION_FILE.exists():
+            return None
+        try:
+            data = json.loads(LAST_SESSION_FILE.read_text())
+            workspace = data.get("workspace", "")
+            room = data.get("room", "")
+            if workspace and room:
+                return workspace, room
+        except Exception:
+            pass
+        return None

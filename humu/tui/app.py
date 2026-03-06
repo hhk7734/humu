@@ -66,6 +66,25 @@ class HumuApp(App):
 
     def on_mount(self) -> None:
         self._refresh_workspaces()
+        self._restore_last_session()
+
+    def _restore_last_session(self) -> None:
+        last = self._storage.load_last_session()
+        if not last:
+            return
+        workspace_name, room_name = last
+        ws = self._storage.get_workspace(workspace_name)
+        if not ws:
+            return
+        room = self._storage.get_room(ws, room_name)
+        if not room:
+            return
+        self._current_workspace = ws
+        self._current_room = room
+        self._refresh_workspaces()
+        self._refresh_rooms()
+        self._refresh_agents()
+        self._refresh_chat()
 
     # --- Refresh UI ---
 
@@ -138,6 +157,7 @@ class HumuApp(App):
             self._refresh_rooms()
             self._refresh_agents()
             self._refresh_chat()
+            self._storage.save_last_session(self._current_workspace.name, room.name)
 
     async def on_message_submitted(self, event: MessageSubmitted) -> None:
         text = event.text
@@ -394,6 +414,7 @@ class HumuApp(App):
             self._refresh_rooms()
             self._refresh_agents()
             self._refresh_chat()
+            self._storage.save_last_session(self._current_workspace.name, room.name)
             self.notify(f"Room '{result.name}' created with leader '{leader_name}'.")
 
     def _on_agent_created(self, result: object) -> None:
