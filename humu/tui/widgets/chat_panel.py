@@ -333,6 +333,10 @@ class ChatPanel(Static):
         margin: 0 1;
         height: auto;
         max-height: 10;
+        border: none;
+    }
+    ChatPanel #chat-input:focus {
+        border: none;
     }
     """
 
@@ -351,6 +355,9 @@ class ChatPanel(Static):
         with Vertical(id="bottom-area"):
             yield ChatInput(id="chat-input", show_line_numbers=False)
             yield PathAutocomplete(id="path-autocomplete")
+
+    def on_mount(self) -> None:
+        self.query_one("#chat-input", ChatInput).focus()
 
     def set_workspace_path(self, path: str | None) -> None:
         self._workspace_path = path

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.screen import ModalScreen
 from textual.widgets import Footer, Header
 
 from humu.models.room import Room
@@ -71,6 +73,17 @@ class HumuApp(App):
     def on_mount(self) -> None:
         self._refresh_workspaces()
         self._restore_last_session()
+
+    def on_mouse_up(self, event: events.MouseUp) -> None:
+        """Return focus to ChatInput after click or drag, unless a modal is open."""
+        if not isinstance(self.screen, ModalScreen):
+            self.call_after_refresh(self._focus_chat_input)
+
+    def _focus_chat_input(self) -> None:
+        try:
+            self.query_one("#chat-input").focus()
+        except Exception:
+            pass
 
     def _restore_last_session(self) -> None:
         last = self._storage.load_last_session()
