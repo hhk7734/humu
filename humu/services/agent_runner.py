@@ -121,7 +121,7 @@ class AgentRunner:
                         if isinstance(block, ThinkingBlock):
                             steps.append({"type": "thinking", "content": block.thinking})
                         elif isinstance(block, ToolUseBlock):
-                            steps.append({"type": "tool_use", "name": block.name, "input": block.input})
+                            steps.append({"type": "tool_use", "id": block.id, "name": block.name, "input": block.input})
                         elif isinstance(block, ToolResultBlock):
                             content = block.content
                             if isinstance(content, list):
@@ -212,7 +212,7 @@ class AgentRunner:
                         if isinstance(block, ThinkingBlock):
                             steps.append({"type": "thinking", "content": block.thinking})
                         elif isinstance(block, ToolUseBlock):
-                            steps.append({"type": "tool_use", "name": block.name, "input": block.input})
+                            steps.append({"type": "tool_use", "id": block.id, "name": block.name, "input": block.input})
                         elif isinstance(block, ToolResultBlock):
                             content = block.content
                             if isinstance(content, list):
