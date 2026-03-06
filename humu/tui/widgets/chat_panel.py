@@ -336,11 +336,13 @@ class ChatPanel(Static):
     }
     """
 
-    def __init__(self) -> None:
+    def __init__(self, get_skills: Callable[[], list[dict]] | None = None) -> None:
         super().__init__()
         self._room_name: str | None = None
         self._workspace_path: str | None = None
-        self._at_start: int = -1  # position of @ in input value
+        self._trigger_start: int = -1  # flat position of trigger char
+        self._trigger_char: str = ""   # "@" or "/"
+        self._get_skills = get_skills
 
     def compose(self) -> ComposeResult:
         yield Label("Chat", classes="panel-title")
@@ -414,16 +416,32 @@ class ChatPanel(Static):
         flat_pos = self._cursor_flat_pos(textarea)
         prefix = text[:flat_pos]
         autocomplete = self.query_one("#path-autocomplete", PathAutocomplete)
+
+        # @ path trigger
         at_pos = prefix.rfind("@")
         if at_pos != -1:
             partial = prefix[at_pos + 1:]
             if " " not in partial and "\n" not in partial:
-                self._at_start = at_pos
-                paths = self._list_paths(partial)
-                autocomplete.show_paths(paths)
+                self._trigger_start = at_pos
+                self._trigger_char = "@"
+                autocomplete.show_paths(self._list_paths(partial))
                 return
+
+        # / skill trigger — only at start of text or after space/newline
+        slash_pos = prefix.rfind("/")
+        if slash_pos != -1:
+            before = prefix[:slash_pos]
+            if before == "" or before[-1] in (" ", "\n"):
+                partial = prefix[slash_pos + 1:]
+                if " " not in partial and "\n" not in partial:
+                    self._trigger_start = slash_pos
+                    self._trigger_char = "/"
+                    autocomplete.show_paths(self._list_skills(partial))
+                    return
+
         autocomplete.clear()
-        self._at_start = -1
+        self._trigger_start = -1
+        self._trigger_char = ""
 
     def _list_paths(self, partial: str) -> list[str]:
         if not self._workspace_path:
@@ -442,15 +460,28 @@ class ChatPanel(Static):
             result.append(rel)
         return result
 
-    def _apply_autocomplete(self, path: str) -> None:
+    def _list_skills(self, partial: str) -> list[str]:
+        if not self._get_skills:
+            return []
+        results = []
+        for s in self._get_skills():
+            name = s.get("name", "")
+            desc = s.get("description", "")
+            if name.startswith(partial):
+                label = f"{name}  {desc[:60]}" if desc else name
+                results.append(label)
+        return results
+
+    def _apply_autocomplete(self, item: str) -> None:
         textarea = self.query_one("#chat-input", ChatInput)
-        if self._at_start != -1:
+        if self._trigger_start != -1:
+            # For skill entries the label includes description; keep only the name
+            insert = item.split("  ")[0] if self._trigger_char == "/" else item
             text = textarea.text
             flat_pos = self._cursor_flat_pos(textarea)
-            new_text = text[: self._at_start + 1] + path + text[flat_pos:]
+            new_text = text[: self._trigger_start + 1] + insert + text[flat_pos:]
             textarea.load_text(new_text)
-            # Move cursor to just after the inserted path
-            new_cursor_flat = self._at_start + 1 + len(path)
+            new_cursor_flat = self._trigger_start + 1 + len(insert)
             new_lines = new_text.split("\n")
             offset = new_cursor_flat
             for row, line in enumerate(new_lines):
@@ -459,11 +490,13 @@ class ChatPanel(Static):
                     break
                 offset -= len(line) + 1
         self.query_one("#path-autocomplete", PathAutocomplete).clear()
-        self._at_start = -1
+        self._trigger_start = -1
+        self._trigger_char = ""
 
     def on_chat_input_submitted(self, event: ChatInput.Submitted) -> None:
         self.query_one("#path-autocomplete", PathAutocomplete).clear()
-        self._at_start = -1
+        self._trigger_start = -1
+        self._trigger_char = ""
         self.post_message(MessageSubmitted(event.text))
 
     def on_key(self, event: Key) -> None:
@@ -473,7 +506,8 @@ class ChatPanel(Static):
 
         if event.key == "escape":
             autocomplete.clear()
-            self._at_start = -1
+            self._trigger_start = -1
+            self._trigger_char = ""
             event.prevent_default()
         elif event.key == "down":
             autocomplete.move_down()

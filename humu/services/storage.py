@@ -3,7 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from humu.config import AGENTS_DIR, HUMU_HOME, PROJECTS_DIR, WORKSPACES_FILE
+import shutil
+import subprocess
+
+from humu.config import (
+    AGENTS_DIR, HUMU_HOME, MARKETPLACES_FILE, PLUGINS_DIR, PROJECTS_DIR,
+    SKILLS_CONFIG_FILE, WORKSPACES_FILE,
+)
 
 LAST_SESSION_FILE = HUMU_HOME / "last_session.json"
 from humu.models.agent import AgentConfig
@@ -14,6 +20,7 @@ from humu.models.workspace import Workspace
 class Storage:
     def __init__(self) -> None:
         HUMU_HOME.mkdir(parents=True, exist_ok=True)
+        PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
         AGENTS_DIR.mkdir(parents=True, exist_ok=True)
         PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
         if not WORKSPACES_FILE.exists():
@@ -165,6 +172,184 @@ class Storage:
             history = json.loads(history_file.read_text())
         history.append(message)
         history_file.write_text(json.dumps(history, indent=2))
+
+    # --- Marketplaces ---
+
+    def list_marketplaces(self) -> list[dict]:
+        """Return marketplaces from ~/.humu/marketplaces.json.
+
+        Each entry: {"id": str, "repo": str}
+        """
+        if not MARKETPLACES_FILE.exists():
+            return []
+        try:
+            return json.loads(MARKETPLACES_FILE.read_text())
+        except Exception:
+            return []
+
+    def add_marketplace(self, marketplace_id: str, repo: str) -> None:
+        marketplaces = [m for m in self.list_marketplaces() if m["id"] != marketplace_id]
+        marketplaces.append({"id": marketplace_id, "repo": repo})
+        MARKETPLACES_FILE.write_text(json.dumps(marketplaces, indent=2))
+
+    def remove_marketplace(self, marketplace_id: str) -> None:
+        marketplaces = [m for m in self.list_marketplaces() if m["id"] != marketplace_id]
+        MARKETPLACES_FILE.write_text(json.dumps(marketplaces, indent=2))
+
+    # --- Plugins ---
+
+    def plugin_dir(self, marketplace_id: str) -> Path:
+        return PLUGINS_DIR / marketplace_id
+
+    def is_plugin_installed(self, marketplace_id: str) -> bool:
+        return self.plugin_dir(marketplace_id).exists()
+
+    def install_plugin(self, marketplace_id: str, repo: str) -> tuple[bool, str]:
+        """Clone the marketplace repo into ~/.humu/plugins/<marketplace_id>.
+
+        Returns (success, message).
+        """
+        dest = self.plugin_dir(marketplace_id)
+        if dest.exists():
+            return False, f"Already installed at {dest}"
+        try:
+            result = subprocess.run(
+                ["git", "clone", "--depth=1", f"https://github.com/{repo}.git", str(dest)],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode == 0:
+                return True, f"Installed {repo}"
+            return False, (result.stderr or result.stdout).strip()[:200]
+        except subprocess.TimeoutExpired:
+            return False, "Timed out"
+        except FileNotFoundError:
+            return False, "`git` not found in PATH"
+
+    def update_plugin(self, marketplace_id: str) -> tuple[bool, str]:
+        """Pull latest changes in ~/.humu/plugins/<marketplace_id>."""
+        dest = self.plugin_dir(marketplace_id)
+        if not dest.exists():
+            return False, "Not installed"
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(dest), "pull", "--ff-only"],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode == 0:
+                return True, (result.stdout or "Already up to date").strip()
+            return False, (result.stderr or result.stdout).strip()[:200]
+        except subprocess.TimeoutExpired:
+            return False, "Timed out"
+        except FileNotFoundError:
+            return False, "`git` not found in PATH"
+
+    def uninstall_plugin(self, marketplace_id: str) -> tuple[bool, str]:
+        """Remove ~/.humu/plugins/<marketplace_id>."""
+        dest = self.plugin_dir(marketplace_id)
+        if not dest.exists():
+            return False, "Not installed"
+        try:
+            shutil.rmtree(dest)
+            return True, f"Uninstalled {marketplace_id}"
+        except Exception as e:
+            return False, str(e)
+
+    # --- Skills ---
+
+    @staticmethod
+    def _parse_skill_frontmatter(content: str) -> tuple[str, str]:
+        """Parse YAML frontmatter from SKILL.md. Returns (name, description)."""
+        lines = content.splitlines()
+        if not lines or lines[0].strip() != "---":
+            return "", ""
+        name = ""
+        description = ""
+        for line in lines[1:]:
+            if line.strip() == "---":
+                break
+            if line.startswith("name:"):
+                name = line[5:].strip()
+            elif line.startswith("description:"):
+                description = line[12:].strip()
+        return name, description
+
+    @staticmethod
+    def _parse_skill_body(content: str) -> str:
+        """Return SKILL.md content with frontmatter stripped."""
+        lines = content.splitlines()
+        if not lines or lines[0].strip() != "---":
+            return content
+        in_front = True
+        body_lines = []
+        for line in lines[1:]:
+            if in_front and line.strip() == "---":
+                in_front = False
+                continue
+            if not in_front:
+                body_lines.append(line)
+        return "\n".join(body_lines).lstrip("\n")
+
+    # --- Skill config (enable/disable) ---
+
+    def _load_skills_config(self) -> dict:
+        if not SKILLS_CONFIG_FILE.exists():
+            return {"disabled": []}
+        try:
+            return json.loads(SKILLS_CONFIG_FILE.read_text())
+        except Exception:
+            return {"disabled": []}
+
+    def _save_skills_config(self, config: dict) -> None:
+        SKILLS_CONFIG_FILE.write_text(json.dumps(config, indent=2))
+
+    def is_skill_enabled(self, name: str) -> bool:
+        return name not in set(self._load_skills_config().get("disabled", []))
+
+    def enable_skill(self, name: str) -> None:
+        config = self._load_skills_config()
+        disabled = set(config.get("disabled", []))
+        disabled.discard(name)
+        config["disabled"] = sorted(disabled)
+        self._save_skills_config(config)
+
+    def disable_skill(self, name: str) -> None:
+        config = self._load_skills_config()
+        disabled = set(config.get("disabled", []))
+        disabled.add(name)
+        config["disabled"] = sorted(disabled)
+        self._save_skills_config(config)
+
+    def list_skills(self) -> list[dict]:
+        """Return enabled skills from ~/.humu/plugins/*/skills/*/SKILL.md.
+
+        Each entry: {"name": str, "description": str, "marketplace": str}
+        """
+        disabled = set(self._load_skills_config().get("disabled", []))
+        seen: dict[str, dict] = {}
+        for skill_md in PLUGINS_DIR.glob("*/skills/*/SKILL.md"):
+            try:
+                marketplace = skill_md.parts[list(skill_md.parts).index(PLUGINS_DIR.name) + 1]
+                content = skill_md.read_text()
+                name, description = self._parse_skill_frontmatter(content)
+                if name and name not in seen:
+                    seen[name] = {
+                        "name": name,
+                        "description": description,
+                        "marketplace": marketplace,
+                        "enabled": name not in disabled,
+                    }
+            except Exception:
+                pass
+        return sorted(seen.values(), key=lambda s: s["name"])
+
+    def get_skill_content(self, name: str) -> str | None:
+        """Return the body of SKILL.md (frontmatter stripped) for the named skill."""
+        for skill_md in PLUGINS_DIR.glob(f"*/skills/{name}/SKILL.md"):
+            try:
+                return self._parse_skill_body(skill_md.read_text())
+            except Exception:
+                pass
+        return None
 
     # --- Last session ---
 

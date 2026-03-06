@@ -4,6 +4,9 @@ HUMU_HOME = Path.home() / ".humu"
 AGENTS_DIR = HUMU_HOME / "agents"
 WORKSPACES_FILE = HUMU_HOME / "workspaces.json"
 PROJECTS_DIR = HUMU_HOME / "projects"
+MARKETPLACES_FILE = HUMU_HOME / "marketplaces.json"
+PLUGINS_DIR = HUMU_HOME / "plugins"
+SKILLS_CONFIG_FILE = HUMU_HOME / "skills_config.json"
 
 DEFAULT_TOOLS = ["Read", "Grep", "Glob"]
 DEFAULT_MODEL = "sonnet"

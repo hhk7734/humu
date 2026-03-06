@@ -48,7 +48,40 @@ class Router:
         with self._live_steps_lock:
             self._live_steps.clear()
 
-    def _build_leader_prompt(self, leader: AgentConfig, room: Room) -> str:
+    def _build_skill_context(self) -> str:
+        """Build the Available Skills section from installed plugins."""
+        skills = self._storage.list_skills()
+        if not skills:
+            return ""
+        lines = ["## Available Skills", "Use these skills automatically when the user's request matches:", ""]
+        for s in skills:
+            lines.append(f"- **{s['name']}**: {s['description']}")
+        return "\n".join(lines)
+
+    def _extract_skill(self, user_message: str) -> tuple[str | None, str, str | None]:
+        """Detect /skill-name prefix in user message.
+
+        Returns (skill_name, cleaned_message, skill_body).
+        """
+        stripped = user_message.strip()
+        if stripped.startswith("/"):
+            parts = stripped.split(None, 1)
+            skill_name = parts[0][1:]
+            remaining = parts[1] if len(parts) > 1 else ""
+            skill_body = self._storage.get_skill_content(skill_name)
+            if skill_body:
+                return skill_name, remaining, skill_body
+        return None, user_message, None
+
+    def _build_leader_prompt(
+        self,
+        leader: AgentConfig,
+        room: Room,
+        skill_context: str = "",
+        skill_name: str | None = None,
+        skill_body: str | None = None,
+        is_new_session: bool = True,
+    ) -> str:
         agent_descriptions = []
         for agent_name in room.agents:
             agent = self._storage.get_agent(agent_name)
@@ -59,8 +92,11 @@ class Router:
 
         agents_section = "\n".join(agent_descriptions) if agent_descriptions else "No member agents available."
 
-        return f"""{leader.prompt}
+        # Skill descriptions are injected only once — when the session is first created
+        skill_section = f"\n{skill_context}\n" if (is_new_session and skill_context) else ""
 
+        prompt = f"""{leader.prompt}
+{skill_section}
 You are the leader agent of room "{room.name}". When you receive a user message, decide how to handle it.
 
 Available member agents:
@@ -73,6 +109,32 @@ You MUST respond with a JSON object with one of these formats:
 
 If no member agents are available or the question doesn't need specialist help, answer directly.
 When forwarding, include enough context in the "context" field for the agent to understand what's needed."""
+
+        # Active skill body is always injected (message-specific, not session-level)
+        if skill_name and skill_body:
+            prompt += f"\n\n## Active Skill: {skill_name}\n{skill_body}"
+
+        return prompt
+
+    def _build_agent_prompt(
+        self,
+        agent: AgentConfig,
+        skill_context: str = "",
+        skill_name: str | None = None,
+        skill_body: str | None = None,
+        is_new_session: bool = True,
+    ) -> str:
+        """Build system prompt for a member agent.
+
+        Skill descriptions are only injected when starting a new session.
+        Active skill body is always injected (it is message-specific).
+        """
+        prompt = agent.prompt
+        if is_new_session and skill_context:
+            prompt += f"\n\n{skill_context}"
+        if skill_name and skill_body:
+            prompt += f"\n\n## Active Skill: {skill_name}\n{skill_body}"
+        return prompt
 
     async def handle_message(
         self,
@@ -89,7 +151,23 @@ When forwarding, include enough context in the "context" field for the agent to 
             )
             return
 
-        leader_prompt = self._build_leader_prompt(leader, room)
+        # Detect /skill-name prefix and load skill content
+        skill_name, user_message, skill_body = self._extract_skill(user_message)
+        if skill_name and not skill_body:
+            yield ChatMessage(
+                sender="system",
+                text=f"Skill '{skill_name}' not found. Check installed plugins.",
+                is_system=True,
+            )
+            return
+
+        # Build skill context once per message (descriptions list for new sessions)
+        skill_context = self._build_skill_context()
+
+        leader_is_new = self._storage.get_session_id(workspace, room.name, leader.name) is None
+        leader_prompt = self._build_leader_prompt(
+            leader, room, skill_context, skill_name, skill_body, is_new_session=leader_is_new
+        )
 
         self._clear_live_steps()
         yield ChatMessage(sender=room.leader, text="", is_loading=True)
@@ -164,6 +242,8 @@ When forwarding, include enough context in the "context" field for the agent to 
                     continue
 
                 forward_prompt = f"The leader agent forwarded the following to you.\n\nOriginal user message: {user_message}\n\nLeader's context: {context}"
+                agent_is_new = self._storage.get_session_id(workspace, room.name, target_name) is None
+                agent_system = self._build_agent_prompt(agent, skill_context, skill_name, skill_body, is_new_session=agent_is_new)
 
                 self._clear_live_steps()
                 yield ChatMessage(sender=target_name, text="", is_loading=True)
@@ -172,6 +252,7 @@ When forwarding, include enough context in the "context" field for the agent to 
                     streaming_steps: list[dict] = []
                     async for chunk in self._runner.query_streaming(
                         agent, workspace, room.name, forward_prompt,
+                        system_prompt_override=agent_system,
                         step_callback=self._add_live_step,
                     ):
                         if chunk.done:
@@ -191,6 +272,7 @@ When forwarding, include enough context in the "context" field for the agent to 
                     try:
                         agent_resp = await self._runner.query(
                             agent, workspace, room.name, forward_prompt,
+                            system_prompt_override=agent_system,
                             step_callback=self._add_live_step,
                         )
                         yield ChatMessage(
@@ -289,6 +371,8 @@ When forwarding, include enough context in the "context" field for the agent to 
                     chain_prompt += (
                         f"\n\nOutput from previous agent:\n{previous_output}"
                     )
+                chain_is_new = self._storage.get_session_id(workspace, room.name, agent_name) is None
+                chain_agent_system = self._build_agent_prompt(agent, skill_context, skill_name, skill_body, is_new_session=chain_is_new)
 
                 self._clear_live_steps()
                 yield ChatMessage(sender=agent_name, text="", is_loading=True)
@@ -297,6 +381,7 @@ When forwarding, include enough context in the "context" field for the agent to 
                     chain_steps: list[dict] = []
                     async for chunk in self._runner.query_streaming(
                         agent, workspace, room.name, chain_prompt,
+                        system_prompt_override=chain_agent_system,
                         step_callback=self._add_live_step,
                     ):
                         if chunk.done:
@@ -316,6 +401,7 @@ When forwarding, include enough context in the "context" field for the agent to 
                     try:
                         agent_resp = await self._runner.query(
                             agent, workspace, room.name, chain_prompt,
+                            system_prompt_override=chain_agent_system,
                             step_callback=self._add_live_step,
                         )
                         yield ChatMessage(

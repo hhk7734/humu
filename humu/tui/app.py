@@ -39,6 +39,7 @@ class HumuApp(App):
         Binding("ctrl+n", "create_new", "New", show=True),
         Binding("ctrl+d", "delete_selected", "Delete", show=True),
         Binding("ctrl+r", "restart", "Reload", show=True),
+        Binding("ctrl+m", "plugin_manager", "Plugins", show=True),
         Binding("ctrl+c", "quit_or_warn", "Quit (x2)", show=True),
         Binding("tab", "focus_next", "Next Panel", show=False),
         Binding("shift+tab", "focus_previous", "Prev Panel", show=False),
@@ -63,7 +64,7 @@ class HumuApp(App):
         with Horizontal(id="main-layout"):
             yield WorkspacePanel()
             yield RoomPanel()
-            yield ChatPanel()
+            yield ChatPanel(get_skills=self._storage.list_skills)
             yield AgentPanel()
         yield Footer()
 
@@ -174,8 +175,11 @@ class HumuApp(App):
         text = event.text
 
         if text.startswith("/"):
-            await self._handle_command(text)
-            return
+            cmd = text.strip().split()[0].lower()
+            if cmd in {"/invite", "/kick", "/agents", "/rooms", "/status", "/help", "/skills"}:
+                await self._handle_command(text)
+                return
+            # Unrecognized /cmd — treat as skill invocation, fall through to router
 
         if not self._current_workspace or not self._current_room:
             self.notify("Select a workspace and room first.", severity="warning")
@@ -508,6 +512,11 @@ class HumuApp(App):
 
     def _reset_quit(self) -> None:
         self._quit_pending = False
+
+    def action_plugin_manager(self) -> None:
+        from humu.tui.screens.plugin_manager import PluginManagerScreen
+
+        self.push_screen(PluginManagerScreen(self._storage))
 
     def action_restart(self) -> None:
         self.exit(result=RELOAD_EXIT_CODE)
