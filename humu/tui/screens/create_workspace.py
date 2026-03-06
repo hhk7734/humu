@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from collections import deque
 from pathlib import Path
 
 from textual.app import ComposeResult
@@ -12,6 +14,16 @@ from textual.widgets.option_list import Option
 from humu.models.workspace import Workspace
 
 MAX_SUGGESTIONS = 10
+
+
+def _dir_needle(text: str) -> str:
+    """Normalise a path component for subsequence matching."""
+    return text.lower().replace("-", "").replace("_", "")
+
+
+def _is_subsequence(needle: str, haystack: str) -> bool:
+    it = iter(haystack)
+    return all(ch in it for ch in needle)
 
 
 def _list_dirs(value: str) -> list[str]:
@@ -30,18 +42,52 @@ def _list_dirs(value: str) -> list[str]:
     if not parent.is_dir():
         return []
 
-    try:
-        matches = sorted(
-            str(c) + "/"
-            for c in parent.iterdir()
-            if c.is_dir()
-            and not c.name.startswith(".")
-            and c.name.startswith(prefix)
-        )
-    except PermissionError:
-        return []
+    seen: set[str] = set()
+    results: list[str] = []
 
-    return matches[:MAX_SUGGESTIONS]
+    # 1) Exact prefix matches first
+    try:
+        for c in sorted(parent.iterdir()):
+            if len(results) >= MAX_SUGGESTIONS:
+                break
+            if c.is_dir() and not c.name.startswith(".") and c.name.startswith(prefix):
+                key = str(c) + "/"
+                if key not in seen:
+                    seen.add(key)
+                    results.append(key)
+    except PermissionError:
+        pass
+
+    if len(results) >= MAX_SUGGESTIONS or not prefix:
+        return results
+
+    # 2) Fuzzy subsequence search (BFS up to 3 levels deep from parent)
+    needle = _dir_needle(prefix)
+    if needle:
+        q: deque[tuple[Path, int]] = deque([(parent, 0)])
+        while q and len(results) < MAX_SUGGESTIONS:
+            cur, depth = q.popleft()
+            try:
+                entries = sorted(cur.iterdir(), key=lambda e: e.name)
+            except OSError:
+                continue
+            for entry in entries:
+                if len(results) >= MAX_SUGGESTIONS:
+                    break
+                if entry.name.startswith(".") or not entry.is_dir():
+                    continue
+                # Build the relative path from parent for haystack
+                rel = entry.relative_to(parent)
+                haystack = _dir_needle(str(rel).replace(os.sep, ""))
+                if _is_subsequence(needle, haystack):
+                    key = str(entry) + "/"
+                    if key not in seen:
+                        seen.add(key)
+                        results.append(key)
+                if depth < 3:
+                    q.append((entry, depth + 1))
+
+    return results
 
 
 class CreateWorkspaceScreen(ModalScreen[Workspace | None]):
