@@ -48,13 +48,21 @@ class WorkspacePanel(Static):
         yield Label("Workspace", classes="panel-title")
         yield ListView(id="workspace-list")
 
-    def set_workspaces(self, names: list[str], selected: str | None = None) -> None:
+    def set_workspaces(
+        self,
+        names: list[str],
+        selected: str | None = None,
+        processing: set[str] | None = None,
+        spinner: str = "⠿",
+    ) -> None:
         self._workspaces = names
+        processing = processing or set()
         lv = self.query_one("#workspace-list", ListView)
         lv.clear()
         for name in names:
             prefix = "> " if name == selected else "  "
-            lv.append(ListItem(Label(f"{prefix}{name}"), name=name))
+            badge = f" [yellow]{spinner}[/yellow]" if name in processing else ""
+            lv.append(ListItem(Label(f"{prefix}{name}{badge}"), name=name))
         lv.append(ListItem(Label("+ new", classes="new-item"), name=NEW_ITEM))
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:

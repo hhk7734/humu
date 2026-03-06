@@ -48,13 +48,21 @@ class RoomPanel(Static):
         yield Label("Rooms", classes="panel-title")
         yield ListView(id="room-list")
 
-    def set_rooms(self, names: list[str], selected: str | None = None) -> None:
+    def set_rooms(
+        self,
+        names: list[str],
+        selected: str | None = None,
+        processing: set[str] | None = None,
+        spinner: str = "⠿",
+    ) -> None:
         self._rooms = names
+        processing = processing or set()
         lv = self.query_one("#room-list", ListView)
         lv.clear()
         for name in names:
             prefix = "> " if name == selected else "  "
-            lv.append(ListItem(Label(f"{prefix}{name}"), name=name))
+            badge = f" [yellow]{spinner}[/yellow]" if name in processing else ""
+            lv.append(ListItem(Label(f"{prefix}{name}{badge}"), name=name))
         lv.append(ListItem(Label("+ new", classes="new-item"), name=NEW_ITEM))
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:

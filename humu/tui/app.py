@@ -59,6 +59,10 @@ class HumuApp(App):
         self._quit_timer: object | None = None
         # Maps (workspace_name, room_name) -> sender for active loading indicators
         self._active_loading: dict[tuple[str, str], str] = {}
+        # Spinner animation for processing indicators
+        self._spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        self._spinner_frame: int = 0
+        self._spinner_timer: object | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -112,7 +116,9 @@ class HumuApp(App):
         workspaces = self._storage.list_workspaces()
         names = [w.name for w in workspaces]
         selected = self._current_workspace.name if self._current_workspace else None
-        self.query_one(WorkspacePanel).set_workspaces(names, selected)
+        processing_ws = {ws for ws, _ in self._processing}
+        spinner = self._spinner_frames[self._spinner_frame]
+        self.query_one(WorkspacePanel).set_workspaces(names, selected, processing_ws, spinner)
 
     def _refresh_rooms(self) -> None:
         room_panel = self.query_one(RoomPanel)
@@ -122,7 +128,28 @@ class HumuApp(App):
         rooms = self._storage.list_rooms(self._current_workspace)
         names = [r.name for r in rooms]
         selected = self._current_room.name if self._current_room else None
-        room_panel.set_rooms(names, selected)
+        ws_name = self._current_workspace.name
+        processing_rooms = {room for ws, room in self._processing if ws == ws_name}
+        spinner = self._spinner_frames[self._spinner_frame]
+        room_panel.set_rooms(names, selected, processing_rooms, spinner)
+
+    def _start_spinner(self) -> None:
+        if self._spinner_timer is None:
+            self._spinner_timer = self.set_interval(0.1, self._tick_spinner)
+        self._refresh_workspaces()
+        self._refresh_rooms()
+
+    def _stop_spinner(self) -> None:
+        if self._spinner_timer is not None:
+            self._spinner_timer.stop()
+            self._spinner_timer = None
+        self._refresh_workspaces()
+        self._refresh_rooms()
+
+    def _tick_spinner(self) -> None:
+        self._spinner_frame = (self._spinner_frame + 1) % len(self._spinner_frames)
+        self._refresh_workspaces()
+        self._refresh_rooms()
 
     def _refresh_agents(self) -> None:
         agent_panel = self.query_one(AgentPanel)
@@ -210,6 +237,7 @@ class HumuApp(App):
             return
 
         self._processing.add(room_key)
+        self._start_spinner()
         chat = self.query_one(ChatPanel)
 
         chat.add_message("you", text)
@@ -285,6 +313,11 @@ class HumuApp(App):
         finally:
             self.call_from_thread(_hide_loading)
             self._processing.discard(room_key)
+            if not self._processing:
+                self.call_from_thread(self._stop_spinner)
+            else:
+                self.call_from_thread(self._refresh_workspaces)
+                self.call_from_thread(self._refresh_rooms)
 
     # --- Commands ---
 
