@@ -122,8 +122,8 @@ class HumuApp(App):
     # ------------------------------------------------------------------
 
     def _on_server_event(self, event: dict) -> None:
-        """Called from the read loop when a broadcast event arrives."""
-        self.call_from_thread(self._dispatch_event, event)
+        """Called from the read loop (same event loop, not a thread)."""
+        self._dispatch_event(event)
 
     def _dispatch_event(self, event: dict) -> None:
         etype = event.get("type", "")
