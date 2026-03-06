@@ -9,7 +9,7 @@ from textual.containers import Vertical, VerticalScroll
 from textual.events import Click, Key
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, Static
+from textual.widgets import Button, Label, Static, TextArea
 
 
 class MessageSubmitted(Message):
@@ -138,6 +138,31 @@ class MessageContextMenu(ModalScreen[None]):
         menu = self.query_one("#menu", Vertical)
         if not menu.region.contains(event.screen_x, event.screen_y):
             self.dismiss()
+
+
+class ChatInput(TextArea):
+    """TextArea that submits on Enter and inserts newline on Shift+Enter."""
+
+    class Submitted(Message):
+        def __init__(self, text: str) -> None:
+            super().__init__()
+            self.text = text
+
+    def _on_key(self, event: Key) -> None:
+        if event.key == "enter":
+            text = self.text.strip()
+            if text:
+                self.load_text("")
+                self.post_message(self.Submitted(text))
+            event.prevent_default()
+            event.stop()
+            return
+        if event.key == "shift+enter":
+            self.insert("\n")
+            event.prevent_default()
+            event.stop()
+            return
+        super()._on_key(event)
 
 
 class PathAutocomplete(Static):
@@ -306,6 +331,8 @@ class ChatPanel(Static):
     }
     ChatPanel #chat-input {
         margin: 0 1;
+        height: auto;
+        max-height: 10;
     }
     """
 
@@ -320,7 +347,7 @@ class ChatPanel(Static):
         with VerticalScroll(id="chat-scroll"):
             yield Vertical(id="chat-messages")
         with Vertical(id="bottom-area"):
-            yield Input(placeholder="Type a message... (@path for files)", id="chat-input")
+            yield ChatInput(id="chat-input", show_line_numbers=False)
             yield PathAutocomplete(id="path-autocomplete")
 
     def set_workspace_path(self, path: str | None) -> None:
@@ -356,15 +383,12 @@ class ChatPanel(Static):
         self.hide_loading()
         container = self.query_one("#chat-messages", Vertical)
         loading = LoadingChatMessage(agent_name, get_steps=get_steps)
-        loading.id = "loading-message"
         container.mount(loading)
         self.call_after_refresh(self._scroll_to_end)
 
     def hide_loading(self) -> None:
-        try:
-            self.query_one("#loading-message", LoadingChatMessage).remove()
-        except Exception:
-            pass
+        for widget in self.query(LoadingChatMessage):
+            widget.remove()
 
     def load_history(self, messages: list[dict]) -> None:
         self.clear_messages()
@@ -377,14 +401,23 @@ class ChatPanel(Static):
                 steps=msg.get("steps"),
             )
 
-    def on_input_changed(self, event: Input.Changed) -> None:
-        value = event.value
+    def _cursor_flat_pos(self, textarea: ChatInput) -> int:
+        """Return the cursor position as a flat character index into textarea.text."""
+        text = textarea.text
+        row, col = textarea.cursor_location
+        lines = text.split("\n")
+        return sum(len(lines[i]) + 1 for i in range(row)) + col
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        textarea = self.query_one("#chat-input", ChatInput)
+        text = textarea.text
+        flat_pos = self._cursor_flat_pos(textarea)
+        prefix = text[:flat_pos]
         autocomplete = self.query_one("#path-autocomplete", PathAutocomplete)
-        at_pos = value.rfind("@")
+        at_pos = prefix.rfind("@")
         if at_pos != -1:
-            partial = value[at_pos + 1:]
-            # Show list only while partial has no spaces (still in path token)
-            if " " not in partial:
+            partial = prefix[at_pos + 1:]
+            if " " not in partial and "\n" not in partial:
                 self._at_start = at_pos
                 paths = self._list_paths(partial)
                 autocomplete.show_paths(paths)
@@ -410,17 +443,34 @@ class ChatPanel(Static):
         return result
 
     def _apply_autocomplete(self, path: str) -> None:
-        inp = self.query_one("#chat-input", Input)
+        textarea = self.query_one("#chat-input", ChatInput)
         if self._at_start != -1:
-            inp.value = inp.value[: self._at_start + 1] + path
-            inp.cursor_position = len(inp.value)
+            text = textarea.text
+            flat_pos = self._cursor_flat_pos(textarea)
+            new_text = text[: self._at_start + 1] + path + text[flat_pos:]
+            textarea.load_text(new_text)
+            # Move cursor to just after the inserted path
+            new_cursor_flat = self._at_start + 1 + len(path)
+            new_lines = new_text.split("\n")
+            offset = new_cursor_flat
+            for row, line in enumerate(new_lines):
+                if offset <= len(line):
+                    textarea.move_cursor((row, offset))
+                    break
+                offset -= len(line) + 1
         self.query_one("#path-autocomplete", PathAutocomplete).clear()
         self._at_start = -1
+
+    def on_chat_input_submitted(self, event: ChatInput.Submitted) -> None:
+        self.query_one("#path-autocomplete", PathAutocomplete).clear()
+        self._at_start = -1
+        self.post_message(MessageSubmitted(event.text))
 
     def on_key(self, event: Key) -> None:
         autocomplete = self.query_one("#path-autocomplete", PathAutocomplete)
         if not autocomplete.is_active:
             return
+
         if event.key == "escape":
             autocomplete.clear()
             self._at_start = -1
@@ -437,11 +487,3 @@ class ChatPanel(Static):
                 self._apply_autocomplete(path)
             event.prevent_default()
             event.stop()
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        text = event.value.strip()
-        if text:
-            event.input.value = ""
-            self.query_one("#path-autocomplete", PathAutocomplete).clear()
-            self._at_start = -1
-            self.post_message(MessageSubmitted(text))

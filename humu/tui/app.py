@@ -5,7 +5,7 @@ import asyncio
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
-from textual.widgets import Footer, Header, Input
+from textual.widgets import Footer, Header
 
 from humu.models.room import Room
 from humu.models.workspace import Workspace
@@ -497,9 +497,10 @@ class HumuApp(App):
             return
 
         # First Ctrl+C: clear chat input text
-        chat_input = self.query_one("#chat-input", Input)
-        if chat_input.value:
-            chat_input.value = ""
+        from humu.tui.widgets.chat_panel import ChatInput
+        chat_input = self.query_one("#chat-input", ChatInput)
+        if chat_input.text:
+            chat_input.load_text("")
         else:
             self._quit_pending = True
             self.notify("Press Ctrl+C again to quit.", timeout=2)
