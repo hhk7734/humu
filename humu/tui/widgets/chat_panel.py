@@ -358,6 +358,10 @@ class ChatPanel(Static):
         self._trigger_start: int = -1  # flat position of trigger char
         self._trigger_char: str = ""   # "@" or "/"
         self._get_skills = get_skills
+        # Input history (Up/Down to recall previous messages)
+        self._input_history: list[str] = []
+        self._history_index: int = -1   # -1 = not navigating
+        self._history_draft: str = ""   # saved draft while navigating history
 
     def compose(self) -> ComposeResult:
         yield Label("Chat", classes="panel-title")
@@ -534,11 +538,36 @@ class ChatPanel(Static):
         self.query_one("#path-autocomplete", PathAutocomplete).clear()
         self._trigger_start = -1
         self._trigger_char = ""
+        # Add to history (avoid consecutive duplicates)
+        if event.text and (not self._input_history or self._input_history[-1] != event.text):
+            self._input_history.append(event.text)
+        self._history_index = -1
+        self._history_draft = ""
         self.post_message(MessageSubmitted(event.text))
 
     def on_key(self, event: Key) -> None:
         autocomplete = self.query_one("#path-autocomplete", PathAutocomplete)
+
         if not autocomplete.is_active:
+            # History navigation with Up/Down when autocomplete is closed
+            textarea = self.query_one("#chat-input", ChatInput)
+            if event.key == "up" and self._input_history:
+                if self._history_index == -1:
+                    self._history_draft = textarea.text
+                    self._history_index = len(self._input_history) - 1
+                elif self._history_index > 0:
+                    self._history_index -= 1
+                textarea.load_text(self._input_history[self._history_index])
+                event.prevent_default()
+            elif event.key == "down" and self._history_index != -1:
+                if self._history_index < len(self._input_history) - 1:
+                    self._history_index += 1
+                    textarea.load_text(self._input_history[self._history_index])
+                else:
+                    self._history_index = -1
+                    textarea.load_text(self._history_draft)
+                    self._history_draft = ""
+                event.prevent_default()
             return
 
         if event.key == "escape":

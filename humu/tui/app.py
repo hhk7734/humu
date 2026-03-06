@@ -63,6 +63,8 @@ class HumuApp(App):
         self._spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         self._spinner_frame: int = 0
         self._spinner_timer: object | None = None
+        # Per-room message queue (messages waiting while room is processing)
+        self._pending_messages: dict[tuple[str, str], list[str]] = {}
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -244,18 +246,21 @@ class HumuApp(App):
         room_key = (workspace.name, room.name)
 
         if room_key in self._processing:
-            self.notify("Processing previous message...", severity="warning")
+            self._pending_messages.setdefault(room_key, []).append(text)
+            q_len = len(self._pending_messages[room_key])
+            self.notify(f"Queued ({q_len})", severity="information", timeout=2)
             return
 
+        self._start_room_processing(workspace, room, text)
+
+    def _start_room_processing(self, workspace: Workspace, room: Room, text: str) -> None:
+        room_key = (workspace.name, room.name)
         self._processing.add(room_key)
         self._start_spinner()
-        chat = self.query_one(ChatPanel)
-
-        chat.add_message("you", text)
+        if self._is_viewing(workspace, room):
+            self.query_one(ChatPanel).add_message("you", text)
         self._storage.append_chat_message(
-            workspace,
-            room.name,
-            {"sender": "you", "text": text},
+            workspace, room.name, {"sender": "you", "text": text},
         )
 
         def _process_sync() -> None:
@@ -266,6 +271,16 @@ class HumuApp(App):
                 loop.close()
 
         self.run_worker(_process_sync, thread=True)
+
+    def _process_next_queued(self, workspace: Workspace, room: Room) -> None:
+        room_key = (workspace.name, room.name)
+        queue = self._pending_messages.get(room_key, [])
+        if not queue:
+            return
+        next_text = queue.pop(0)
+        if not queue:
+            self._pending_messages.pop(room_key, None)
+        self._start_room_processing(workspace, room, next_text)
 
     def _is_viewing(self, workspace: Workspace, room: Room) -> bool:
         """Return True if the user is currently viewing this workspace+room."""
@@ -329,6 +344,7 @@ class HumuApp(App):
             else:
                 self.call_from_thread(self._refresh_workspaces)
                 self.call_from_thread(self._refresh_rooms)
+            self.call_from_thread(self._process_next_queued, workspace, room)
 
     # --- Commands ---
 
