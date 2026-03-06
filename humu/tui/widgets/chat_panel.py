@@ -361,6 +361,18 @@ class ChatPanel(Static):
     ChatPanel #chat-input:focus {
         border: none;
     }
+    ChatPanel #queue-display {
+        margin: 0 1;
+        padding: 0 1;
+        height: auto;
+        color: $text-muted;
+        background: $surface;
+        border-top: solid $accent 30%;
+        display: none;
+    }
+    ChatPanel #queue-display.visible {
+        display: block;
+    }
     """
 
     def __init__(self, get_skills: Callable[[], list[dict]] | None = None) -> None:
@@ -380,6 +392,7 @@ class ChatPanel(Static):
         with VerticalScroll(id="chat-scroll"):
             yield Vertical(id="chat-messages")
         with Vertical(id="bottom-area"):
+            yield Static("", id="queue-display")
             yield ChatInput(id="chat-input", show_line_numbers=False)
             yield PathAutocomplete(id="path-autocomplete")
 
@@ -421,6 +434,21 @@ class ChatPanel(Static):
     def on_mouse_up(self) -> None:
         """Clicking or dragging anywhere in the chat panel refocuses the input."""
         self.call_after_refresh(lambda: self.query_one("#chat-input", ChatInput).focus())
+
+    def set_pending_queue(self, messages: list[str]) -> None:
+        """Show or hide the pending message queue above the input."""
+        display = self.query_one("#queue-display", Static)
+        if not messages:
+            display.update("")
+            display.remove_class("visible")
+            return
+        lines = []
+        for i, msg in enumerate(messages, 1):
+            preview = msg[:60] + "…" if len(msg) > 60 else msg
+            lines.append(f"[dim]{i}.[/dim] {preview}")
+        header = f"[bold]Queued ({len(messages)})[/bold]"
+        display.update(header + "\n" + "\n".join(lines))
+        display.add_class("visible")
 
     def set_workspace_path(self, path: str | None) -> None:
         self._workspace_path = path

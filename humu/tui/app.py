@@ -173,6 +173,15 @@ class HumuApp(App):
             self._current_room.leader, self._current_room.agents
         )
 
+    def _refresh_queue_display(self) -> None:
+        """Update the pending queue display for the currently viewed room."""
+        if not self._current_workspace or not self._current_room:
+            self.query_one(ChatPanel).set_pending_queue([])
+            return
+        room_key = (self._current_workspace.name, self._current_room.name)
+        queue = self._pending_messages.get(room_key, [])
+        self.query_one(ChatPanel).set_pending_queue(queue)
+
     def _refresh_chat(self) -> None:
         chat_panel = self.query_one(ChatPanel)
         if not self._current_workspace or not self._current_room:
@@ -191,6 +200,7 @@ class HumuApp(App):
         sender = self._active_loading.get(room_key)
         if sender:
             chat_panel.show_loading(sender, self._router.get_live_steps)
+        self._refresh_queue_display()
 
     # --- Event handlers ---
 
@@ -247,8 +257,7 @@ class HumuApp(App):
 
         if room_key in self._processing:
             self._pending_messages.setdefault(room_key, []).append(text)
-            q_len = len(self._pending_messages[room_key])
-            self.notify(f"Queued ({q_len})", severity="information", timeout=2)
+            self._refresh_queue_display()
             return
 
         self._start_room_processing(workspace, room, text)
@@ -280,6 +289,7 @@ class HumuApp(App):
         next_text = queue.pop(0)
         if not queue:
             self._pending_messages.pop(room_key, None)
+        self._refresh_queue_display()
         self._start_room_processing(workspace, room, next_text)
 
     def _is_viewing(self, workspace: Workspace, room: Room) -> bool:
