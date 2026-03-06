@@ -35,6 +35,12 @@ class MessageSubmitted(Message):
         self.text = text
 
 
+class AgentPromptRequested(Message):
+    def __init__(self, agent_name: str) -> None:
+        super().__init__()
+        self.agent_name = agent_name
+
+
 class LoadingChatMessage(Vertical):
     """Animated loading indicator shown as a chat message while an agent is thinking."""
 
@@ -307,6 +313,16 @@ class ChatMessage(Vertical):
 
     def on_click(self, event: Click) -> None:
         if event.button == 3:  # right-click
+            from humu.tui.screens.context_menu import ContextMenuScreen
+
+            options: list[tuple[str, str]] = []
+            if self._sender not in ("you", "system", "error"):
+                options.append(("prompt", "Prompt"))
+            options.append(("detail", "View Detail"))
+            self.app.push_screen(ContextMenuScreen(options), self._on_context_menu)
+
+    def _on_context_menu(self, result: str | None) -> None:
+        if result == "detail":
             from humu.tui.screens.message_detail import MessageDetailScreen
 
             self.app.push_screen(
@@ -318,6 +334,8 @@ class ChatMessage(Vertical):
                     steps=self._steps,
                 )
             )
+        elif result == "prompt":
+            self.post_message(AgentPromptRequested(self._sender))
 
 
 class ChatPanel(Static):

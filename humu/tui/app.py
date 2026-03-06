@@ -16,7 +16,11 @@ from humu.tui.screens.create_agent import CreateAgentScreen
 from humu.tui.screens.create_room import CreateRoomScreen, RoomCreateResult
 from humu.tui.screens.create_workspace import CreateWorkspaceScreen
 from humu.tui.widgets.agent_panel import AgentEditRequested, AgentPanel
-from humu.tui.widgets.chat_panel import ChatPanel, MessageSubmitted
+from humu.tui.widgets.chat_panel import (
+    AgentPromptRequested,
+    ChatPanel,
+    MessageSubmitted,
+)
 from humu.tui.widgets.resize_handle import ResizeHandle
 from humu.tui.widgets.room_panel import RoomNewRequested, RoomPanel, RoomSelected
 from humu.tui.widgets.workspace_panel import (
@@ -764,6 +768,27 @@ class HumuApp(App):
                 self.notify(f"Agent '{result.name}' created.")
 
             self.run_worker(_do, thread=False)
+
+    def on_agent_prompt_requested(self, event: AgentPromptRequested) -> None:
+        async def _do() -> None:
+            if not self._current_workspace:
+                return
+            reply = await self._conn.send(
+                {
+                    "type": "get_agent",
+                    "workspace": self._current_workspace.name,
+                    "name": event.agent_name,
+                }
+            )
+            if not reply or reply.get("type") != "agent_info" or not reply.get("agent"):
+                self.notify(f"Agent '{event.agent_name}' not found.", severity="error")
+                return
+            agent = AgentConfig.from_dict(reply["agent"])
+            from humu.tui.screens.prompt_view import PromptViewScreen
+
+            self.push_screen(PromptViewScreen(agent.name, agent.prompt))
+
+        self.run_worker(_do, thread=False)
 
     def action_delete_selected(self) -> None:
         from humu.tui.screens.confirm import ConfirmScreen
