@@ -153,6 +153,9 @@ class ChatInput(TextArea):
             self.text = text
 
     suppress_enter: bool = False
+    # Set by ChatPanel to enable history navigation before TextArea processes arrows
+    on_history_up: "Callable[[], bool] | None" = None
+    on_history_down: "Callable[[], bool] | None" = None
 
     def _on_key(self, event: Key) -> None:
         if event.key == "enter":
@@ -170,6 +173,15 @@ class ChatInput(TextArea):
             return
         if event.key == "shift+enter":
             self.insert("\n")
+            event.prevent_default()
+            event.stop()
+            return
+        # History navigation — intercept before TextArea's cursor-movement bindings
+        if event.key == "up" and self.on_history_up and self.on_history_up():
+            event.prevent_default()
+            event.stop()
+            return
+        if event.key == "down" and self.on_history_down and self.on_history_down():
             event.prevent_default()
             event.stop()
             return
@@ -372,7 +384,39 @@ class ChatPanel(Static):
             yield PathAutocomplete(id="path-autocomplete")
 
     def on_mount(self) -> None:
-        self.query_one("#chat-input", ChatInput).focus()
+        textarea = self.query_one("#chat-input", ChatInput)
+        textarea.focus()
+        textarea.on_history_up = self._navigate_history_up
+        textarea.on_history_down = self._navigate_history_down
+
+    def _navigate_history_up(self) -> bool:
+        """Navigate to the previous history entry. Returns True if handled."""
+        autocomplete = self.query_one("#path-autocomplete", PathAutocomplete)
+        if autocomplete.is_active or not self._input_history:
+            return False
+        textarea = self.query_one("#chat-input", ChatInput)
+        if self._history_index == -1:
+            self._history_draft = textarea.text
+            self._history_index = len(self._input_history) - 1
+        elif self._history_index > 0:
+            self._history_index -= 1
+        textarea.load_text(self._input_history[self._history_index])
+        return True
+
+    def _navigate_history_down(self) -> bool:
+        """Navigate to the next history entry. Returns True if handled."""
+        autocomplete = self.query_one("#path-autocomplete", PathAutocomplete)
+        if autocomplete.is_active or self._history_index == -1:
+            return False
+        textarea = self.query_one("#chat-input", ChatInput)
+        if self._history_index < len(self._input_history) - 1:
+            self._history_index += 1
+            textarea.load_text(self._input_history[self._history_index])
+        else:
+            self._history_index = -1
+            textarea.load_text(self._history_draft)
+            self._history_draft = ""
+        return True
 
     def on_mouse_up(self) -> None:
         """Clicking or dragging anywhere in the chat panel refocuses the input."""
@@ -549,25 +593,6 @@ class ChatPanel(Static):
         autocomplete = self.query_one("#path-autocomplete", PathAutocomplete)
 
         if not autocomplete.is_active:
-            # History navigation with Up/Down when autocomplete is closed
-            textarea = self.query_one("#chat-input", ChatInput)
-            if event.key == "up" and self._input_history:
-                if self._history_index == -1:
-                    self._history_draft = textarea.text
-                    self._history_index = len(self._input_history) - 1
-                elif self._history_index > 0:
-                    self._history_index -= 1
-                textarea.load_text(self._input_history[self._history_index])
-                event.prevent_default()
-            elif event.key == "down" and self._history_index != -1:
-                if self._history_index < len(self._input_history) - 1:
-                    self._history_index += 1
-                    textarea.load_text(self._input_history[self._history_index])
-                else:
-                    self._history_index = -1
-                    textarea.load_text(self._history_draft)
-                    self._history_draft = ""
-                event.prevent_default()
             return
 
         if event.key == "escape":
