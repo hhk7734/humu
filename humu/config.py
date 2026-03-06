@@ -9,7 +9,7 @@ PLUGINS_DIR = HUMU_HOME / "plugins"
 SKILLS_CONFIG_FILE = HUMU_HOME / "skills_config.json"
 
 DEFAULT_TOOLS = ["Read", "Grep", "Glob"]
-DEFAULT_MODEL = "sonnet"
+DEFAULT_MODEL = "opus"
 
 # Model context window sizes (in tokens)
 MODEL_CONTEXT_WINDOWS: dict[str, int] = {
