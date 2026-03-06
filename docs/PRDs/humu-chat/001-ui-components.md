@@ -68,7 +68,7 @@ Textual built-in bottom bar. Automatically renders the active key bindings defin
 | CSS id        | `#workspace-panel`                                |
 | Default width | 18 columns                                        |
 
-Lists all registered workspaces. The selected workspace is prefixed with `> ` and highlighted. Workspaces with an active processing task show a yellow braille spinner badge (e.g., `my-app ⠹`). See [resource-management.md](resource-management.md) for CRUD operations.
+Lists all registered workspaces. The selected workspace is prefixed with `> ` and highlighted. Workspaces with an active processing task show a yellow braille spinner badge (e.g., `my-app ⠹`). See [003-resource-management.md](003-resource-management.md) for CRUD operations.
 
 **Internal widgets:**
 
@@ -233,7 +233,7 @@ Modal screens are pushed on top of the main layout and block interaction with pa
 
 ### CreateWorkspaceScreen / CreateRoomScreen / CreateAgentScreen / ConfirmScreen
 
-See [resource-management.md](resource-management.md) for creation, editing, and deletion workflows.
+See [003-resource-management.md](003-resource-management.md) for creation, editing, and deletion workflows.
 
 ---
 

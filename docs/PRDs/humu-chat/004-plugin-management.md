@@ -1,4 +1,4 @@
-# Humu — Plugin & Marketplace System
+# Humu — Plugin & Marketplace Management
 
 ## Overview
 

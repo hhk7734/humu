@@ -6,7 +6,7 @@ Humu is a terminal-based multi-agent chat application built with **Textual** and
 
 ## Core Concepts
 
-Workspaces, rooms, and agents are the three core resources. See [resource-management.md](resource-management.md) for full CRUD details, storage paths, and deletion behavior.
+Workspaces, rooms, and agents are the three core resources. See [003-resource-management.md](003-resource-management.md) for full CRUD details, storage paths, and deletion behavior.
 
 - **Workspace** — maps to a project root path; agents run with `cwd` set to that path.
 - **Room** — a conversation space with one leader agent and zero or more member agents.
@@ -73,47 +73,13 @@ The leader agent uses `output_format` (JSON schema) to return structured decisio
 }
 ```
 
-## TUI Layout
+## UI & Key Bindings
 
-```
-+-- Workspace -+- Rooms --+- Chat ---------------------+- Agents --+
-|              |          |                            |           |
-| > my-app     | > design | [you] How should we       | * leader  |
-|   infra      |   dev    | structure the API?        |   backend |
-|   docs       |   review |                           |   security|
-|              |          | [leader] Forwarding to    |           |
-|              |          | backend...                |           |
-|              |          |                           |           |
-|              |          | [backend] I recommend     |           |
-|              |          | REST with...              |           |
-|              |          |                           |           |
-|              |          | [leader] Based on         |           |
-|              |          | backend's analysis...     |           |
-|              |          +----------------------------+           |
-|              |          | > your message here...    |           |
-+--------------+----------+----------------------------+-----------+
-```
-
-### Panels
-
-- **Workspace** — list/select workspaces
-- **Rooms** — rooms in current workspace
-- **Chat** — message history with sender labels + input at bottom
-- **Agents** — agents in current room, leader marked with `*`
-
-### Key Bindings
-
-| Key      | Action                                              |
-| :------- | :-------------------------------------------------- |
-| `Ctrl+N` | Create new (workspace/room/agent per focused panel) |
-| `Ctrl+D` | Delete selected item                                |
-| `Tab`    | Cycle panel focus                                   |
-| `Enter`  | Send message (in chat input)                        |
-| `/`      | Command mode (`/invite`, `/kick`, etc.)             |
+See [001-ui-components.md](001-ui-components.md) for the full TUI layout, panel descriptions, and widget details. See [implemented-features.md](implemented-features.md) for the complete key binding reference.
 
 ## Persistence
 
-See [resource-management.md](resource-management.md) for detailed storage paths and deletion behavior.
+See [003-resource-management.md](003-resource-management.md) for detailed storage paths and deletion behavior.
 
 ## Claude Agent SDK Integration
 
@@ -125,41 +91,9 @@ Each agent wraps a `ClaudeSDKClient` instance:
 - Leader agent uses `output_format` with JSON schema for structured routing decisions
 - Streaming controlled per-agent via `include_partial_messages`
 
-## Project Structure
+## Architecture
 
-```
-humu/
-+-- __init__.py
-+-- main.py                     # Entry point, Textual App
-+-- models/
-|   +-- workspace.py            # Workspace dataclass
-|   +-- room.py                 # Room dataclass
-|   +-- agent.py                # Agent dataclass
-+-- services/
-|   +-- agent_runner.py         # Manages ClaudeSDKClient sessions
-|   +-- router.py               # Parses leader response, dispatches to agents
-|   +-- storage.py              # Read/write JSON files under ~/.humu/
-+-- tui/
-|   +-- app.py                  # Textual App class, screen layout
-|   +-- widgets/
-|   |   +-- workspace_panel.py
-|   |   +-- room_panel.py
-|   |   +-- chat_panel.py
-|   |   +-- agent_panel.py
-|   +-- screens/
-|       +-- create_workspace.py
-|       +-- create_room.py
-|       +-- create_agent.py
-+-- config.py                   # Paths, defaults
-```
-
-### Responsibilities
-
-- **models/** — pure data, no SDK dependency
-- **services/agent_runner.py** — wraps `ClaudeSDKClient`, handles connect/query/resume/disconnect
-- **services/router.py** — takes leader's structured JSON, calls agent runners, collects results, feeds back to leader
-- **services/storage.py** — all file I/O for workspaces, rooms, agents, sessions
-- **tui/** — Textual widgets and screens, calls services, never touches SDK directly
+See [002-client-server-architecture.md](002-client-server-architecture.md) for the client-server architecture, package structure, and communication protocol.
 
 ## Error Handling
 
@@ -176,10 +110,10 @@ humu/
 
 - `claude-agent-sdk` — Claude Agent SDK for Python
 - `textual` — TUI framework
+- `websockets` — async WebSocket library (client-server IPC)
 
 ## Non-Goals
 
 - No auth system (single user, local app)
-- No plugin system (agents and tools are the extension points)
 - No retry logic beyond what the SDK provides
 - No parallel agent execution (sequential for readability)

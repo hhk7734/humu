@@ -44,7 +44,7 @@ Right-clicking a chat message with tool steps opens a `MessageDetailScreen` moda
 
 ## Chat Commands
 
-Management commands (`/invite`, `/kick`, `/agents`, `/rooms`, `/status`) are documented in [resource-management.md](resource-management.md). Additional commands:
+Management commands (`/invite`, `/kick`, `/agents`, `/rooms`, `/status`) are documented in [003-resource-management.md](003-resource-management.md). Additional commands:
 
 | Command    | Description                          |
 | :--------- | :----------------------------------- |
@@ -96,10 +96,6 @@ Panel widths are saved to `~/.humu/last_session.json` under a `panel_widths` key
 | `room-panel`      | 14            |
 | `agent-panel`     | 16            |
 
-## Delete Confirmation Dialog
-
-See [resource-management.md](resource-management.md) for workspace and room deletion details (including what data is cleaned up).
-
 ## Token Usage Display
 
 Context usage is displayed inline in each agent's chat message header rather than in the `AgentPanel`. When an agent message is added to the chat:
@@ -109,10 +105,6 @@ Context usage is displayed inline in each agent's chat message header rather tha
 - The result is passed as `context_pct` to `ChatPanel.add_message()` → `ChatMessage`, which renders `[leader] (42%)` in the sender label.
 - Only non-system, non-user messages receive a percentage; `is_system=True` and `sender == "you"` are excluded.
 - Token counts are accumulated by `Router._agent_tokens` from `TaskProgressMessage.usage` and `ResultMessage.usage` inside `AgentRunner`.
-
-## Agent Edit (Double-Click)
-
-See [resource-management.md](resource-management.md) for agent edit details.
 
 ## Theme Persistence
 
@@ -150,18 +142,6 @@ History entries include:
   "steps": [...]
 }
 ```
-
-## Structured Output for Leader Routing
-
-The leader agent is always queried with `output_format` set to a JSON schema (`ROUTING_SCHEMA` from `humu/config.py`). If the SDK returns a structured output, it takes priority over the raw text. If JSON parsing fails, the raw text is displayed as a direct answer.
-
-## Background Message Processing
-
-Agent queries run in a background thread (`run_worker(..., thread=True)`) to avoid blocking the Textual event loop. UI updates (loading indicators, new messages) are dispatched back to the main thread via `call_from_thread`.
-
-## Auto-Leader Creation & Agent Model Display
-
-See [resource-management.md](resource-management.md) for room auto-leader creation and agent model display details.
 
 ## Key Bindings (Full Reference)
 
