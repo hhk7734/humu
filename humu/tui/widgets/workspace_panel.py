@@ -40,8 +40,8 @@ class WorkspacePanel(Static):
     }
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
         self._workspaces: list[str] = []
 
     def compose(self) -> ComposeResult:

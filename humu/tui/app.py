@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import asyncio
 
-from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
-from textual.screen import ModalScreen
 from textual.widgets import Footer, Header
 
 from humu.models.room import Room
@@ -19,6 +17,7 @@ from humu.tui.screens.create_room import CreateRoomScreen, RoomCreateResult
 from humu.tui.screens.create_workspace import CreateWorkspaceScreen
 from humu.tui.widgets.agent_panel import AgentPanel
 from humu.tui.widgets.chat_panel import ChatPanel, MessageSubmitted
+from humu.tui.widgets.resize_handle import ResizeHandle
 from humu.tui.widgets.room_panel import RoomNewRequested, RoomPanel, RoomSelected
 from humu.tui.widgets.workspace_panel import (
     WorkspaceNewRequested,
@@ -64,26 +63,30 @@ class HumuApp(App):
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal(id="main-layout"):
-            yield WorkspacePanel()
-            yield RoomPanel()
+            yield WorkspacePanel(id="workspace-panel")
+            yield ResizeHandle("workspace-panel", min_width=10, save_callback=self._save_panel_width)
+            yield RoomPanel(id="room-panel")
+            yield ResizeHandle("room-panel", min_width=8, save_callback=self._save_panel_width)
             yield ChatPanel(get_skills=self._storage.list_skills)
-            yield AgentPanel()
+            yield ResizeHandle("agent-panel", min_width=10, invert=True, save_callback=self._save_panel_width)
+            yield AgentPanel(id="agent-panel")
         yield Footer()
 
     def on_mount(self) -> None:
         self._refresh_workspaces()
         self._restore_last_session()
+        self._restore_panel_widths()
 
-    def on_mouse_up(self, event: events.MouseUp) -> None:
-        """Return focus to ChatInput after click or drag, unless a modal is open."""
-        if not isinstance(self.screen, ModalScreen):
-            self.call_after_refresh(self._focus_chat_input)
+    def _restore_panel_widths(self) -> None:
+        widths = self._storage.load_panel_widths()
+        for panel_id, width in widths.items():
+            try:
+                self.query_one(f"#{panel_id}").styles.width = width
+            except Exception:
+                pass
 
-    def _focus_chat_input(self) -> None:
-        try:
-            self.query_one("#chat-input").focus()
-        except Exception:
-            pass
+    def _save_panel_width(self, panel_id: str, width: int) -> None:
+        self._storage.save_panel_width(panel_id, width)
 
     def _restore_last_session(self) -> None:
         last = self._storage.load_last_session()
@@ -478,6 +481,8 @@ class HumuApp(App):
             self.notify(f"Agent '{result.name}' created.")
 
     def action_delete_selected(self) -> None:
+        from humu.tui.screens.confirm import ConfirmScreen
+
         focused = self.focused
         if focused is None:
             return
@@ -487,26 +492,40 @@ class HumuApp(App):
             if isinstance(node, WorkspacePanel):
                 if self._current_workspace:
                     name = self._current_workspace.name
-                    self._storage.delete_workspace(name)
-                    self._current_workspace = None
-                    self._current_room = None
-                    self._refresh_workspaces()
-                    self._refresh_rooms()
-                    self._refresh_agents()
-                    self._refresh_chat()
-                    self.notify(f"Workspace '{name}' deleted.")
+                    self.push_screen(
+                        ConfirmScreen(f"Delete workspace '{name}'?\nThis cannot be undone."),
+                        lambda confirmed, _name=name: self._delete_workspace(_name) if confirmed else None,
+                    )
                 return
             if isinstance(node, RoomPanel):
                 if self._current_workspace and self._current_room:
                     name = self._current_room.name
-                    self._storage.delete_room(self._current_workspace, name)
-                    self._current_room = None
-                    self._refresh_rooms()
-                    self._refresh_agents()
-                    self._refresh_chat()
-                    self.notify(f"Room '{name}' deleted.")
+                    self.push_screen(
+                        ConfirmScreen(f"Delete room '{name}'?\nThis cannot be undone."),
+                        lambda confirmed, _name=name: self._delete_room(_name) if confirmed else None,
+                    )
                 return
             node = node.parent
+
+    def _delete_workspace(self, name: str) -> None:
+        self._storage.delete_workspace(name)
+        self._current_workspace = None
+        self._current_room = None
+        self._refresh_workspaces()
+        self._refresh_rooms()
+        self._refresh_agents()
+        self._refresh_chat()
+        self.notify(f"Workspace '{name}' deleted.")
+
+    def _delete_room(self, name: str) -> None:
+        if not self._current_workspace:
+            return
+        self._storage.delete_room(self._current_workspace, name)
+        self._current_room = None
+        self._refresh_rooms()
+        self._refresh_agents()
+        self._refresh_chat()
+        self.notify(f"Room '{name}' deleted.")
 
     def action_quit_or_warn(self) -> None:
         if self._quit_pending:

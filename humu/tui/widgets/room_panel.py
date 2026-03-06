@@ -40,8 +40,8 @@ class RoomPanel(Static):
     }
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
         self._rooms: list[str] = []
 
     def compose(self) -> ComposeResult:

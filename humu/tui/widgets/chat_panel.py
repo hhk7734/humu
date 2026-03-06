@@ -370,6 +370,10 @@ class ChatPanel(Static):
     def on_mount(self) -> None:
         self.query_one("#chat-input", ChatInput).focus()
 
+    def on_mouse_up(self) -> None:
+        """Clicking or dragging anywhere in the chat panel refocuses the input."""
+        self.call_after_refresh(lambda: self.query_one("#chat-input", ChatInput).focus())
+
     def set_workspace_path(self, path: str | None) -> None:
         self._workspace_path = path
 

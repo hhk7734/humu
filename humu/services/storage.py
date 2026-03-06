@@ -383,3 +383,23 @@ class Storage:
     def load_last_room(self, workspace_name: str) -> str | None:
         data = self._load_session_data()
         return data.get("rooms", {}).get(workspace_name) or None
+
+    # --- Panel layout ---
+
+    _DEFAULT_PANEL_WIDTHS: dict[str, int] = {
+        "workspace-panel": 18,
+        "room-panel": 14,
+        "agent-panel": 16,
+    }
+
+    def save_panel_width(self, panel_id: str, width: int) -> None:
+        data = self._load_session_data()
+        data.setdefault("panel_widths", {})[panel_id] = width
+        self._save_session_data(data)
+
+    def load_panel_widths(self) -> dict[str, int]:
+        data = self._load_session_data()
+        saved = data.get("panel_widths", {})
+        widths = dict(self._DEFAULT_PANEL_WIDTHS)
+        widths.update({k: v for k, v in saved.items() if k in widths})
+        return widths
