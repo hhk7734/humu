@@ -40,9 +40,7 @@ class Handler:
         # Track processing state across all rooms
         self._processing: set[tuple[str, str]] = set()
         self._pending_messages: dict[tuple[str, str], list[str]] = {}
-        self._active_tasks: dict[
-            tuple[str, str], asyncio.Task[None]
-        ] = {}
+        self._active_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
 
         # Wire up system event callback
         self._router.on_system_event = self._on_system_event
@@ -77,7 +75,10 @@ class Handler:
     async def _cmd_list_rooms(self, msg: dict) -> dict:
         ws = self._storage.get_workspace(msg["workspace"])
         if not ws:
-            return {"type": "error", "message": f"Workspace '{msg['workspace']}' not found"}
+            return {
+                "type": "error",
+                "message": f"Workspace '{msg['workspace']}' not found",
+            }
         rooms = self._storage.list_rooms(ws)
         return {
             "type": "room_list",
@@ -102,7 +103,10 @@ class Handler:
     async def _cmd_get_chat_history(self, msg: dict) -> dict:
         ws = self._storage.get_workspace(msg["workspace"])
         if not ws:
-            return {"type": "error", "message": f"Workspace '{msg['workspace']}' not found"}
+            return {
+                "type": "error",
+                "message": f"Workspace '{msg['workspace']}' not found",
+            }
         history = self._storage.load_chat_history(ws, msg["room"])
         return {
             "type": "chat_history",
@@ -130,23 +134,34 @@ class Handler:
         ws = Workspace(name=msg["name"], root_path=msg["root_path"])
         self._storage.save_workspace(ws)
         self._broadcast(
-            {"type": "workspace_list", "workspaces": [w.to_dict() for w in self._storage.list_workspaces()]},
-            None, None,
+            {
+                "type": "workspace_list",
+                "workspaces": [w.to_dict() for w in self._storage.list_workspaces()],
+            },
+            None,
+            None,
         )
         return {"type": "ok"}
 
     async def _cmd_delete_workspace(self, msg: dict) -> dict:
         self._storage.delete_workspace(msg["name"])
         self._broadcast(
-            {"type": "workspace_list", "workspaces": [w.to_dict() for w in self._storage.list_workspaces()]},
-            None, None,
+            {
+                "type": "workspace_list",
+                "workspaces": [w.to_dict() for w in self._storage.list_workspaces()],
+            },
+            None,
+            None,
         )
         return {"type": "ok"}
 
     async def _cmd_create_room(self, msg: dict) -> dict:
         ws = self._storage.get_workspace(msg["workspace"])
         if not ws:
-            return {"type": "error", "message": f"Workspace '{msg['workspace']}' not found"}
+            return {
+                "type": "error",
+                "message": f"Workspace '{msg['workspace']}' not found",
+            }
         room_name = msg["room_name"]
         leader_name = f"{room_name}-leader"
         if not self._storage.get_agent(leader_name):
@@ -163,19 +178,32 @@ class Handler:
         room = Room(name=room_name, leader=leader_name)
         self._storage.save_room(ws, room)
         self._broadcast(
-            {"type": "room_list", "workspace": ws.name, "rooms": [r.to_dict() for r in self._storage.list_rooms(ws)]},
-            ws.name, None,
+            {
+                "type": "room_list",
+                "workspace": ws.name,
+                "rooms": [r.to_dict() for r in self._storage.list_rooms(ws)],
+            },
+            ws.name,
+            None,
         )
         return {"type": "ok", "room": room.to_dict()}
 
     async def _cmd_delete_room(self, msg: dict) -> dict:
         ws = self._storage.get_workspace(msg["workspace"])
         if not ws:
-            return {"type": "error", "message": f"Workspace '{msg['workspace']}' not found"}
+            return {
+                "type": "error",
+                "message": f"Workspace '{msg['workspace']}' not found",
+            }
         self._storage.delete_room(ws, msg["room_name"])
         self._broadcast(
-            {"type": "room_list", "workspace": ws.name, "rooms": [r.to_dict() for r in self._storage.list_rooms(ws)]},
-            ws.name, None,
+            {
+                "type": "room_list",
+                "workspace": ws.name,
+                "rooms": [r.to_dict() for r in self._storage.list_rooms(ws)],
+            },
+            ws.name,
+            None,
         )
         return {"type": "ok"}
 
@@ -183,15 +211,22 @@ class Handler:
         agent = AgentConfig.from_dict(msg["agent"])
         self._storage.save_agent(agent)
         self._broadcast(
-            {"type": "agent_list", "agents": [a.to_dict() for a in self._storage.list_agents()]},
-            None, None,
+            {
+                "type": "agent_list",
+                "agents": [a.to_dict() for a in self._storage.list_agents()],
+            },
+            None,
+            None,
         )
         return {"type": "ok"}
 
     async def _cmd_invite_agent(self, msg: dict) -> dict:
         ws = self._storage.get_workspace(msg["workspace"])
         if not ws:
-            return {"type": "error", "message": f"Workspace '{msg['workspace']}' not found"}
+            return {
+                "type": "error",
+                "message": f"Workspace '{msg['workspace']}' not found",
+            }
         room = self._storage.get_room(ws, msg["room"])
         if not room:
             return {"type": "error", "message": f"Room '{msg['room']}' not found"}
@@ -203,17 +238,29 @@ class Handler:
         room.agents.append(agent_name)
         self._storage.save_room(ws, room)
         self._broadcast(
-            {"type": "message_added", "workspace": ws.name, "room": room.name,
-             "sender": "system", "text": f"Invited {agent_name} to the room.",
-             "is_system": True, "raw": None, "steps": [], "context_pct": None},
-            ws.name, room.name,
+            {
+                "type": "message_added",
+                "workspace": ws.name,
+                "room": room.name,
+                "sender": "system",
+                "text": f"Invited {agent_name} to the room.",
+                "is_system": True,
+                "raw": None,
+                "steps": [],
+                "context_pct": None,
+            },
+            ws.name,
+            room.name,
         )
         return {"type": "ok", "room": room.to_dict()}
 
     async def _cmd_kick_agent(self, msg: dict) -> dict:
         ws = self._storage.get_workspace(msg["workspace"])
         if not ws:
-            return {"type": "error", "message": f"Workspace '{msg['workspace']}' not found"}
+            return {
+                "type": "error",
+                "message": f"Workspace '{msg['workspace']}' not found",
+            }
         room = self._storage.get_room(ws, msg["room"])
         if not room:
             return {"type": "error", "message": f"Room '{msg['room']}' not found"}
@@ -225,10 +272,19 @@ class Handler:
         room.agents.remove(agent_name)
         self._storage.save_room(ws, room)
         self._broadcast(
-            {"type": "message_added", "workspace": ws.name, "room": room.name,
-             "sender": "system", "text": f"Kicked {agent_name} from the room.",
-             "is_system": True, "raw": None, "steps": [], "context_pct": None},
-            ws.name, room.name,
+            {
+                "type": "message_added",
+                "workspace": ws.name,
+                "room": room.name,
+                "sender": "system",
+                "text": f"Kicked {agent_name} from the room.",
+                "is_system": True,
+                "raw": None,
+                "steps": [],
+                "context_pct": None,
+            },
+            ws.name,
+            room.name,
         )
         return {"type": "ok", "room": room.to_dict()}
 
@@ -239,7 +295,10 @@ class Handler:
     async def _cmd_submit_message(self, msg: dict) -> dict:
         ws = self._storage.get_workspace(msg["workspace"])
         if not ws:
-            return {"type": "error", "message": f"Workspace '{msg['workspace']}' not found"}
+            return {
+                "type": "error",
+                "message": f"Workspace '{msg['workspace']}' not found",
+            }
         room = self._storage.get_room(ws, msg["room"])
         if not room:
             return {"type": "error", "message": f"Room '{msg['room']}' not found"}
@@ -250,10 +309,15 @@ class Handler:
         if room_key in self._processing:
             self._pending_messages.setdefault(room_key, []).append(text)
             self._broadcast(
-                {"type": "queue_updated", "workspace": ws.name, "room": room.name,
-                 "pending_count": len(self._pending_messages[room_key]),
-                 "pending_messages": list(self._pending_messages[room_key])},
-                ws.name, room.name,
+                {
+                    "type": "queue_updated",
+                    "workspace": ws.name,
+                    "room": room.name,
+                    "pending_count": len(self._pending_messages[room_key]),
+                    "pending_messages": list(self._pending_messages[room_key]),
+                },
+                ws.name,
+                room.name,
             )
             return {"type": "ok", "queued": True}
 
@@ -270,7 +334,10 @@ class Handler:
     async def _cmd_compact(self, msg: dict) -> dict:
         ws = self._storage.get_workspace(msg["workspace"])
         if not ws:
-            return {"type": "error", "message": f"Workspace '{msg['workspace']}' not found"}
+            return {
+                "type": "error",
+                "message": f"Workspace '{msg['workspace']}' not found",
+            }
         room = self._storage.get_room(ws, msg["room"])
         if not room:
             return {"type": "error", "message": f"Room '{msg['room']}' not found"}
@@ -296,7 +363,9 @@ class Handler:
     # Internal processing
     # ------------------------------------------------------------------
 
-    def _get_context_pct(self, workspace: Workspace, room: Room, agent_name: str) -> float | None:
+    def _get_context_pct(
+        self, workspace: Workspace, room: Room, agent_name: str
+    ) -> float | None:
         tokens = self._router.get_agent_tokens(workspace.name, room.name, agent_name)
         if tokens <= 0:
             return None
@@ -306,18 +375,33 @@ class Handler:
         return min(tokens / ctx_size * 100, 100)
 
     async def _process_message(
-        self, workspace: Workspace, room: Room, text: str,
+        self,
+        workspace: Workspace,
+        room: Room,
+        text: str,
     ) -> None:
         room_key = (workspace.name, room.name)
         self._processing.add(room_key)
         self._active_tasks[room_key] = asyncio.current_task()  # type: ignore[arg-type]
 
         # Broadcast "you" message
-        self._storage.append_chat_message(workspace, room.name, {"sender": "you", "text": text})
+        self._storage.append_chat_message(
+            workspace, room.name, {"sender": "you", "text": text}
+        )
         self._broadcast(
-            {"type": "message_added", "workspace": workspace.name, "room": room.name,
-             "sender": "you", "text": text, "is_system": False, "raw": None, "steps": [], "context_pct": None},
-            workspace.name, room.name,
+            {
+                "type": "message_added",
+                "workspace": workspace.name,
+                "room": room.name,
+                "sender": "you",
+                "text": text,
+                "is_system": False,
+                "raw": None,
+                "steps": [],
+                "context_pct": None,
+            },
+            workspace.name,
+            room.name,
         )
 
         cancelled = False
@@ -325,60 +409,124 @@ class Handler:
             async for msg in self._router.handle_message(workspace, room, text):
                 if msg.is_loading:
                     self._broadcast(
-                        {"type": "processing_started", "workspace": workspace.name,
-                         "room": room.name, "sender": msg.sender},
-                        workspace.name, room.name,
+                        {
+                            "type": "processing_started",
+                            "workspace": workspace.name,
+                            "room": room.name,
+                            "sender": msg.sender,
+                        },
+                        workspace.name,
+                        room.name,
                     )
                     continue
 
-                pct = self._get_context_pct(workspace, room, msg.sender) if not msg.is_system and msg.sender != "you" else None
+                pct = (
+                    self._get_context_pct(workspace, room, msg.sender)
+                    if not msg.is_system and msg.sender != "you"
+                    else None
+                )
                 self._storage.append_chat_message(
-                    workspace, room.name,
-                    {"sender": msg.sender, "text": msg.text, "is_system": msg.is_system, "raw": msg.raw, "steps": msg.steps},
+                    workspace,
+                    room.name,
+                    {
+                        "sender": msg.sender,
+                        "text": msg.text,
+                        "is_system": msg.is_system,
+                        "raw": msg.raw,
+                        "steps": msg.steps,
+                    },
                 )
                 self._broadcast(
-                    {"type": "message_added", "workspace": workspace.name, "room": room.name,
-                     "sender": msg.sender, "text": msg.text, "is_system": msg.is_system,
-                     "raw": msg.raw, "steps": msg.steps, "context_pct": pct},
-                    workspace.name, room.name,
+                    {
+                        "type": "message_added",
+                        "workspace": workspace.name,
+                        "room": room.name,
+                        "sender": msg.sender,
+                        "text": msg.text,
+                        "is_system": msg.is_system,
+                        "raw": msg.raw,
+                        "steps": msg.steps,
+                        "context_pct": pct,
+                    },
+                    workspace.name,
+                    room.name,
                 )
         except asyncio.CancelledError:
-            cancelled = True
-            self._pending_messages.pop(room_key, None)
-            cancel_msg = {"sender": room.leader, "text": "Cancelled", "is_system": False, "raw": None, "steps": []}
+            cancel_msg = {
+                "sender": room.leader,
+                "text": "Cancelled",
+                "is_system": False,
+                "raw": None,
+                "steps": [],
+            }
             self._storage.append_chat_message(workspace, room.name, cancel_msg)
             self._broadcast(
-                {"type": "processing_cancelled", "workspace": workspace.name, "room": room.name},
-                workspace.name, room.name,
+                {
+                    "type": "processing_cancelled",
+                    "workspace": workspace.name,
+                    "room": room.name,
+                },
+                workspace.name,
+                room.name,
             )
             self._broadcast(
-                {"type": "message_added", "workspace": workspace.name, "room": room.name,
-                 "sender": room.leader, "text": "Cancelled", "is_system": False,
-                 "raw": None, "steps": [], "context_pct": None},
-                workspace.name, room.name,
+                {
+                    "type": "message_added",
+                    "workspace": workspace.name,
+                    "room": room.name,
+                    "sender": room.leader,
+                    "text": "Cancelled",
+                    "is_system": False,
+                    "raw": None,
+                    "steps": [],
+                    "context_pct": None,
+                },
+                workspace.name,
+                room.name,
             )
         except Exception as e:
             import traceback
+
             err_detail = f"{e}\n{traceback.format_exc()}"
             self._storage.append_chat_message(
-                workspace, room.name,
-                {"sender": "error", "text": err_detail, "is_system": True, "raw": None, "steps": []},
+                workspace,
+                room.name,
+                {
+                    "sender": "error",
+                    "text": err_detail,
+                    "is_system": True,
+                    "raw": None,
+                    "steps": [],
+                },
             )
             self._broadcast(
-                {"type": "message_added", "workspace": workspace.name, "room": room.name,
-                 "sender": "error", "text": err_detail, "is_system": True,
-                 "raw": None, "steps": [], "context_pct": None},
-                workspace.name, room.name,
+                {
+                    "type": "message_added",
+                    "workspace": workspace.name,
+                    "room": room.name,
+                    "sender": "error",
+                    "text": err_detail,
+                    "is_system": True,
+                    "raw": None,
+                    "steps": [],
+                    "context_pct": None,
+                },
+                workspace.name,
+                room.name,
             )
         finally:
             self._processing.discard(room_key)
             self._active_tasks.pop(room_key, None)
             self._broadcast(
-                {"type": "processing_done", "workspace": workspace.name, "room": room.name},
-                workspace.name, room.name,
+                {
+                    "type": "processing_done",
+                    "workspace": workspace.name,
+                    "room": room.name,
+                },
+                workspace.name,
+                room.name,
             )
-            if not cancelled:
-                self._process_next_queued(workspace, room)
+            self._process_next_queued(workspace, room)
 
     def _process_next_queued(self, workspace: Workspace, room: Room) -> None:
         room_key = (workspace.name, room.name)
@@ -389,23 +537,39 @@ class Handler:
         if not queue:
             self._pending_messages.pop(room_key, None)
         self._broadcast(
-            {"type": "queue_updated", "workspace": workspace.name, "room": room.name,
-             "pending_count": len(self._pending_messages.get(room_key, [])),
-             "pending_messages": list(self._pending_messages.get(room_key, []))},
-            workspace.name, room.name,
+            {
+                "type": "queue_updated",
+                "workspace": workspace.name,
+                "room": room.name,
+                "pending_count": len(self._pending_messages.get(room_key, [])),
+                "pending_messages": list(self._pending_messages.get(room_key, [])),
+            },
+            workspace.name,
+            room.name,
         )
         asyncio.create_task(self._process_message(workspace, room, next_text))
 
-    async def _do_compact(self, workspace: Workspace, room: Room, instructions: str) -> None:
+    async def _do_compact(
+        self, workspace: Workspace, room: Room, instructions: str
+    ) -> None:
         room_key = (workspace.name, room.name)
         self._processing.add(room_key)
         self._active_tasks[room_key] = asyncio.current_task()  # type: ignore[arg-type]
 
         self._broadcast(
-            {"type": "message_added", "workspace": workspace.name, "room": room.name,
-             "sender": "system", "text": "Compacting conversation history...",
-             "is_system": True, "raw": None, "steps": [], "context_pct": None},
-            workspace.name, room.name,
+            {
+                "type": "message_added",
+                "workspace": workspace.name,
+                "room": room.name,
+                "sender": "system",
+                "text": "Compacting conversation history...",
+                "is_system": True,
+                "raw": None,
+                "steps": [],
+                "context_pct": None,
+            },
+            workspace.name,
+            room.name,
         )
 
         try:
@@ -434,11 +598,14 @@ class Handler:
             if not leader_cfg:
                 self._broadcast(
                     {"type": "error", "message": "Leader agent not found"},
-                    workspace.name, room.name,
+                    workspace.name,
+                    room.name,
                 )
                 return
 
-            response = await self._runner.query(leader_cfg, workspace, room.name, prompt)
+            response = await self._runner.query(
+                leader_cfg, workspace, room.name, prompt
+            )
             summary_text = response.text
 
             # Clear sessions
@@ -450,46 +617,75 @@ class Handler:
             summary_msg = {
                 "sender": "system",
                 "text": f"--- Conversation Summary ---\n{summary_text}",
-                "is_system": True, "raw": None, "steps": [],
+                "is_system": True,
+                "raw": None,
+                "steps": [],
             }
             self._storage.replace_chat_history(workspace, room.name, [summary_msg])
 
             # Tell clients to reload history
             self._broadcast(
-                {"type": "chat_history", "workspace": workspace.name, "room": room.name,
-                 "messages": [summary_msg]},
-                workspace.name, room.name,
+                {
+                    "type": "chat_history",
+                    "workspace": workspace.name,
+                    "room": room.name,
+                    "messages": [summary_msg],
+                },
+                workspace.name,
+                room.name,
             )
         except Exception as e:
             logger.exception("Compact failed")
             self._broadcast(
                 {"type": "error", "message": f"Compact failed: {e}"},
-                workspace.name, room.name,
+                workspace.name,
+                room.name,
             )
         finally:
             self._processing.discard(room_key)
             self._active_tasks.pop(room_key, None)
             self._broadcast(
-                {"type": "processing_done", "workspace": workspace.name, "room": room.name},
-                workspace.name, room.name,
+                {
+                    "type": "processing_done",
+                    "workspace": workspace.name,
+                    "room": room.name,
+                },
+                workspace.name,
+                room.name,
             )
 
     # ------------------------------------------------------------------
     # System event callback (from Router)
     # ------------------------------------------------------------------
 
-    def _on_system_event(self, room_key: tuple[str, str], agent_name: str, step: dict) -> None:
+    def _on_system_event(
+        self, room_key: tuple[str, str], agent_name: str, step: dict
+    ) -> None:
         subtype = step.get("subtype", "")
         if subtype in {"init", "task_started", "task_progress", "task_notification"}:
             return
         data = step.get("data", {})
-        summary = data.get("summary") or data.get("description") or data.get("message") or ""
-        text = f"System: {summary}" if summary else f"System event: {subtype}" if subtype else "System event"
+        summary = (
+            data.get("summary") or data.get("description") or data.get("message") or ""
+        )
+        text = (
+            f"System: {summary}"
+            if summary
+            else f"System event: {subtype}"
+            if subtype
+            else "System event"
+        )
         sender = agent_name or "system"
         ws_name, room_name = room_key
 
         self._broadcast(
-            {"type": "system_event", "workspace": ws_name, "room": room_name,
-             "agent": sender, "text": text},
-            ws_name, room_name,
+            {
+                "type": "system_event",
+                "workspace": ws_name,
+                "room": room_name,
+                "agent": sender,
+                "text": text,
+            },
+            ws_name,
+            room_name,
         )
