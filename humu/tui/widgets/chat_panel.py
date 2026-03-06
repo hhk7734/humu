@@ -168,6 +168,9 @@ class ChatInput(TextArea):
     # Set by ChatPanel to enable history navigation before TextArea processes arrows
     on_history_up: "Callable[[], bool] | None" = None
     on_history_down: "Callable[[], bool] | None" = None
+    # Set by ChatPanel to scroll chat area on Page Up/Down
+    on_page_up: "Callable[[], None] | None" = None
+    on_page_down: "Callable[[], None] | None" = None
 
     def _on_key(self, event: Key) -> None:
         if event.key == "enter":
@@ -194,6 +197,17 @@ class ChatInput(TextArea):
             event.stop()
             return
         if event.key == "down" and self.on_history_down and self.on_history_down():
+            event.prevent_default()
+            event.stop()
+            return
+        # Chat scroll — intercept before TextArea's page-up/down bindings
+        if event.key == "pageup" and self.on_page_up:
+            self.on_page_up()
+            event.prevent_default()
+            event.stop()
+            return
+        if event.key == "pagedown" and self.on_page_down:
+            self.on_page_down()
             event.prevent_default()
             event.stop()
             return
@@ -420,9 +434,12 @@ class ChatPanel(Static):
 
     def on_mount(self) -> None:
         textarea = self.query_one("#chat-input", ChatInput)
+        scroll = self.query_one("#chat-scroll", VerticalScroll)
         textarea.focus()
         textarea.on_history_up = self._navigate_history_up
         textarea.on_history_down = self._navigate_history_down
+        textarea.on_page_up = scroll.scroll_page_up
+        textarea.on_page_down = scroll.scroll_page_down
 
     def _navigate_history_up(self) -> bool:
         """Navigate to the previous history entry. Returns True if handled."""
