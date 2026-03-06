@@ -54,6 +54,8 @@ class HumuApp(App):
         self._processing = False
         self._quit_pending = False
         self._quit_timer: object | None = None
+        # Tracks which (workspace, room, sender) is currently showing a loading indicator
+        self._active_loading: tuple[str, str, str] | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -126,6 +128,14 @@ class HumuApp(App):
             self._current_workspace, self._current_room.name
         )
         chat_panel.load_history(history)
+        # Re-show loading indicator if this room is still processing
+        if self._active_loading:
+            ws_name, room_name, sender = self._active_loading
+            if (
+                ws_name == self._current_workspace.name
+                and room_name == self._current_room.name
+            ):
+                chat_panel.show_loading(sender, self._router.get_live_steps)
 
     # --- Event handlers ---
 
@@ -206,14 +216,20 @@ class HumuApp(App):
         text: str,
         chat: ChatPanel,
     ) -> None:
+        def _show_loading(sender: str) -> None:
+            self._active_loading = (workspace.name, room.name, sender)
+            chat.show_loading(sender, self._router.get_live_steps)
+
+        def _hide_loading() -> None:
+            self._active_loading = None
+            chat.hide_loading()
+
         try:
             async for msg in self._router.handle_message(workspace, room, text):
                 if msg.is_loading:
-                    self.call_from_thread(
-                        chat.show_loading, msg.sender, self._router.get_live_steps
-                    )
+                    self.call_from_thread(_show_loading, msg.sender)
                     continue
-                self.call_from_thread(chat.hide_loading)
+                self.call_from_thread(_hide_loading)
                 self.call_from_thread(
                     chat.add_message, msg.sender, msg.text, msg.is_system, msg.raw, msg.steps,
                 )
@@ -233,7 +249,7 @@ class HumuApp(App):
             err_detail = f"{e}\n{traceback.format_exc()}"
             self.call_from_thread(chat.add_message, "error", err_detail, True)
         finally:
-            self.call_from_thread(chat.hide_loading)
+            self.call_from_thread(_hide_loading)
             self._processing = False
 
     # --- Commands ---
