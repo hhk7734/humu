@@ -382,7 +382,7 @@ class ChatPanel(Static):
         border: none;
     }
     ChatPanel #queue-display {
-        margin: 0 1;
+        margin: 0 1 1 1;
         padding: 0 1;
         height: auto;
         color: $text-muted;
