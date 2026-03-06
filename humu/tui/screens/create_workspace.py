@@ -145,20 +145,21 @@ class CreateWorkspaceScreen(ModalScreen[Workspace | None]):
 
     def _render_suggestions(self) -> None:
         widget = self.query_one("#path-suggestions", Static)
-        if not self._dirs:
-            widget.update("")
-            return
-        window = 5
-        total = len(self._dirs)
-        start = max(0, min(self._dir_index - window // 2, total - window))
-        end = min(start + window, total)
-        lines = []
-        for i in range(start, end):
-            d = self._dirs[i]
-            if i == self._dir_index:
-                lines.append(f"[bold reverse] ❯ {d} [/bold reverse]")
-            else:
-                lines.append(f"   {d}")
+        lines: list[str] = []
+        if self._dirs:
+            window = 5
+            total = len(self._dirs)
+            start = max(0, min(self._dir_index - window // 2, total - window))
+            end = min(start + window, total)
+            for i in range(start, end):
+                d = self._dirs[i]
+                if i == self._dir_index:
+                    lines.append(f"[bold reverse] ❯ {d} [/bold reverse]")
+                else:
+                    lines.append(f"   {d}")
+        # Always pad to 5 lines so the widget height never changes
+        while len(lines) < 5:
+            lines.append("")
         widget.update("\n".join(lines))
 
     def _accept_current(self) -> None:
