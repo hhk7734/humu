@@ -3,9 +3,9 @@ from __future__ import annotations
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Checkbox, Input, Label, Select, TextArea
+from textual.widgets import Button, Checkbox, Input, Label, Select, Static, TextArea
 
-from humu.config import DEFAULT_MODEL, DEFAULT_TOOLS
+from humu.config import DEFAULT_CONTEXT_WINDOW, DEFAULT_MODEL, DEFAULT_TOOLS, MODEL_CONTEXT_WINDOWS
 from humu.models.agent import AgentConfig
 
 
@@ -41,14 +41,26 @@ class CreateAgentScreen(ModalScreen[AgentConfig | None]):
     CreateAgentScreen Button {
         margin: 1 1 0 0;
     }
+    CreateAgentScreen #context-usage {
+        margin: 1 0;
+        padding: 0 1;
+        height: auto;
+        color: $text-muted;
+    }
+    CreateAgentScreen #context-bar {
+        margin: 0 0 1 0;
+        height: 1;
+        width: 100%;
+    }
     """
 
     MODELS = [("opus", "opus"), ("sonnet", "sonnet"), ("haiku", "haiku")]
 
-    def __init__(self, existing: AgentConfig | None = None) -> None:
+    def __init__(self, existing: AgentConfig | None = None, total_tokens: int = 0) -> None:
         super().__init__()
         self._existing = existing
         self._is_edit = existing is not None
+        self._total_tokens = total_tokens
 
     def compose(self) -> ComposeResult:
         ex = self._existing
@@ -87,6 +99,18 @@ class CreateAgentScreen(ModalScreen[AgentConfig | None]):
                 value=ex.streaming if ex else False,
                 id="agent-streaming",
             )
+            if self._is_edit and self._total_tokens > 0:
+                model = ex.model if ex else DEFAULT_MODEL
+                ctx_size = MODEL_CONTEXT_WINDOWS.get(model, DEFAULT_CONTEXT_WINDOW)
+                pct = min(self._total_tokens / ctx_size * 100, 100)
+                bar_width = 40
+                filled = int(bar_width * pct / 100)
+                bar = "█" * filled + "░" * (bar_width - filled)
+                yield Static(
+                    f"Context: {self._total_tokens:,} / {ctx_size:,} tokens ({pct:.1f}%)",
+                    id="context-usage",
+                )
+                yield Static(bar, id="context-bar")
             yield Button(btn_label, variant="primary", id="btn-create")
             yield Button("Cancel", id="btn-cancel")
 

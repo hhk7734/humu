@@ -89,28 +89,44 @@ class HumuApp(App):
         if saved_theme:
             self.theme = saved_theme
         self.query_one(Header).icon = "Menu"
-        self._router.on_compaction = self._on_compaction
+        self._router.on_system_event = self._on_system_event
         self._refresh_workspaces()
         self._restore_last_session()
         self._restore_panel_widths()
 
-    def _on_compaction(self, room_key: tuple[str, str], agent_name: str) -> None:
-        """Called from worker thread when a compaction event is detected."""
+    # System event subtypes to ignore (session lifecycle, not user-relevant)
+    _IGNORED_SYSTEM_SUBTYPES = {"init", "task_started", "task_progress", "task_notification"}
+
+    def _on_system_event(self, room_key: tuple[str, str], agent_name: str, step: dict) -> None:
+        """Called from worker thread when a system event (e.g. compaction) is detected."""
+        subtype = step.get("subtype", "")
+        data = step.get("data", {})
+
+        # Skip routine lifecycle events
+        if subtype in self._IGNORED_SYSTEM_SUBTYPES:
+            return
+
+        # Build a descriptive message from the event data
+        summary = data.get("summary") or data.get("description") or data.get("message") or ""
+        if summary:
+            text = f"🔄 {summary}"
+        else:
+            text = f"🔄 System event: {subtype}" if subtype else "🔄 System event"
+
+        sender = agent_name or "system"
 
         def _show() -> None:
             self._storage.append_chat_message(
                 self._current_workspace,
                 room_key[1],
-                {"sender": "system", "text": f"🔄 Context compacted ({agent_name})", "is_system": True, "raw": None, "steps": []},
+                {"sender": sender, "text": text, "is_system": False, "raw": None, "steps": []},
             )
             if (
                 self._current_workspace
                 and self._current_room
                 and room_key == (self._current_workspace.name, self._current_room.name)
             ):
-                self.query_one(ChatPanel).add_message(
-                    "system", f"🔄 Context compacted ({agent_name})", True
-                )
+                self.query_one(ChatPanel).add_message(sender, text)
 
         self.call_from_thread(_show)
 
@@ -204,8 +220,19 @@ class HumuApp(App):
         if not self._current_room:
             agent_panel.set_agents(None)
             return
+        usage: dict[str, tuple[int, str]] = {}
+        if self._current_workspace:
+            ws_name = self._current_workspace.name
+            room_name = self._current_room.name
+            all_agents = [self._current_room.leader] + list(self._current_room.agents)
+            for name in all_agents:
+                tokens = self._router.get_agent_tokens(ws_name, room_name, name)
+                if tokens > 0:
+                    agent_cfg = self._storage.get_agent(name)
+                    model = agent_cfg.model if agent_cfg else ""
+                    usage[name] = (tokens, model)
         agent_panel.set_agents(
-            self._current_room.leader, self._current_room.agents
+            self._current_room.leader, self._current_room.agents, usage=usage
         )
 
     def _refresh_queue_display(self) -> None:
@@ -234,7 +261,7 @@ class HumuApp(App):
         room_key = (self._current_workspace.name, self._current_room.name)
         sender = self._active_loading.get(room_key)
         if sender:
-            chat_panel.show_loading(sender, self._router.get_live_steps)
+            chat_panel.show_loading(sender, lambda: self._router.get_live_steps(room_key))
         self._refresh_queue_display()
 
     # --- Event handlers ---
@@ -401,6 +428,9 @@ class HumuApp(App):
             else:
                 self.call_from_thread(self._refresh_workspaces)
                 self.call_from_thread(self._refresh_rooms)
+            # Update agent panel with latest token usage
+            if self._is_viewing(workspace, room):
+                self.call_from_thread(self._refresh_agents)
             if not cancelled:
                 self.call_from_thread(self._process_next_queued, workspace, room)
 
@@ -597,6 +627,13 @@ class HumuApp(App):
             return
         from humu.tui.screens.create_agent import CreateAgentScreen
 
+        # Get token usage for this agent in current room
+        total_tokens = 0
+        if self._current_workspace and self._current_room:
+            total_tokens = self._router.get_agent_tokens(
+                self._current_workspace.name, self._current_room.name, event.name
+            )
+
         def _on_saved(result: object) -> None:
             from humu.models.agent import AgentConfig
 
@@ -605,7 +642,7 @@ class HumuApp(App):
                 self._refresh_agents()
                 self.notify(f"Agent '{result.name}' saved.")
 
-        self.push_screen(CreateAgentScreen(existing=agent), _on_saved)
+        self.push_screen(CreateAgentScreen(existing=agent, total_tokens=total_tokens), _on_saved)
 
     def _on_agent_created(self, result: object) -> None:
         from humu.models.agent import AgentConfig

@@ -11,6 +11,19 @@ SKILLS_CONFIG_FILE = HUMU_HOME / "skills_config.json"
 DEFAULT_TOOLS = ["Read", "Grep", "Glob"]
 DEFAULT_MODEL = "sonnet"
 
+# Model context window sizes (in tokens)
+MODEL_CONTEXT_WINDOWS: dict[str, int] = {
+    "sonnet": 200_000,
+    "claude-sonnet-4-20250514": 200_000,
+    "opus": 200_000,
+    "claude-opus-4-20250514": 200_000,
+    "haiku": 200_000,
+    "claude-haiku-4-20250506": 200_000,
+    "claude-3-5-sonnet-20241022": 200_000,
+    "claude-3-5-haiku-20241022": 200_000,
+}
+DEFAULT_CONTEXT_WINDOW = 200_000
+
 ROUTING_SCHEMA = {
     "type": "object",
     "properties": {

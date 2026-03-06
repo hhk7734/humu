@@ -76,6 +76,7 @@ class LoadingChatMessage(Vertical):
         spinner = self.SPINNERS[self._spin_index]
         self.query_one(".loading-text", Static).update(f"{spinner} thinking...")
 
+
     def on_click(self, event: Click) -> None:
         if event.button == 3 and self._get_steps:  # right-click
             from humu.tui.screens.message_detail import MessageDetailScreen
