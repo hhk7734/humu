@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from textual import events
 from textual.widget import Widget
+from rich.text import Text
+from rich.align import Align
 
 
 class ResizeHandle(Widget):
@@ -16,16 +18,23 @@ class ResizeHandle(Widget):
         save_callback: Called with (target_id, new_width) after each drag ends.
     """
 
+    GLYPH = "⠿"  # braille drag-handle glyph
+
     DEFAULT_CSS = """
     ResizeHandle {
         width: 1;
         height: 100%;
         background: $panel-darken-1;
+        color: $text-muted;
     }
     ResizeHandle:hover {
-        background: $accent 60%;
+        background: $accent 40%;
+        color: $accent;
     }
     """
+
+    def render(self) -> Align:
+        return Align(Text(self.GLYPH), align="center", vertical="middle")
 
     def __init__(
         self,
