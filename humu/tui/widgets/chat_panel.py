@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import glob as _glob
 import os
+from collections import deque
 from collections.abc import Callable
 
 from textual.app import ComposeResult
@@ -10,6 +11,17 @@ from textual.events import Click, Key
 from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Static, TextArea
+
+
+def _path_needle(text: str) -> str:
+    """Normalise a path/partial for subsequence matching (lowercase, strip separators/punctuation)."""
+    return text.lower().replace(os.sep, "").replace("/", "").replace("-", "").replace("_", "")
+
+
+def _is_subsequence(needle: str, haystack: str) -> bool:
+    """Return True if every character of *needle* appears in *haystack* in order."""
+    it = iter(haystack)
+    return all(ch in it for ch in needle)
 
 
 class MessageSubmitted(Message):
@@ -550,17 +562,65 @@ class ChatPanel(Static):
         if not self._workspace_path:
             return []
         base = self._workspace_path
-        pattern = os.path.join(base, partial + "*")
-        try:
-            matches = sorted(_glob.glob(pattern))[:15]
-        except Exception:
-            return []
-        result = []
-        for m in matches:
-            rel = os.path.relpath(m, base)
-            if os.path.isdir(m):
+
+        if not partial:
+            # No input yet — show top-level entries only
+            try:
+                matches = sorted(_glob.glob(os.path.join(base, "*")))[:15]
+            except Exception:
+                return []
+            result = []
+            for m in matches:
+                rel = os.path.relpath(m, base)
+                if os.path.isdir(m):
+                    rel += "/"
+                result.append(rel)
+            return result
+
+        MAX_RESULTS = 15
+        seen: set[str] = set()
+        result: list[str] = []
+
+        def _add(full_path: str) -> None:
+            rel = os.path.relpath(full_path, base)
+            if rel in seen:
+                return
+            seen.add(rel)
+            if os.path.isdir(full_path):
                 rel += "/"
             result.append(rel)
+
+        # 1) Exact prefix glob (fast, highest priority)
+        try:
+            for m in sorted(_glob.glob(os.path.join(base, partial + "*"))):
+                if len(result) >= MAX_RESULTS:
+                    return result
+                _add(m)
+        except Exception:
+            pass
+
+        if len(result) >= MAX_RESULTS:
+            return result
+
+        # 2) Fuzzy subsequence search through subdirectory tree
+        needle = _path_needle(partial)
+        if needle:
+            q: deque[tuple[str, int]] = deque([(base, 0)])
+            while q and len(result) < MAX_RESULTS:
+                cur_dir, depth = q.popleft()
+                try:
+                    entries = sorted(os.scandir(cur_dir), key=lambda e: (not e.is_dir(follow_symlinks=False), e.name))
+                except OSError:
+                    continue
+                for entry in entries:
+                    if len(result) >= MAX_RESULTS:
+                        break
+                    rel = os.path.relpath(entry.path, base)
+                    if _is_subsequence(needle, _path_needle(rel)):
+                        _add(entry.path)
+                    if entry.is_dir(follow_symlinks=False) and depth < 4:
+                        q.append((entry.path, depth + 1))
+
         return result
 
     def _list_skills(self, partial: str) -> list[str]:
