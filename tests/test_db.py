@@ -78,6 +78,25 @@ async def test_agent_crud(repo):
 
 
 @pytest.mark.asyncio
+async def test_create_room_auto_leader(repo):
+    ws = Workspace(name="test", root_path="/tmp/test")
+    await repo.save_workspace(ws)
+
+    room = await repo.create_room_with_leader("test", "dev")
+    assert room.name == "dev"
+    assert room.leader == "leader"
+
+    saved_room = await repo.get_room("test", "dev")
+    assert saved_room is not None
+    assert saved_room.leader == "leader"
+
+    leader = await repo.get_agent("test", "dev", "leader")
+    assert leader is not None
+    assert leader.name == "leader"
+    assert leader.system_prompt != ""
+
+
+@pytest.mark.asyncio
 async def test_chat_history(repo):
     ws = Workspace(name="test", root_path="/tmp/test")
     await repo.save_workspace(ws)

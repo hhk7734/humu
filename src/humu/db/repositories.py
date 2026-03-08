@@ -124,6 +124,20 @@ class Repository:
         )
         await self._db.conn.commit()
 
+    # --- Convenience ---
+
+    async def create_room_with_leader(self, workspace: str, room_name: str) -> Room:
+        room = Room(name=room_name, leader="leader")
+        await self.save_room(workspace, room)
+
+        leader = AgentConfig(
+            name="leader",
+            description="Room leader that coordinates tasks",
+            system_prompt="You are the leader of this room. Coordinate tasks among agents and provide helpful responses.",
+        )
+        await self.save_agent(workspace, room_name, leader)
+        return room
+
     # --- Messages ---
 
     async def append_message(self, workspace: str, room: str, data: dict) -> None:
