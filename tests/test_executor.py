@@ -30,6 +30,7 @@ async def test_executor_direct_response(tmp_path):
     await repo.save_room("test", Room(name="dev", leader="leader"))
     await repo.save_agent(
         "test",
+        "dev",
         AgentConfig(
             name="leader",
             description="Room leader",

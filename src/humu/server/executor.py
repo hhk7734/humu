@@ -31,7 +31,7 @@ class RoomExecutor:
             yield ServerMessage.error(f"Room '{room_name}' not found")
             return
 
-        leader = await self._repo.get_agent(workspace, room.leader)
+        leader = await self._repo.get_agent(workspace, room_name, room.leader)
         if not leader:
             yield ServerMessage.error(f"Leader '{room.leader}' not found")
             return
@@ -44,10 +44,9 @@ class RoomExecutor:
 
         # Build agent configs
         agent_configs = {}
-        for agent_name in room.agents:
-            agent = await self._repo.get_agent(workspace, agent_name)
-            if agent:
-                agent_configs[agent_name] = agent.model_dump()
+        for agent in await self._repo.list_agents(workspace, room_name):
+            if agent.name != room.leader:
+                agent_configs[agent.name] = agent.model_dump()
 
         # Build initial state
         state = RoomState(
