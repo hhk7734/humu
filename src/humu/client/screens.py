@@ -5,6 +5,8 @@ from textual.containers import Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select, Static, Switch, TextArea
 
+from humu.client.completers import PathInputCompleter
+
 
 class CreateWorkspaceScreen(ModalScreen[dict | None]):
     DEFAULT_CSS = """
@@ -27,8 +29,14 @@ class CreateWorkspaceScreen(ModalScreen[dict | None]):
             yield Input(id="ws-name", placeholder="workspace name")
             yield Label("Root Path")
             yield Input(id="ws-root-path", placeholder="/path/to/project")
+            yield PathInputCompleter(input_id="ws-root-path", id="path-completer")
             yield Button("Create", variant="primary", id="btn-create")
             yield Button("Cancel", id="btn-cancel")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "ws-root-path":
+            completer = self.query_one("#path-completer", PathInputCompleter)
+            completer.refresh_completions(event.value)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-create":
@@ -42,8 +50,32 @@ class CreateWorkspaceScreen(ModalScreen[dict | None]):
             self.dismiss(None)
 
     def on_key(self, event) -> None:
+        completer = self.query_one("#path-completer", PathInputCompleter)
+        focused = self.focused
+
+        if completer.is_active and focused and focused.id == "ws-root-path":
+            if event.key == "down":
+                completer.move_down()
+                event.prevent_default()
+                return
+            if event.key == "up":
+                completer.move_up()
+                event.prevent_default()
+                return
+            if event.key == "tab":
+                path = completer.accept()
+                if path:
+                    inp = self.query_one("#ws-root-path", Input)
+                    inp.value = path
+                    completer.refresh_completions(path)
+                event.prevent_default()
+                return
+
         if event.key == "escape":
-            self.dismiss(None)
+            if completer.is_active:
+                completer.hide()
+            else:
+                self.dismiss(None)
 
 
 class CreateRoomScreen(ModalScreen[str | None]):
