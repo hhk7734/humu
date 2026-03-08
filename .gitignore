@@ -286,4 +286,7 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 
+# Worktrees
+.worktrees/
+
 # End of https://www.toptal.com/developers/gitignore/api/visualstudiocode,vim,macos,windows,linux,python
