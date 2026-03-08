@@ -4,10 +4,17 @@ import logging
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.message import Message
 from textual.widgets import Footer, Header, Label, ListItem, ListView, Static, TextArea
 
 from humu.client.connection import ServerConnection
 from humu.client.http import HttpClient
+from humu.client.screens import (
+    ConfirmDeleteScreen,
+    CreateAgentScreen,
+    CreateRoomScreen,
+    CreateWorkspaceScreen,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +47,21 @@ class ChatPanel(Static):
 class AgentPanel(Static):
     DEFAULT_CSS = "AgentPanel { width: 16; }"
 
+    class EditAgent(Message):
+        def __init__(self, agent_name: str) -> None:
+            super().__init__()
+            self.agent_name = agent_name
+
     def compose(self) -> ComposeResult:
         yield Label("Agents", classes="panel-title")
         yield ListView(id="agent-list")
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Double-click / Enter on agent triggers edit."""
+        item = event.item
+        name = getattr(item, "data", None)
+        if name is not None:
+            self.post_message(self.EditAgent(name))
 
 
 class HumuApp(App):
@@ -67,6 +86,11 @@ class HumuApp(App):
     """
 
     TITLE = "Humu"
+
+    BINDINGS = [
+        ("ctrl+n", "create_new", "New"),
+        ("ctrl+d", "delete_selected", "Delete"),
+    ]
 
     def __init__(self) -> None:
         super().__init__()
@@ -194,6 +218,222 @@ class HumuApp(App):
             self._current_room = name
             await self._load_agents(self._current_workspace, name)
             await self._conn.subscribe_room(self._current_workspace, name)
+
+        # agent-list selection handled by AgentPanel.EditAgent message
+
+    # --- Create Flow (Ctrl+N) ---
+
+    def action_create_new(self) -> None:
+        focused = self.focused
+        if focused is None:
+            return
+
+        node = focused
+        while node is not None:
+            if isinstance(node, WorkspacePanel):
+                self.push_screen(CreateWorkspaceScreen(), self._on_workspace_created)
+                return
+            if isinstance(node, RoomPanel):
+                if self._current_workspace is None:
+                    self.notify("Select a workspace first", severity="warning")
+                    return
+                self.push_screen(CreateRoomScreen(), self._on_room_created)
+                return
+            if isinstance(node, AgentPanel):
+                if self._current_workspace is None or self._current_room is None:
+                    self.notify("Select a room first", severity="warning")
+                    return
+                self.push_screen(CreateAgentScreen(), self._on_agent_created)
+                return
+            node = node.parent
+
+    async def _on_workspace_created(self, result: dict | None) -> None:
+        if result is None:
+            return
+        try:
+            await self._http.create_workspace(result["name"], result["root_path"])
+        except Exception as e:
+            self.notify(f"Failed to create workspace: {e}", severity="error")
+            return
+        await self._load_workspaces()
+
+    async def _on_room_created(self, result: str | None) -> None:
+        if result is None or self._current_workspace is None:
+            return
+        try:
+            await self._http.create_room(self._current_workspace, result)
+        except Exception as e:
+            self.notify(f"Failed to create room: {e}", severity="error")
+            return
+        await self._load_rooms(self._current_workspace)
+
+    async def _on_agent_created(self, result: dict | None) -> None:
+        if result is None or self._current_workspace is None or self._current_room is None:
+            return
+        try:
+            await self._http.create_agent(
+                self._current_workspace, self._current_room, result
+            )
+        except Exception as e:
+            self.notify(f"Failed to create agent: {e}", severity="error")
+            return
+        await self._load_agents(self._current_workspace, self._current_room)
+
+    # --- Delete Flow (Ctrl+D) ---
+
+    def action_delete_selected(self) -> None:
+        focused = self.focused
+        if focused is None:
+            return
+
+        node = focused
+        while node is not None:
+            if isinstance(node, WorkspacePanel):
+                self._delete_workspace()
+                return
+            if isinstance(node, RoomPanel):
+                self._delete_room()
+                return
+            if isinstance(node, AgentPanel):
+                self._delete_agent()
+                return
+            node = node.parent
+
+    def _delete_workspace(self) -> None:
+        lv = self.query_one("#workspace-list", ListView)
+        if lv.index is None:
+            return
+        item = lv.children[lv.index]
+        name = getattr(item, "data", None)
+        if name is None:
+            return
+        self.push_screen(
+            ConfirmDeleteScreen(
+                f"Delete workspace '{name}'? This will remove all rooms, agents, "
+                "and chat history. This cannot be undone."
+            ),
+            lambda confirmed: self._do_delete_workspace(name) if confirmed else None,
+        )
+
+    async def _do_delete_workspace(self, name: str) -> None:
+        try:
+            await self._http.delete_workspace(name)
+        except Exception as e:
+            self.notify(f"Failed to delete workspace: {e}", severity="error")
+            return
+        self._current_workspace = None
+        self._current_room = None
+        await self._clear_rooms()
+        await self._clear_agents()
+        await self._clear_chat()
+        await self._load_workspaces()
+
+    def _delete_room(self) -> None:
+        if self._current_workspace is None:
+            return
+        lv = self.query_one("#room-list", ListView)
+        if lv.index is None:
+            return
+        item = lv.children[lv.index]
+        name = getattr(item, "data", None)
+        if name is None:
+            return
+        self.push_screen(
+            ConfirmDeleteScreen(
+                f"Delete room '{name}'? Chat history will be lost. This cannot be undone."
+            ),
+            lambda confirmed, n=name: self._do_delete_room(n) if confirmed else None,
+        )
+
+    async def _do_delete_room(self, name: str) -> None:
+        try:
+            await self._http.delete_room(self._current_workspace, name)
+        except Exception as e:
+            self.notify(f"Failed to delete room: {e}", severity="error")
+            return
+        self._current_room = None
+        await self._clear_agents()
+        await self._clear_chat()
+        await self._load_rooms(self._current_workspace)
+
+    def _delete_agent(self) -> None:
+        if self._current_workspace is None or self._current_room is None:
+            return
+        lv = self.query_one("#agent-list", ListView)
+        if lv.index is None:
+            return
+        item = lv.children[lv.index]
+        name = getattr(item, "data", None)
+        if name is None:
+            return
+        self.push_screen(
+            ConfirmDeleteScreen(
+                f"Delete agent '{name}'? This cannot be undone."
+            ),
+            lambda confirmed, n=name: self._do_delete_agent(n) if confirmed else None,
+        )
+
+    async def _do_delete_agent(self, name: str) -> None:
+        try:
+            await self._http.delete_agent(
+                self._current_workspace, self._current_room, name
+            )
+        except Exception as e:
+            self.notify(f"Failed to delete agent: {e}", severity="error")
+            return
+        await self._load_agents(self._current_workspace, self._current_room)
+
+    # --- Agent Edit (double-click / Enter in agent list) ---
+
+    async def on_agent_panel_edit_agent(self, event: AgentPanel.EditAgent) -> None:
+        if self._current_workspace is None or self._current_room is None:
+            return
+        try:
+            agents = await self._http.list_agents(
+                self._current_workspace, self._current_room
+            )
+        except Exception:
+            return
+        agent_data = None
+        for a in agents:
+            if a["name"] == event.agent_name:
+                agent_data = a
+                break
+        if agent_data is None:
+            return
+        self.push_screen(
+            CreateAgentScreen(agent_data=agent_data), self._on_agent_edited
+        )
+
+    async def _on_agent_edited(self, result: dict | None) -> None:
+        if result is None or self._current_workspace is None or self._current_room is None:
+            return
+        try:
+            await self._http.update_agent(
+                self._current_workspace,
+                self._current_room,
+                result["name"],
+                result,
+            )
+        except Exception as e:
+            self.notify(f"Failed to update agent: {e}", severity="error")
+            return
+        await self._load_agents(self._current_workspace, self._current_room)
+
+    # --- Chat Input ---
+
+    async def on_key(self, event) -> None:
+        if event.key == "enter":
+            focused = self.focused
+            if focused and focused.id == "chat-input":
+                ta = self.query_one("#chat-input", TextArea)
+                text = ta.text.strip()
+                if text and self._current_workspace and self._current_room:
+                    await self._conn.send_message(
+                        self._current_workspace, self._current_room, text
+                    )
+                    ta.clear()
+                event.prevent_default()
 
     # --- Server Events ---
 
