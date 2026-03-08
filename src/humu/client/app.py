@@ -86,16 +86,16 @@ class ResizeHandle(Static):
     ResizeHandle {
         width: 1;
         height: 100%;
-        background: $surface;
-        color: $text-muted;
+        background: $panel;
+        color: $foreground 50%;
     }
     ResizeHandle:hover {
         background: $accent;
-        color: $text;
+        color: $foreground;
     }
     ResizeHandle.dragging {
         background: $accent;
-        color: $text;
+        color: $foreground;
     }
     """
 
@@ -140,9 +140,15 @@ class HumuApp(App):
     }
     .panel-title {
         text-style: bold;
-        background: $accent;
+        background: $surface;
         width: 100%;
         padding: 0 1;
+    }
+    WorkspacePanel:focus-within > .panel-title,
+    RoomPanel:focus-within > .panel-title,
+    ChatPanel:focus-within > .panel-title,
+    AgentPanel:focus-within > .panel-title {
+        background: $primary;
     }
     #chat-messages {
         height: 1fr;
