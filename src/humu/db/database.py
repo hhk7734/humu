@@ -24,10 +24,11 @@ class Database:
             );
             CREATE TABLE IF NOT EXISTS agents (
                 workspace TEXT NOT NULL,
+                room TEXT NOT NULL,
                 name TEXT NOT NULL,
                 config TEXT NOT NULL,
-                PRIMARY KEY (workspace, name),
-                FOREIGN KEY (workspace) REFERENCES workspaces(name) ON DELETE CASCADE
+                PRIMARY KEY (workspace, room, name),
+                FOREIGN KEY (workspace, room) REFERENCES rooms(workspace, name) ON DELETE CASCADE
             );
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
