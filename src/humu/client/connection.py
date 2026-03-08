@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Callable
@@ -23,9 +24,14 @@ class ServerConnection:
         self._ws: websockets.ClientConnection | None = None
         self._on_message = on_message
         self._url = f"ws://{DEFAULT_HOST}:{DEFAULT_PORT}/ws"
+        self._connected = asyncio.Event()
 
     async def connect(self) -> None:
         self._ws = await websockets.connect(self._url)
+        self._connected.set()
+
+    async def wait_connected(self) -> None:
+        await self._connected.wait()
 
     async def disconnect(self) -> None:
         if self._ws:

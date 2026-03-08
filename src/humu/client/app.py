@@ -45,6 +45,81 @@ class RoomPanel(Static):
         yield ListView(id="room-list")
 
 
+class ChatInput(TextArea):
+    """TextArea that emits Submitted on Enter instead of inserting newline."""
+
+    class Submitted(Message):
+        def __init__(self, text: str) -> None:
+            super().__init__()
+            self.text = text
+
+    def _on_key(self, event) -> None:
+        try:
+            completer = self.screen.query_one("#chat-completer", ChatCompleter)
+        except Exception:
+            completer = None
+
+        if completer and completer.is_active:
+            if event.key == "down":
+                completer.move_up()  # reversed for drop-up
+                event.prevent_default()
+                event.stop()
+                return
+            if event.key == "up":
+                completer.move_down()  # reversed for drop-up
+                event.prevent_default()
+                event.stop()
+                return
+            if event.key == "tab":
+                self._accept_completion(completer, add_space=False)
+                event.prevent_default()
+                event.stop()
+                return
+            if event.key == "enter":
+                self._accept_completion(completer, add_space=True)
+                completer.hide()
+                event.prevent_default()
+                event.stop()
+                return
+            if event.key == "escape":
+                completer.hide()
+                event.prevent_default()
+                event.stop()
+                return
+
+        if event.key == "enter":
+            text = self.text.strip()
+            if text:
+                self.post_message(self.Submitted(text))
+                self.clear()
+            event.prevent_default()
+            event.stop()
+            return
+
+    def _accept_completion(self, completer: ChatCompleter, add_space: bool) -> None:
+        sel = completer.selected
+        if sel is None:
+            return
+        text = self.text
+        trigger_start = completer.trigger_start
+
+        if completer.trigger_char == "/":
+            insert = sel + (" " if add_space else "")
+        elif completer.trigger_char == "@":
+            if add_space and not sel.endswith("/"):
+                insert = sel + " "
+            else:
+                insert = sel
+        else:
+            insert = sel
+
+        new_text = text[: trigger_start + 1] + insert
+        self.load_text(new_text)
+        if not add_space:
+            cursor_pos = len(new_text)
+            completer.update_completions(new_text, cursor_pos)
+
+
 class ChatPanel(Static):
     DEFAULT_CSS = "ChatPanel { width: 1fr; }"
 
@@ -55,7 +130,7 @@ class ChatPanel(Static):
         yield Label("Chat", classes="panel-title")
         yield Vertical(id="chat-messages")
         yield ChatCompleter(id="chat-completer")
-        yield TextArea(id="chat-input")
+        yield ChatInput(id="chat-input")
 
 
 class AgentPanel(Static):
@@ -212,16 +287,14 @@ class HumuApp(App):
         except Exception:
             logger.exception("Failed to start HTTP client")
             return
-        self.run_worker(self._ws_loop(), exclusive=True, group="ws")
-        await self._load_workspaces()
-        await self._restore_selection()
-
-    async def _ws_loop(self) -> None:
         try:
             await self._conn.connect()
-            await self._conn.receive_loop()
         except Exception:
             logger.exception("WebSocket connection failed")
+            return
+        self.run_worker(self._conn.receive_loop(), exclusive=True, group="ws")
+        await self._load_workspaces()
+        await self._restore_selection()
 
     async def on_unmount(self) -> None:
         await self._conn.disconnect()
@@ -564,70 +637,11 @@ class HumuApp(App):
 
     # --- Chat Input ---
 
-    async def on_key(self, event) -> None:
-        focused = self.focused
-        if not focused or focused.id != "chat-input":
-            return
-
-        completer = self.query_one("#chat-completer", ChatCompleter)
-
-        if completer.is_active:
-            if event.key == "down":
-                completer.move_up()  # reversed for drop-up
-                event.prevent_default()
-                return
-            if event.key == "up":
-                completer.move_down()  # reversed for drop-up
-                event.prevent_default()
-                return
-            if event.key == "tab":
-                self._accept_chat_completion(completer, add_space=False)
-                event.prevent_default()
-                return
-            if event.key == "enter":
-                self._accept_chat_completion(completer, add_space=True)
-                completer.hide()
-                event.prevent_default()
-                return
-            if event.key == "escape":
-                completer.hide()
-                event.prevent_default()
-                return
-
-        if event.key == "enter":
-            ta = self.query_one("#chat-input", TextArea)
-            text = ta.text.strip()
-            if text and self._current_workspace and self._current_room:
-                await self._conn.send_message(
-                    self._current_workspace, self._current_room, text
-                )
-                ta.clear()
-            event.prevent_default()
-
-    def _accept_chat_completion(self, completer: ChatCompleter, add_space: bool) -> None:
-        sel = completer.selected
-        if sel is None:
-            return
-        ta = self.query_one("#chat-input", TextArea)
-        text = ta.text
-        trigger_start = completer.trigger_start
-
-        if completer.trigger_char == "/":
-            insert = sel + (" " if add_space else "")
-        elif completer.trigger_char == "@":
-            if add_space and not sel.endswith("/"):
-                insert = sel + " "
-            else:
-                insert = sel
-        else:
-            insert = sel
-
-        new_text = text[: trigger_start + 1] + insert
-        ta.load_text(new_text)
-        # Refresh completions after acceptance (for Tab to keep browsing)
-        if not add_space:
-            cursor_pos = len(new_text)
-            completer.update_completions(new_text, cursor_pos)
+    async def on_chat_input_submitted(self, event: ChatInput.Submitted) -> None:
+        if self._current_workspace and self._current_room:
+            await self._conn.send_message(
+                self._current_workspace, self._current_room, event.text
+            )
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         if event.text_area.id == "chat-input":
@@ -641,9 +655,9 @@ class HumuApp(App):
     def _handle_server_event(self, event: dict) -> None:
         event_type = event.get("type", "")
         if event_type == "room_state_sync":
-            self.call_from_thread(self._render_history, event.get("messages", []))
+            self.call_later(self._render_history, event.get("messages", []))
         elif event_type == "message_added":
-            self.call_from_thread(
+            self.call_later(
                 self._append_message, event.get("sender", ""), event.get("text", "")
             )
 
@@ -663,5 +677,13 @@ class HumuApp(App):
 
 
 def run_client() -> None:
+    from humu.config import HUMU_HOME
+
+    HUMU_HOME.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        filename=str(HUMU_HOME / "client.log"),
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     app = HumuApp()
     app.run()
