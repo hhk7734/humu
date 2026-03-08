@@ -4,6 +4,7 @@ import logging
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.events import MouseDown, MouseMove, MouseUp
 from textual.message import Message
 from textual.widgets import Footer, Header, Label, ListItem, ListView, Static, TextArea
 
@@ -23,6 +24,9 @@ logger = logging.getLogger(__name__)
 class WorkspacePanel(Static):
     DEFAULT_CSS = "WorkspacePanel { width: 18; }"
 
+    def __init__(self, **kwargs) -> None:
+        super().__init__(id="panel-workspace", **kwargs)
+
     def compose(self) -> ComposeResult:
         yield Label("Workspaces", classes="panel-title")
         yield ListView(id="workspace-list")
@@ -31,6 +35,9 @@ class WorkspacePanel(Static):
 class RoomPanel(Static):
     DEFAULT_CSS = "RoomPanel { width: 14; }"
 
+    def __init__(self, **kwargs) -> None:
+        super().__init__(id="panel-room", **kwargs)
+
     def compose(self) -> ComposeResult:
         yield Label("Rooms", classes="panel-title")
         yield ListView(id="room-list")
@@ -38,6 +45,9 @@ class RoomPanel(Static):
 
 class ChatPanel(Static):
     DEFAULT_CSS = "ChatPanel { width: 1fr; }"
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(id="panel-chat", **kwargs)
 
     def compose(self) -> ComposeResult:
         yield Label("Chat", classes="panel-title")
@@ -48,6 +58,9 @@ class ChatPanel(Static):
 
 class AgentPanel(Static):
     DEFAULT_CSS = "AgentPanel { width: 16; }"
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(id="panel-agent", **kwargs)
 
     class EditAgent(Message):
         def __init__(self, agent_name: str) -> None:
@@ -64,6 +77,60 @@ class AgentPanel(Static):
         name = getattr(item, "data", None)
         if name is not None:
             self.post_message(self.EditAgent(name))
+
+
+class ResizeHandle(Static):
+    """Draggable vertical divider between panels."""
+
+    DEFAULT_CSS = """
+    ResizeHandle {
+        width: 1;
+        height: 100%;
+        background: $surface;
+        color: $text-muted;
+    }
+    ResizeHandle:hover {
+        background: $accent;
+        color: $text;
+    }
+    ResizeHandle.dragging {
+        background: $accent;
+        color: $text;
+    }
+    """
+
+    def __init__(self, left_panel_id: str, right_panel_id: str, **kwargs) -> None:
+        super().__init__("│", **kwargs)
+        self._left_id = left_panel_id
+        self._right_id = right_panel_id
+        self._dragging = False
+        self._start_x = 0
+        self._left_start_width = 0
+
+    def on_mouse_down(self, event: MouseDown) -> None:
+        self._dragging = True
+        self._start_x = event.screen_x
+        left = self.screen.query_one(f"#{self._left_id}")
+        self._left_start_width = left.size.width
+        self.add_class("dragging")
+        self.capture_mouse()
+        event.stop()
+
+    def on_mouse_move(self, event: MouseMove) -> None:
+        if not self._dragging:
+            return
+        delta = event.screen_x - self._start_x
+        new_width = max(8, self._left_start_width + delta)
+        left = self.screen.query_one(f"#{self._left_id}")
+        left.styles.width = new_width
+        event.stop()
+
+    def on_mouse_up(self, event: MouseUp) -> None:
+        if self._dragging:
+            self._dragging = False
+            self.remove_class("dragging")
+            self.release_mouse()
+            event.stop()
 
 
 class HumuApp(App):
@@ -105,8 +172,11 @@ class HumuApp(App):
         yield Header()
         with Horizontal():
             yield WorkspacePanel()
+            yield ResizeHandle("panel-workspace", "panel-room")
             yield RoomPanel()
+            yield ResizeHandle("panel-room", "panel-chat")
             yield ChatPanel()
+            yield ResizeHandle("panel-chat", "panel-agent")
             yield AgentPanel()
         yield Footer()
 
