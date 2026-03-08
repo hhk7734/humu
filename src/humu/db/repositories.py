@@ -88,34 +88,39 @@ class Repository:
 
     # --- Agents ---
 
-    async def list_agents(self, workspace: str) -> list[AgentConfig]:
+    async def list_agents(self, workspace: str, room: str) -> list[AgentConfig]:
         cursor = await self._db.conn.execute(
-            "SELECT config FROM agents WHERE workspace = ?", (workspace,)
+            "SELECT config FROM agents WHERE workspace = ? AND room = ?",
+            (workspace, room),
         )
         rows = await cursor.fetchall()
         return [AgentConfig.model_validate_json(r["config"]) for r in rows]
 
-    async def get_agent(self, workspace: str, name: str) -> AgentConfig | None:
+    async def get_agent(
+        self, workspace: str, room: str, name: str
+    ) -> AgentConfig | None:
         cursor = await self._db.conn.execute(
-            "SELECT config FROM agents WHERE workspace = ? AND name = ?",
-            (workspace, name),
+            "SELECT config FROM agents WHERE workspace = ? AND room = ? AND name = ?",
+            (workspace, room, name),
         )
         row = await cursor.fetchone()
         if row:
             return AgentConfig.model_validate_json(row["config"])
         return None
 
-    async def save_agent(self, workspace: str, agent: AgentConfig) -> None:
+    async def save_agent(
+        self, workspace: str, room: str, agent: AgentConfig
+    ) -> None:
         await self._db.conn.execute(
-            "INSERT OR REPLACE INTO agents (workspace, name, config) VALUES (?, ?, ?)",
-            (workspace, agent.name, agent.model_dump_json()),
+            "INSERT OR REPLACE INTO agents (workspace, room, name, config) VALUES (?, ?, ?, ?)",
+            (workspace, room, agent.name, agent.model_dump_json()),
         )
         await self._db.conn.commit()
 
-    async def delete_agent(self, workspace: str, name: str) -> None:
+    async def delete_agent(self, workspace: str, room: str, name: str) -> None:
         await self._db.conn.execute(
-            "DELETE FROM agents WHERE workspace = ? AND name = ?",
-            (workspace, name),
+            "DELETE FROM agents WHERE workspace = ? AND room = ? AND name = ?",
+            (workspace, room, name),
         )
         await self._db.conn.commit()
 

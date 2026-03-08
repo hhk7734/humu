@@ -56,15 +56,25 @@ async def test_agent_crud(repo):
     ws = Workspace(name="test", root_path="/tmp/test")
     await repo.save_workspace(ws)
 
+    room = Room(name="dev", leader="leader")
+    await repo.save_room("test", room)
+
     agent = AgentConfig(
         name="coder",
         description="Writes code",
         system_prompt="You are a coder.",
     )
-    await repo.save_agent("test", agent)
-    result = await repo.get_agent("test", "coder")
+    await repo.save_agent("test", "dev", agent)
+    result = await repo.get_agent("test", "dev", "coder")
     assert result is not None
     assert result.description == "Writes code"
+
+    agents = await repo.list_agents("test", "dev")
+    assert len(agents) == 1
+    assert agents[0].name == "coder"
+
+    await repo.delete_agent("test", "dev", "coder")
+    assert await repo.get_agent("test", "dev", "coder") is None
 
 
 @pytest.mark.asyncio
