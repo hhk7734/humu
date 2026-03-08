@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 from humu.db.repositories import Repository
 from humu.models.agent import AgentConfig
@@ -128,14 +132,35 @@ def create_router() -> APIRouter:
 
                 elif msg_type == "user_message":
                     executor = RoomExecutor(repo, engine, manager)
+                    ws_ref = data["workspace"]
+                    room_ref = data["room"]
+                    text_ref = data["text"]
 
-                    async def run():
-                        async for event in executor.execute(
-                            data["workspace"], data["room"], data["text"]
-                        ):
-                            await manager.broadcast(
-                                event, data["workspace"], data["room"]
+                    async def run(
+                        _executor: RoomExecutor = executor,
+                        _ws: str = ws_ref,
+                        _room: str = room_ref,
+                        _text: str = text_ref,
+                    ) -> None:
+                        try:
+                            async for event in _executor.execute(
+                                _ws, _room, _text
+                            ):
+                                await manager.broadcast(event, _ws, _room)
+                        except Exception:
+                            logger.exception(
+                                "Execution failed for %s/%s", _ws, _room
                             )
+                            try:
+                                await manager.broadcast(
+                                    ServerMessage.error(
+                                        "Internal execution error"
+                                    ),
+                                    _ws,
+                                    _room,
+                                )
+                            except Exception:
+                                pass
 
                     asyncio.create_task(run())
 

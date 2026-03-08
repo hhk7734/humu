@@ -108,7 +108,11 @@ class ServerMessage:
 
     @staticmethod
     def agent_status(
-        workspace: str, room: str, agent: str, status: str, error: str | None = None
+        workspace: str,
+        room: str,
+        agent: str,
+        status: Literal["started", "completed", "error"],
+        error: str | None = None,
     ) -> dict:
         return AgentStatusEvent(
             workspace=workspace, room=room, agent=agent, status=status, error=error

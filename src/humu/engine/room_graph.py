@@ -152,23 +152,6 @@ Use "depends_on" to specify agent names whose output this task needs. Empty mean
 
         graph.add_edge(START, "leader_plan")
 
-        if not room_state.agent_tasks:
-            # First pass: leader plans. Route based on result.
-            def route_after_plan(state: RoomState) -> str:
-                if state.final_response is not None:
-                    return END
-                if state.agent_tasks:
-                    # Determine first wave of agents (no dependencies)
-                    first_wave = [
-                        t.agent_name
-                        for t in state.agent_tasks
-                        if not t.depends_on
-                    ]
-                    return first_wave[0] if first_wave else "leader_aggregate"
-                return END
-
-            graph.add_conditional_edges("leader_plan", route_after_plan)
-
         # Add agent nodes for all known agents
         for agent_name in room_state.agent_configs:
 
@@ -176,7 +159,44 @@ Use "depends_on" to specify agent names whose output this task needs. Empty mean
                 return await self._run_agent(state, name)
 
             graph.add_node(agent_name, agent_fn)
-            graph.add_edge(agent_name, "leader_aggregate")
+
+        if not room_state.agent_tasks:
+            # First pass: leader plans. Route based on result.
+            def route_after_plan(state: RoomState) -> list[str] | str:
+                if state.final_response is not None:
+                    return END
+                if state.agent_tasks:
+                    first_wave = [
+                        t.agent_name
+                        for t in state.agent_tasks
+                        if not t.depends_on
+                    ]
+                    return first_wave if first_wave else ["leader_aggregate"]
+                return END
+
+            graph.add_conditional_edges("leader_plan", route_after_plan)
+
+        # Wire agent edges: agents with dependencies wait for them,
+        # agents without dependencies go to leader_aggregate
+        task_names = {t.agent_name for t in room_state.agent_tasks}
+        depended_on_by: dict[str, list[str]] = {}
+        for task in room_state.agent_tasks:
+            for dep in task.depends_on:
+                depended_on_by.setdefault(dep, []).append(task.agent_name)
+
+        for agent_name in room_state.agent_configs:
+            dependents = depended_on_by.get(agent_name, [])
+            if dependents:
+                # This agent's output feeds into dependent agents
+                def route_after_agent(
+                    state: RoomState, targets: list[str] = dependents
+                ) -> list[str]:
+                    return targets
+
+                graph.add_conditional_edges(agent_name, route_after_agent)
+            else:
+                # No dependents — go straight to aggregation
+                graph.add_edge(agent_name, "leader_aggregate")
 
         graph.add_edge("leader_aggregate", END)
 
