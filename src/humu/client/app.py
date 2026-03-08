@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 
 from textual.app import App, ComposeResult
@@ -11,6 +12,7 @@ from textual.widgets import Footer, Header, Label, ListItem, ListView, Static, T
 from humu.client.completers import ChatCompleter
 from humu.client.connection import ServerConnection
 from humu.client.http import HttpClient
+from humu.config import CLIENT_STATE
 from humu.client.screens import (
     ConfirmDeleteScreen,
     CreateAgentScreen,
@@ -186,6 +188,24 @@ class HumuApp(App):
             yield AgentPanel()
         yield Footer()
 
+    def _load_client_state(self) -> dict:
+        try:
+            return json.loads(CLIENT_STATE.read_text())
+        except Exception:
+            return {}
+
+    def _save_client_state(self) -> None:
+        state = {}
+        if self._current_workspace:
+            state["workspace"] = self._current_workspace
+        if self._current_room:
+            state["room"] = self._current_room
+        try:
+            CLIENT_STATE.parent.mkdir(parents=True, exist_ok=True)
+            CLIENT_STATE.write_text(json.dumps(state))
+        except Exception:
+            logger.exception("Failed to save client state")
+
     async def on_mount(self) -> None:
         try:
             await self._http.start()
@@ -194,6 +214,7 @@ class HumuApp(App):
             return
         self.run_worker(self._ws_loop(), exclusive=True, group="ws")
         await self._load_workspaces()
+        await self._restore_selection()
 
     async def _ws_loop(self) -> None:
         try:
@@ -205,6 +226,37 @@ class HumuApp(App):
     async def on_unmount(self) -> None:
         await self._conn.disconnect()
         await self._http.stop()
+
+    async def _restore_selection(self) -> None:
+        state = self._load_client_state()
+        ws_name = state.get("workspace")
+        room_name = state.get("room")
+        if not ws_name:
+            return
+
+        # Select workspace in list
+        lv = self.query_one("#workspace-list", ListView)
+        for i, child in enumerate(lv.children):
+            if getattr(child, "data", None) == ws_name:
+                lv.index = i
+                self._current_workspace = ws_name
+                await self._load_rooms(ws_name)
+                break
+        else:
+            return
+
+        if not room_name:
+            return
+
+        # Select room in list
+        rlv = self.query_one("#room-list", ListView)
+        for i, child in enumerate(rlv.children):
+            if getattr(child, "data", None) == room_name:
+                rlv.index = i
+                self._current_room = room_name
+                await self._load_agents(ws_name, room_name)
+                await self._conn.subscribe_room(ws_name, room_name)
+                break
 
     # --- Data Loading ---
 
@@ -301,11 +353,13 @@ class HumuApp(App):
                 completer.set_workspace_root(ws_data.get("root_path"))
             except Exception:
                 pass
+            self._save_client_state()
 
         elif list_id == "room-list" and self._current_workspace:
             self._current_room = name
             await self._load_agents(self._current_workspace, name)
             await self._conn.subscribe_room(self._current_workspace, name)
+            self._save_client_state()
 
         # agent-list selection handled by AgentPanel.EditAgent message
 

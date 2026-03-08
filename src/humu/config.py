@@ -5,6 +5,8 @@ HUMU_DB = HUMU_HOME / "humu.db"
 PLUGINS_DIR = HUMU_HOME / "plugins"
 MARKETPLACES_DIR = HUMU_HOME / "marketplaces"
 
+CLIENT_STATE = HUMU_HOME / "client_state.json"
+
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 9130
 
