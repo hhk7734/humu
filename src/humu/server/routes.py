@@ -87,8 +87,15 @@ def create_router() -> APIRouter:
 
     @router.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
+        import asyncio
+
+        from humu.engine.room_graph import RoomEngine
+        from humu.protocol import ServerMessage
+        from humu.server.executor import RoomExecutor
+
         manager: WebSocketManager = websocket.app.state.ws_manager
         repo: Repository = websocket.app.state.repo
+        engine: RoomEngine = websocket.app.state.engine
 
         await manager.connect(websocket)
         try:
@@ -103,8 +110,6 @@ def create_router() -> APIRouter:
                     messages = await repo.get_messages(
                         data["workspace"], data["room"]
                     )
-                    from humu.protocol import ServerMessage
-
                     await websocket.send_json(
                         ServerMessage.room_state_sync(
                             data["workspace"], data["room"], messages
@@ -122,8 +127,17 @@ def create_router() -> APIRouter:
                     )
 
                 elif msg_type == "user_message":
-                    # TODO: Task 8 will implement full LangGraph execution
-                    pass
+                    executor = RoomExecutor(repo, engine, manager)
+
+                    async def run():
+                        async for event in executor.execute(
+                            data["workspace"], data["room"], data["text"]
+                        ):
+                            await manager.broadcast(
+                                event, data["workspace"], data["room"]
+                            )
+
+                    asyncio.create_task(run())
 
         except WebSocketDisconnect:
             pass
