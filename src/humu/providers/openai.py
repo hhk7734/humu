@@ -69,9 +69,26 @@ class OpenAIProvider:
             api_messages.append({"role": "system", "content": system_prompt})
         api_messages.extend({"role": m.role, "content": m.content} for m in messages)
 
-        stream = await self._get_client().chat.completions.create(
-            model=model, messages=api_messages, stream=True, stream_options={"include_usage": True}
-        )
+        params: dict[str, Any] = {
+            "model": model,
+            "messages": api_messages,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        if tools:
+            params["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.input_schema,
+                    },
+                }
+                for t in tools
+            ]
+
+        stream = await self._get_client().chat.completions.create(**params)
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:
                 yield LLMStreamChunk(text=chunk.choices[0].delta.content)

@@ -69,17 +69,22 @@ class AnthropicProvider:
         }
         if system_prompt:
             params["system"] = system_prompt
+        if tools:
+            params["tools"] = [
+                {"name": t.name, "description": t.description, "input_schema": t.input_schema}
+                for t in tools
+            ]
 
         async with self._get_client().messages.stream(**params) as stream:
             async for text in stream.text_stream:
                 yield LLMStreamChunk(text=text)
 
-        final = await stream.get_final_message()
-        yield LLMStreamChunk(
-            text="",
-            done=True,
-            usage={
-                "input_tokens": final.usage.input_tokens,
-                "output_tokens": final.usage.output_tokens,
-            },
-        )
+            final = await stream.get_final_message()
+            yield LLMStreamChunk(
+                text="",
+                done=True,
+                usage={
+                    "input_tokens": final.usage.input_tokens,
+                    "output_tokens": final.usage.output_tokens,
+                },
+            )
