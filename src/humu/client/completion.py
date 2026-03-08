@@ -38,6 +38,8 @@ def list_paths(
             return []
         result = []
         for m in matches:
+            if os.path.basename(m).startswith("."):
+                continue
             rel = os.path.relpath(m, base_dir)
             if os.path.isdir(m):
                 rel += "/"
@@ -84,6 +86,8 @@ def list_paths(
             for entry in entries:
                 if len(result) >= max_results:
                     break
+                if entry.name.startswith("."):
+                    continue
                 rel = os.path.relpath(entry.path, base_dir)
                 if _path_needle(rel) != needle and fuzzy_match(
                     needle, _path_needle(rel)

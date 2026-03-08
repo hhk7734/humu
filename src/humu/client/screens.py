@@ -38,6 +38,11 @@ class CreateWorkspaceScreen(ModalScreen[dict | None]):
             completer = self.query_one("#path-completer", PathInputCompleter)
             completer.refresh_completions(event.value)
 
+    def on_descendant_blur(self, event) -> None:
+        if event.widget.id == "ws-root-path":
+            completer = self.query_one("#path-completer", PathInputCompleter)
+            completer.hide()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-create":
             name = self.query_one("#ws-name", Input).value.strip()
@@ -62,13 +67,15 @@ class CreateWorkspaceScreen(ModalScreen[dict | None]):
                 completer.move_up()
                 event.prevent_default()
                 return
-            if event.key == "tab":
+            if event.key == "enter":
                 path = completer.accept()
                 if path:
                     inp = self.query_one("#ws-root-path", Input)
                     inp.value = path
+                    inp.cursor_position = len(path)
                     completer.refresh_completions(path)
                 event.prevent_default()
+                event.stop()
                 return
 
         if event.key == "escape":
