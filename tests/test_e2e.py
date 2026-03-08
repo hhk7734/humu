@@ -29,30 +29,41 @@ async def test_full_flow(app):
         assert data["root_path"] == "/tmp"
         assert data["slug"] == "test"
 
-        # Create agent (leader)
-        resp = await client.post(
-            "/api/workspaces/test/agents",
-            json={
-                "name": "leader",
-                "description": "Room leader",
-                "system_prompt": "You are a leader.",
-            },
-        )
-        assert resp.status_code == 201
-        data = resp.json()
-        assert data["name"] == "leader"
-        assert data["description"] == "Room leader"
-        assert data["system_prompt"] == "You are a leader."
-
-        # Create room
+        # Create room (auto-creates leader)
         resp = await client.post(
             "/api/workspaces/test/rooms",
-            json={"name": "dev", "leader": "leader"},
+            json={"name": "dev"},
         )
         assert resp.status_code == 201
         data = resp.json()
         assert data["name"] == "dev"
         assert data["leader"] == "leader"
+
+        # Verify auto-created leader agent
+        resp = await client.get("/api/workspaces/test/rooms/dev/agents")
+        assert resp.status_code == 200
+        agents = resp.json()
+        assert len(agents) == 1
+        assert agents[0]["name"] == "leader"
+
+        # Add another agent to room
+        resp = await client.post(
+            "/api/workspaces/test/rooms/dev/agents",
+            json={
+                "name": "coder",
+                "description": "Code writer",
+                "system_prompt": "You write code.",
+            },
+        )
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["name"] == "coder"
+
+        # Verify agent count
+        resp = await client.get("/api/workspaces/test/rooms/dev/agents")
+        assert resp.status_code == 200
+        agents = resp.json()
+        assert len(agents) == 2
 
         # Verify all data persists
         resp = await client.get("/api/workspaces")
@@ -60,12 +71,6 @@ async def test_full_flow(app):
         workspaces = resp.json()
         assert len(workspaces) == 1
         assert workspaces[0]["name"] == "test"
-
-        resp = await client.get("/api/workspaces/test/agents")
-        assert resp.status_code == 200
-        agents = resp.json()
-        assert len(agents) == 1
-        assert agents[0]["name"] == "leader"
 
         resp = await client.get("/api/workspaces/test/rooms")
         assert resp.status_code == 200

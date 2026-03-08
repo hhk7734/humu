@@ -2,14 +2,20 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
 from humu.db.repositories import Repository
 from humu.models.agent import AgentConfig
-from humu.models.room import Room
 from humu.models.workspace import Workspace
 from humu.server.ws import WebSocketManager
 
@@ -21,7 +27,6 @@ class CreateWorkspaceRequest(BaseModel):
 
 class CreateRoomRequest(BaseModel):
     name: str
-    leader: str
 
 
 def get_repo(request: Request) -> Repository:
@@ -70,22 +75,53 @@ def create_router() -> APIRouter:
         body: CreateRoomRequest,
         repo: Repository = Depends(get_repo),
     ):
-        room = Room(name=body.name, leader=body.leader)
-        await repo.save_room(workspace, room)
+        room = await repo.create_room_with_leader(workspace, body.name)
         return room.model_dump()
 
-    # --- Agents ---
+    # --- Agents (room-scoped) ---
 
-    @router.get("/api/workspaces/{workspace}/agents")
-    async def list_agents(workspace: str, repo: Repository = Depends(get_repo)):
-        return [a.model_dump() for a in await repo.list_agents(workspace)]
-
-    @router.post("/api/workspaces/{workspace}/agents", status_code=201)
-    async def create_agent(
-        workspace: str, body: AgentConfig, repo: Repository = Depends(get_repo)
+    @router.get("/api/workspaces/{workspace}/rooms/{room}/agents")
+    async def list_agents(
+        workspace: str, room: str, repo: Repository = Depends(get_repo)
     ):
-        await repo.save_agent(workspace, body)
+        return [a.model_dump() for a in await repo.list_agents(workspace, room)]
+
+    @router.post("/api/workspaces/{workspace}/rooms/{room}/agents", status_code=201)
+    async def create_agent(
+        workspace: str,
+        room: str,
+        body: AgentConfig,
+        repo: Repository = Depends(get_repo),
+    ):
+        await repo.save_agent(workspace, room, body)
         return body.model_dump()
+
+    @router.put("/api/workspaces/{workspace}/rooms/{room}/agents/{name}")
+    async def update_agent(
+        workspace: str,
+        room: str,
+        name: str,
+        body: AgentConfig,
+        repo: Repository = Depends(get_repo),
+    ):
+        agent = body.model_copy(update={"name": name})
+        await repo.save_agent(workspace, room, agent)
+        return agent.model_dump()
+
+    @router.delete("/api/workspaces/{workspace}/rooms/{room}/agents/{name}")
+    async def delete_agent(
+        workspace: str,
+        room: str,
+        name: str,
+        repo: Repository = Depends(get_repo),
+    ):
+        room_obj = await repo.get_room(workspace, room)
+        if room_obj and room_obj.leader == name:
+            raise HTTPException(
+                status_code=400, detail="Cannot delete the leader agent"
+            )
+        await repo.delete_agent(workspace, room, name)
+        return {"ok": True}
 
     # --- WebSocket ---
 
