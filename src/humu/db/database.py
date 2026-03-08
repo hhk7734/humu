@@ -1,4 +1,10 @@
+import logging
+
 import aiosqlite
+
+logger = logging.getLogger(__name__)
+
+SCHEMA_VERSION = 2
 
 
 class Database:
@@ -9,6 +15,35 @@ class Database:
     async def initialize(self) -> None:
         self._conn = await aiosqlite.connect(self._db_path)
         self._conn.row_factory = aiosqlite.Row
+
+        await self._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS schema_version (
+                version INTEGER NOT NULL
+            );
+        """)
+
+        cursor = await self._conn.execute("SELECT version FROM schema_version")
+        row = await cursor.fetchone()
+        current_version = row[0] if row else 0
+
+        if current_version < SCHEMA_VERSION:
+            await self._migrate(current_version)
+
+        await self._conn.execute("PRAGMA foreign_keys = ON")
+        await self._conn.commit()
+
+    async def _migrate(self, from_version: int) -> None:
+        logger.info("Migrating database from version %d to %d", from_version, SCHEMA_VERSION)
+
+        # Drop old tables that have incompatible schemas
+        if from_version < 2:
+            await self._conn.executescript("""
+                DROP TABLE IF EXISTS agents;
+                DROP TABLE IF EXISTS messages;
+                DROP TABLE IF EXISTS rooms;
+                DROP TABLE IF EXISTS workspaces;
+            """)
+
         await self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS workspaces (
                 name TEXT PRIMARY KEY,
@@ -38,8 +73,14 @@ class Database:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        await self._conn.execute("PRAGMA foreign_keys = ON")
+
+        # Update version
+        await self._conn.execute("DELETE FROM schema_version")
+        await self._conn.execute(
+            "INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,)
+        )
         await self._conn.commit()
+        logger.info("Database migration complete")
 
     @property
     def conn(self) -> aiosqlite.Connection:
