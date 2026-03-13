@@ -1,6 +1,6 @@
 use humu::config::{humu_dir, HumuConfig, HumuState};
 use humu::pty::pane::PtyPane;
-use humu::tui::input::{handle_key, Action, Mode};
+use humu::tui::input::{handle_key, Action, Direction as NavDirection, Mode};
 use humu::tui::layout::{PaneId, SplitTree, TabContainer};
 use humu::tui::widgets::room_panel::{RoomItem, RoomPanel};
 use humu::tui::widgets::status_bar::StatusBar;
@@ -224,8 +224,212 @@ impl App {
 
             Action::PassThrough(key) => self.handle_passthrough(key),
 
-            // TODO: implement remaining actions in later tasks
+            // Tab actions
+            Action::NewTab => self.new_tab(),
+            Action::CloseTab => self.close_tab(),
+            Action::PrevTab => {
+                let active = self.tabs.active_index();
+                if active > 0 {
+                    self.tabs.set_active(active - 1);
+                    self.sync_focused_pane();
+                }
+            }
+            Action::NextTab => {
+                let active = self.tabs.active_index();
+                if active + 1 < self.tabs.len() {
+                    self.tabs.set_active(active + 1);
+                    self.sync_focused_pane();
+                }
+            }
+            Action::GoToTab(n) => {
+                if n < self.tabs.len() {
+                    self.tabs.set_active(n);
+                    self.sync_focused_pane();
+                }
+            }
+
+            // Split actions
+            Action::SplitDown => self.split_pane(false),
+            Action::SplitRight => self.split_pane(true),
+            Action::ClosePane => self.close_pane(),
+            Action::MoveFocus(dir) => self.move_focus(dir),
+
             _ => {}
+        }
+    }
+
+    /// Spawn a new pane from the named preset and register it.
+    /// Returns the new `PaneId` on success.
+    fn spawn_pane(&mut self, preset_name: &str) -> Option<PaneId> {
+        let shell_cmd = self
+            .config
+            .presets
+            .get(preset_name)
+            .map(|p| p.command.as_str())
+            .unwrap_or("sh")
+            .to_string();
+        let shell_args: Vec<String> = self
+            .config
+            .presets
+            .get(preset_name)
+            .map(|p| p.args.clone())
+            .unwrap_or_default();
+        let arg_refs: Vec<&str> = shell_args.iter().map(String::as_str).collect();
+        let (cmd, args) = humu::preset::resolve_preset(&shell_cmd, &arg_refs);
+
+        let pane = PtyPane::spawn(&cmd, &args, None, 80, 24).ok()?;
+        let id = self.next_pane_id;
+        self.panes.insert(id, pane);
+        self.next_pane_id += 1;
+        Some(id)
+    }
+
+    fn new_tab(&mut self) {
+        if let Some(new_id) = self.spawn_pane("shell") {
+            self.tabs.add_tab("shell".into(), SplitTree::leaf(new_id));
+            let last = self.tabs.len() - 1;
+            self.tabs.set_active(last);
+            self.focused_pane = Some(new_id);
+        }
+    }
+
+    fn close_tab(&mut self) {
+        if self.tabs.len() <= 1 {
+            return;
+        }
+        let active = self.tabs.active_index();
+        if let Some(tree) = self.tabs.remove_tab(active) {
+            for id in tree.pane_ids() {
+                self.panes.remove(&id);
+            }
+            self.sync_focused_pane();
+        }
+    }
+
+    /// After changing the active tab, set `focused_pane` to the first pane in that tab.
+    fn sync_focused_pane(&mut self) {
+        self.focused_pane = self
+            .tabs
+            .active_tree()
+            .and_then(|t| t.pane_ids().into_iter().next());
+    }
+
+    fn split_pane(&mut self, horizontal: bool) {
+        let focused = match self.focused_pane {
+            Some(id) => id,
+            None => return,
+        };
+        let new_id = match self.spawn_pane("shell") {
+            Some(id) => id,
+            None => return,
+        };
+        if let Some(tree) = self.tabs.active_tree_mut() {
+            if horizontal {
+                tree.split_horizontal(focused, new_id);
+            } else {
+                tree.split_vertical(focused, new_id);
+            }
+            self.focused_pane = Some(new_id);
+        } else {
+            // No active tree — clean up the pane we just spawned.
+            self.panes.remove(&new_id);
+        }
+    }
+
+    fn close_pane(&mut self) {
+        let focused = match self.focused_pane {
+            Some(id) => id,
+            None => return,
+        };
+
+        // Check if this is the only pane in the active tree.
+        let only_pane = self
+            .tabs
+            .active_tree()
+            .map(|t| t.pane_ids().len() == 1)
+            .unwrap_or(false);
+
+        if only_pane {
+            // Close the tab (unless it's the last one).
+            self.close_tab();
+            return;
+        }
+
+        // Remove from the split tree first.
+        if let Some(tree) = self.tabs.active_tree_mut() {
+            tree.remove_pane(focused);
+        }
+        self.panes.remove(&focused);
+
+        // Pick a new focused pane from remaining panes in the active tree.
+        self.focused_pane = self
+            .tabs
+            .active_tree()
+            .and_then(|t| t.pane_ids().into_iter().next());
+    }
+
+    fn move_focus(&mut self, dir: NavDirection) {
+        let focused = match self.focused_pane {
+            Some(id) => id,
+            None => return,
+        };
+
+        // We need a temporary area to compute rects; use a fixed reference area.
+        // The actual area is not known here, so we use a large fixed rect so
+        // relative adjacency is still computed correctly.
+        let area = Rect::new(0, 0, 1000, 1000);
+
+        let rects = match self.tabs.active_tree() {
+            Some(tree) => tree.compute_rects(area),
+            None => return,
+        };
+
+        let focused_rect = match rects.iter().find(|(id, _)| *id == focused) {
+            Some((_, r)) => *r,
+            None => return,
+        };
+
+        let candidate = match dir {
+            NavDirection::Left => rects
+                .iter()
+                .filter(|(id, r)| {
+                    *id != focused
+                        && r.x + r.width <= focused_rect.x
+                        && ranges_overlap(r.y, r.y + r.height, focused_rect.y, focused_rect.y + focused_rect.height)
+                })
+                .max_by_key(|(_, r)| r.x + r.width),
+
+            NavDirection::Right => rects
+                .iter()
+                .filter(|(id, r)| {
+                    *id != focused
+                        && r.x >= focused_rect.x + focused_rect.width
+                        && ranges_overlap(r.y, r.y + r.height, focused_rect.y, focused_rect.y + focused_rect.height)
+                })
+                .min_by_key(|(_, r)| r.x),
+
+            NavDirection::Up => rects
+                .iter()
+                .filter(|(id, r)| {
+                    *id != focused
+                        && r.y + r.height <= focused_rect.y
+                        && ranges_overlap(r.x, r.x + r.width, focused_rect.x, focused_rect.x + focused_rect.width)
+                })
+                .max_by_key(|(_, r)| r.y + r.height),
+
+            NavDirection::Down => rects
+                .iter()
+                .filter(|(id, r)| {
+                    *id != focused
+                        && r.y >= focused_rect.y + focused_rect.height
+                        && ranges_overlap(r.x, r.x + r.width, focused_rect.x, focused_rect.x + focused_rect.width)
+                })
+                .min_by_key(|(_, r)| r.y),
+        };
+
+        if let Some((new_id, _)) = candidate {
+            self.focused_pane = Some(*new_id);
+            self.focus = FocusedPanel::Terminal;
         }
     }
 
@@ -282,6 +486,11 @@ impl App {
         // TODO: list rooms from git
         vec![]
     }
+}
+
+/// Returns true if the ranges [a_start, a_end) and [b_start, b_end) overlap.
+fn ranges_overlap(a_start: u16, a_end: u16, b_start: u16, b_end: u16) -> bool {
+    a_start < b_end && b_start < a_end
 }
 
 fn key_event_to_bytes(key: &KeyEvent) -> Vec<u8> {
