@@ -121,6 +121,8 @@ pub struct App {
     pub panel_widths: [u16; 2],
     /// Active drag target when resizing a panel border via mouse drag.
     pub dragging: Option<DragTarget>,
+    /// When Some(id), only that pane is rendered filling the full terminal area.
+    pub fullscreen_pane: Option<PaneId>,
 }
 
 impl App {
@@ -206,6 +208,7 @@ impl App {
             panel_rects: PanelRects::default(),
             panel_widths: [20, 18],
             dragging: None,
+            fullscreen_pane: None,
         })
     }
 
@@ -782,6 +785,21 @@ impl App {
             return;
         }
 
+        // Fullscreen mode: render only the fullscreen pane filling the whole area.
+        if let Some(fs_id) = self.fullscreen_pane {
+            if let Some(pane) = self.panes.get_mut(&fs_id) {
+                if pane.cols() != pane_area.width || pane.rows() != pane_area.height {
+                    let _ = pane.resize(pane_area.width, pane_area.height);
+                }
+            }
+            if let Some(pane) = self.panes.get(&fs_id) {
+                let screen = pane.screen();
+                let widget = TerminalWidget::new(&screen).focus(true).exited(None);
+                frame.render_widget(widget, pane_area);
+            }
+            return;
+        }
+
         if let Some(tree) = self.tabs.active_tree() {
             let rects = tree.compute_rects(pane_area);
             for (pane_id, rect) in &rects {
@@ -844,11 +862,14 @@ impl App {
                 }
             }
 
-            // Split actions
+            // Pane actions
+            Action::NewPane => self.show_preset_selector(PresetAction::SplitDown),
             Action::SplitDown => self.show_preset_selector(PresetAction::SplitDown),
             Action::SplitRight => self.show_preset_selector(PresetAction::SplitRight),
             Action::ClosePane => self.close_pane(),
             Action::MoveFocus(dir) => self.move_focus(dir),
+            Action::ToggleFullscreen => self.toggle_fullscreen(),
+            Action::RenameTab => {} // stub: inline rename popup deferred
 
             // Workspace/room actions
             Action::Create => self.show_create_dialog(),
@@ -1226,6 +1247,16 @@ impl App {
         }
     }
 
+    fn toggle_fullscreen(&mut self) {
+        if self.fullscreen_pane.is_some() {
+            // Turn off fullscreen — restore normal split rendering.
+            self.fullscreen_pane = None;
+        } else {
+            // Enter fullscreen with the currently focused pane.
+            self.fullscreen_pane = self.focused_pane;
+        }
+    }
+
     fn close_pane(&mut self) {
         let focused = match self.focused_pane {
             Some(id) => id,
@@ -1346,7 +1377,12 @@ impl App {
                 }
             }
             FocusedPanel::Room => {
-                // TODO: navigate rooms
+                let count = self.room_items().len();
+                if count > 0 {
+                    let current = self.room_selected.unwrap_or(0) as i32;
+                    let next = (current + delta).clamp(0, count as i32 - 1) as usize;
+                    self.room_selected = Some(next);
+                }
             }
             FocusedPanel::Terminal => {}
         }
@@ -1362,7 +1398,40 @@ impl App {
     }
 
     fn restore_selection(&mut self) {
-        // TODO: restore from state.toml
+        if let Some(ws_name) = self.state.active_workspace.clone() {
+            let names: Vec<_> = {
+                let mut n: Vec<_> = self.state.workspaces.keys().cloned().collect();
+                n.sort();
+                n
+            };
+            if let Some(idx) = names.iter().position(|n| *n == ws_name) {
+                self.workspace_selected = Some(idx);
+            }
+        }
+
+        // Find the active room index
+        if let Some(room_name) = self.state.active_room.clone() {
+            let rooms = self.room_items();
+            if let Some(idx) = rooms.iter().position(|r| r.name == room_name) {
+                self.room_selected = Some(idx);
+            }
+        }
+
+        // Restore layout if saved
+        if let (Some(ws), Some(room)) = (
+            self.state.active_workspace.clone(),
+            self.state.active_room.clone(),
+        ) {
+            if let Some(layout) = self
+                .state
+                .layout
+                .get(&ws)
+                .and_then(|m| m.get(&room))
+                .cloned()
+            {
+                self.restore_layout(&layout);
+            }
+        }
     }
 
     /// Drain the hook event channel and update spinner_state.
@@ -1399,8 +1468,31 @@ impl App {
     }
 
     fn room_items(&self) -> Vec<RoomItem> {
-        // TODO: list rooms from git
-        vec![]
+        let ws_name = match &self.state.active_workspace {
+            Some(name) => name,
+            None => return vec![],
+        };
+        let ws = match self.state.workspaces.get(ws_name) {
+            Some(ws) => ws,
+            None => return vec![],
+        };
+        let mgr = RoomManager::new();
+        match mgr.list(&ws.path) {
+            Ok(rooms) => rooms
+                .into_iter()
+                .map(|r| {
+                    let active = self
+                        .spinner_state
+                        .contains_key(&(ws_name.clone(), r.branch.clone()));
+                    RoomItem {
+                        name: r.branch,
+                        is_default: r.is_default,
+                        active,
+                    }
+                })
+                .collect(),
+            Err(_) => vec![],
+        }
     }
 
     /// Convert the current runtime TabContainer into a `RoomLayout` for persistence.
@@ -1613,11 +1705,20 @@ impl App {
             None => return,
         };
 
-        // For now room_selected is always None (room panel not yet wired);
-        // we still handle the workspace-only case.
-        let room_name = match &self.state.active_room {
-            Some(r) => r.clone(),
-            None => "default".to_string(),
+        // Resolve room name from the room_selected index.
+        let room_name = {
+            let rooms = self.room_items();
+            match self.room_selected {
+                Some(i) => rooms.into_iter().nth(i).map(|r| r.name),
+                None => None,
+            }
+        };
+        let room_name = match room_name {
+            Some(r) => r,
+            None => match &self.state.active_room {
+                Some(r) => r.clone(),
+                None => return,
+            },
         };
 
         // Save current layout before switching.
