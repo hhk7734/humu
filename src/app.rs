@@ -22,6 +22,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use ratatui::Terminal;
 use std::collections::HashMap;
 use std::io::stdout;
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -246,6 +247,9 @@ impl App {
                             _ => {}
                         }
                     }
+                    // Pane resizing is handled in render_terminal_area on the
+                    // next draw cycle, so we only need to consume the event.
+                    Event::Resize(_, _) => {}
                     _ => {}
                 }
             }
@@ -264,9 +268,14 @@ impl App {
         disable_raw_mode()?;
 
         // Graceful shutdown: persist layout, then drop all PTY children.
-        // The HookServer thread drops its socket file automatically when it exits.
         self.persist_layout();
         self.panes.clear(); // Drop all PTY panes, killing child processes.
+
+        // Remove the socket file explicitly — the hook server thread runs
+        // forever so its Drop impl never fires during normal exit.
+        let sock_path = humu_dir().join("humu.sock");
+        let _ = std::fs::remove_file(&sock_path);
+
         let state_path = humu_dir().join("state.toml");
         self.state.save(&state_path)?;
 
@@ -731,7 +740,7 @@ impl App {
         }
     }
 
-    fn render_terminal_area(&self, frame: &mut ratatui::Frame, area: Rect) {
+    fn render_terminal_area(&mut self, frame: &mut ratatui::Frame, area: Rect) {
         if area.height == 0 {
             return;
         }
@@ -775,6 +784,14 @@ impl App {
 
         if let Some(tree) = self.tabs.active_tree() {
             let rects = tree.compute_rects(pane_area);
+            for (pane_id, rect) in &rects {
+                // Resize pane if its dimensions have changed since last render.
+                if let Some(pane) = self.panes.get_mut(pane_id)
+                    && (pane.cols() != rect.width || pane.rows() != rect.height)
+                {
+                    let _ = pane.resize(rect.width, rect.height);
+                }
+            }
             for (pane_id, rect) in rects {
                 if let Some(pane) = self.panes.get(&pane_id) {
                     let screen = pane.screen();
@@ -1084,6 +1101,29 @@ impl App {
         }
     }
 
+    /// Compute the working directory for the currently active workspace/room.
+    ///
+    /// Returns `None` when no workspace or room is active.  The default room
+    /// (the workspace repo itself) maps to the workspace path; worktree rooms
+    /// map to `~/.humu/worktrees/<workspace>/<room>`.
+    fn current_room_path(&self) -> Option<PathBuf> {
+        let ws_name = self.state.active_workspace.as_ref()?;
+        let ws_entry = self.state.workspaces.get(ws_name.as_str())?;
+        let room = self.state.active_room.as_ref()?;
+
+        let worktree_path = humu_dir()
+            .join("worktrees")
+            .join(ws_name)
+            .join(room);
+
+        if worktree_path.exists() {
+            Some(worktree_path)
+        } else {
+            // Default room: the workspace repo directory itself.
+            Some(ws_entry.path.clone())
+        }
+    }
+
     /// Spawn a new pane from the named preset and register it.
     /// Returns the new `PaneId` on success.
     fn spawn_pane(&mut self, preset_name: &str) -> Option<PaneId> {
@@ -1125,7 +1165,8 @@ impl App {
             vec![]
         };
 
-        let pane = PtyPane::spawn_with_envs(&cmd, &args, None, 80, 24, &envs).ok()?;
+        let cwd = self.current_room_path();
+        let pane = PtyPane::spawn_with_envs(&cmd, &args, cwd.as_deref(), 80, 24, &envs).ok()?;
         let id = self.next_pane_id;
         self.panes.insert(id, pane);
         self.pane_presets.insert(id, preset_name.to_string());

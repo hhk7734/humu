@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 pub struct PtyPane {
     master: Box<dyn MasterPty + Send>,
+    writer: Box<dyn std::io::Write + Send>,
     reader: Box<dyn Read + Send>,
     parser: Arc<Mutex<vt100::Parser>>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
@@ -53,11 +54,13 @@ impl PtyPane {
         let child = pair.slave.spawn_command(cmd)?;
         drop(pair.slave);
 
+        let writer = pair.master.take_writer()?;
         let reader = pair.master.try_clone_reader()?;
         let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 0)));
 
         Ok(Self {
             master: pair.master,
+            writer,
             reader,
             parser,
             child,
@@ -92,7 +95,7 @@ impl PtyPane {
     /// Write input to the PTY (user keystrokes).
     pub fn write_input(&mut self, data: &[u8]) -> Result<()> {
         use std::io::Write;
-        self.master.take_writer()?.write_all(data)?;
+        self.writer.write_all(data)?;
         Ok(())
     }
 
