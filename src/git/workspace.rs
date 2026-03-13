@@ -3,6 +3,7 @@ use anyhow::{bail, Result};
 use std::path::Path;
 use std::process::Command;
 
+#[derive(Default)]
 pub struct WorkspaceManager;
 
 impl WorkspaceManager {
@@ -32,7 +33,9 @@ impl WorkspaceManager {
         target_dir: &Path,
     ) -> Result<String> {
         let output = Command::new("git")
-            .args(["clone", url, target_dir.to_str().unwrap()])
+            .arg("clone")
+            .arg(url)
+            .arg(target_dir)
             .output()?;
         if !output.status.success() {
             bail!(
@@ -45,9 +48,13 @@ impl WorkspaceManager {
 
     /// Initialize a new git repo and register it.
     pub fn init(&self, state: &mut HumuState, path: &Path) -> Result<String> {
+        if path.join(".git").exists() {
+            bail!("directory is already a git repository: {}", path.display());
+        }
         std::fs::create_dir_all(path)?;
         let output = Command::new("git")
-            .args(["init", path.to_str().unwrap()])
+            .arg("init")
+            .arg(path)
             .output()?;
         if !output.status.success() {
             bail!(
@@ -70,7 +77,9 @@ impl WorkspaceManager {
             .remove(name)
             .ok_or_else(|| anyhow::anyhow!("workspace not found: {name}"))?;
 
-        // Remove worktrees directory
+        // TODO: coordinate with Room manager (Task 5) to properly clean up git worktree
+        // metadata — this should run `git worktree remove` / `git worktree prune` before
+        // removing the worktrees directory, to keep git's internal worktree state consistent.
         let worktrees_dir = crate::config::humu_dir()
             .join("worktrees")
             .join(name);
@@ -81,10 +90,8 @@ impl WorkspaceManager {
         // Remove layout state
         state.layout.remove(name);
 
-        if remove_from_disk {
-            if entry.path.exists() {
-                std::fs::remove_dir_all(&entry.path)?;
-            }
+        if remove_from_disk && entry.path.exists() {
+            std::fs::remove_dir_all(&entry.path)?;
         }
 
         if state.active_workspace.as_deref() == Some(name) {
