@@ -263,8 +263,10 @@ impl App {
         stdout().execute(LeaveAlternateScreen)?;
         disable_raw_mode()?;
 
-        // Save layout then persist state on exit.
+        // Graceful shutdown: persist layout, then drop all PTY children.
+        // The HookServer thread drops its socket file automatically when it exits.
         self.persist_layout();
+        self.panes.clear(); // Drop all PTY panes, killing child processes.
         let state_path = humu_dir().join("state.toml");
         self.state.save(&state_path)?;
 
