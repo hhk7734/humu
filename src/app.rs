@@ -13,12 +13,12 @@ use humu::tui::widgets::terminal_area::TabBar;
 use humu::tui::widgets::terminal_widget::TerminalWidget;
 use humu::tui::widgets::workspace_panel::{WorkspaceItem, WorkspacePanel};
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use crossterm::ExecutableCommand;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use ratatui::Terminal;
 use std::collections::HashMap;
 use std::io::stdout;
@@ -32,6 +32,16 @@ pub enum FocusedPanel {
     Workspace,
     Room,
     Terminal,
+}
+
+/// Tracks the last-rendered rects for each major panel so mouse clicks can be
+/// hit-tested without re-running the layout computation.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PanelRects {
+    pub workspace: Rect,
+    pub room: Rect,
+    pub terminal: Rect,
+    pub tab_bar: Rect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +105,8 @@ pub struct App {
     pub spinner_state: HashMap<(String, String), Instant>,
     /// Receiver for hook events forwarded from the background tokio thread.
     pub hook_rx: Option<mpsc::Receiver<HookEvent>>,
+    /// Last-rendered panel rects used for mouse hit-testing.
+    pub panel_rects: PanelRects,
 }
 
 impl App {
@@ -177,6 +189,7 @@ impl App {
             last_error: None,
             spinner_state: HashMap::new(),
             hook_rx: Some(hook_rx),
+            panel_rects: PanelRects::default(),
         })
     }
 
@@ -193,15 +206,22 @@ impl App {
         while self.running {
             terminal.draw(|frame| self.render(frame))?;
 
-            if event::poll(Duration::from_millis(50))?
-                && let Event::Key(key) = event::read()?
-                && key.kind == KeyEventKind::Press
-            {
-                // Popup intercepts all key handling when active.
-                if self.handle_popup_key(key) {
-                    // key was consumed by popup
-                } else {
-                    self.handle_action(handle_key(self.mode, key));
+            if event::poll(Duration::from_millis(50))? {
+                match event::read()? {
+                    Event::Key(key) if key.kind == KeyEventKind::Press => {
+                        // Popup intercepts all key handling when active.
+                        if self.handle_popup_key(key) {
+                            // key was consumed by popup
+                        } else {
+                            self.handle_action(handle_key(self.mode, key));
+                        }
+                    }
+                    Event::Mouse(mouse) => {
+                        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                            self.handle_click(mouse.column, mouse.row);
+                        }
+                    }
+                    _ => {}
                 }
             }
 
@@ -612,7 +632,7 @@ impl App {
         }
     }
 
-    fn render(&self, frame: &mut ratatui::Frame) {
+    fn render(&mut self, frame: &mut ratatui::Frame) {
         let size = frame.area();
 
         // Main layout: [workspace | room | terminal] + status bar
@@ -629,6 +649,15 @@ impl App {
                 Constraint::Min(1),
             ])
             .split(main_chunks[0]);
+
+        // Store rects for mouse hit-testing.
+        let tab_bar_rect = Rect::new(panel_chunks[2].x, panel_chunks[2].y, panel_chunks[2].width, 1);
+        self.panel_rects = PanelRects {
+            workspace: panel_chunks[0],
+            room: panel_chunks[1],
+            terminal: panel_chunks[2],
+            tab_bar: tab_bar_rect,
+        };
 
         // Workspace panel
         let workspaces = self.workspace_items();
@@ -783,6 +812,61 @@ impl App {
 
             _ => {}
         }
+    }
+
+    /// Handle a left-button mouse click at terminal coordinates (x, y).
+    fn handle_click(&mut self, x: u16, y: u16) {
+        let pos = Position::new(x, y);
+        if self.panel_rects.workspace.contains(pos) {
+            self.focus = FocusedPanel::Workspace;
+            let row = y.saturating_sub(self.panel_rects.workspace.y + 1); // +1 for border
+            self.workspace_selected = Some(row as usize);
+        } else if self.panel_rects.room.contains(pos) {
+            self.focus = FocusedPanel::Room;
+            let row = y.saturating_sub(self.panel_rects.room.y + 1);
+            self.room_selected = Some(row as usize);
+        } else if self.panel_rects.tab_bar.contains(pos) {
+            // Determine which tab or "+" was clicked.
+            self.handle_tab_bar_click(x);
+        } else if self.panel_rects.terminal.contains(pos) {
+            self.focus = FocusedPanel::Terminal;
+            let pane_area = {
+                let r = self.panel_rects.terminal;
+                if r.height > 1 {
+                    Rect::new(r.x, r.y + 1, r.width, r.height - 1)
+                } else {
+                    Rect::new(r.x, r.y, r.width, 0)
+                }
+            };
+            if let Some(tree) = self.tabs.active_tree() {
+                let rects = tree.compute_rects(pane_area);
+                for (pane_id, rect) in rects {
+                    if rect.contains(pos) {
+                        self.focused_pane = Some(pane_id);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Handle tab bar clicks: switch tabs or open new tab via "+".
+    fn handle_tab_bar_click(&mut self, x: u16) {
+        let tab_names = self.tabs.tab_names().iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let mut cursor = self.panel_rects.tab_bar.x;
+        for (i, name) in tab_names.iter().enumerate() {
+            // Tab text is " {name} " — 2 extra chars (leading + trailing space).
+            let tab_width = (name.len() as u16) + 2;
+            if x >= cursor && x < cursor + tab_width {
+                self.tabs.set_active(i);
+                self.sync_focused_pane();
+                self.focus = FocusedPanel::Terminal;
+                return;
+            }
+            cursor += tab_width;
+        }
+        // Clicked on "+" — open new tab.
+        self.show_preset_selector(PresetAction::NewTab);
     }
 
     /// Build and display the preset selector popup.
