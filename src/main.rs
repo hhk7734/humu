@@ -1,6 +1,8 @@
+mod app;
+
 use anyhow::Result;
 
 fn main() -> Result<()> {
-    println!("humu v{}", env!("CARGO_PKG_VERSION"));
-    Ok(())
+    let mut app = app::App::new()?;
+    app.run()
 }

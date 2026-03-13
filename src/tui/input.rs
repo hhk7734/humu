@@ -36,6 +36,7 @@ pub enum Action {
     Resize(Direction),
     ResizeReverse(Direction),
     PassThrough(KeyEvent),
+    Quit,
     None,
 }
 
@@ -74,6 +75,7 @@ fn handle_normal(key: KeyEvent) -> Action {
             KeyCode::Char('t') => Action::EnterMode(Mode::Tab),
             KeyCode::Char('w') => Action::EnterMode(Mode::Workspace),
             KeyCode::Char('n') => Action::EnterMode(Mode::Resize),
+            KeyCode::Char('q') => Action::Quit,
             _ => Action::PassThrough(key),
         }
     } else if key.modifiers.contains(KeyModifiers::ALT) {
