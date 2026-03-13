@@ -44,6 +44,15 @@ pub struct PanelRects {
     pub tab_bar: Rect,
 }
 
+/// Which panel border is currently being dragged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DragTarget {
+    /// The border between the workspace panel and the room panel.
+    WorkspaceRoom,
+    /// The border between the room panel and the terminal area.
+    RoomTerminal,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresetAction {
     NewTab,
@@ -107,6 +116,10 @@ pub struct App {
     pub hook_rx: Option<mpsc::Receiver<HookEvent>>,
     /// Last-rendered panel rects used for mouse hit-testing.
     pub panel_rects: PanelRects,
+    /// Panel widths: [workspace, room]. Used in the layout constraints.
+    pub panel_widths: [u16; 2],
+    /// Active drag target when resizing a panel border via mouse drag.
+    pub dragging: Option<DragTarget>,
 }
 
 impl App {
@@ -190,6 +203,8 @@ impl App {
             spinner_state: HashMap::new(),
             hook_rx: Some(hook_rx),
             panel_rects: PanelRects::default(),
+            panel_widths: [20, 18],
+            dragging: None,
         })
     }
 
@@ -217,8 +232,18 @@ impl App {
                         }
                     }
                     Event::Mouse(mouse) => {
-                        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-                            self.handle_click(mouse.column, mouse.row);
+                        match mouse.kind {
+                            MouseEventKind::Down(MouseButton::Left) => {
+                                self.dragging = None;
+                                self.handle_click(mouse.column, mouse.row);
+                            }
+                            MouseEventKind::Drag(MouseButton::Left) => {
+                                self.handle_drag(mouse.column);
+                            }
+                            MouseEventKind::Up(MouseButton::Left) => {
+                                self.dragging = None;
+                            }
+                            _ => {}
                         }
                     }
                     _ => {}
@@ -644,8 +669,8 @@ impl App {
         let panel_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(20),
-                Constraint::Length(18),
+                Constraint::Length(self.panel_widths[0]),
+                Constraint::Length(self.panel_widths[1]),
                 Constraint::Min(1),
             ])
             .split(main_chunks[0]);
@@ -810,6 +835,10 @@ impl App {
             Action::Create => self.show_create_dialog(),
             Action::Delete => self.show_delete_dialog(),
 
+            // Resize actions
+            Action::Resize(dir) => self.handle_resize_action(dir, false),
+            Action::ResizeReverse(dir) => self.handle_resize_action(dir, true),
+
             _ => {}
         }
     }
@@ -846,6 +875,86 @@ impl App {
                         break;
                     }
                 }
+            }
+        } else {
+            // Click on a panel border — detect which border and start dragging.
+            let ws_right = self.panel_rects.workspace.x + self.panel_rects.workspace.width;
+            let room_right = self.panel_rects.room.x + self.panel_rects.room.width;
+            if x.abs_diff(ws_right) <= 1 {
+                self.dragging = Some(DragTarget::WorkspaceRoom);
+            } else if x.abs_diff(room_right) <= 1 {
+                self.dragging = Some(DragTarget::RoomTerminal);
+            }
+        }
+    }
+
+    /// Handle a left-button drag at column `x` — resize the panel being dragged.
+    fn handle_drag(&mut self, x: u16) {
+        match self.dragging {
+            Some(DragTarget::WorkspaceRoom) => {
+                let origin = self.panel_rects.workspace.x;
+                let new_width = x.saturating_sub(origin).clamp(5, 60);
+                self.panel_widths[0] = new_width;
+            }
+            Some(DragTarget::RoomTerminal) => {
+                let origin = self.panel_rects.room.x;
+                let new_width = x.saturating_sub(origin).clamp(5, 60);
+                let ws_width = self.panel_widths[0];
+                if ws_width + new_width < 120 {
+                    self.panel_widths[1] = new_width;
+                }
+            }
+            None => {
+                // No active drag — try to start one if the cursor is near a border.
+                let ws_right = self.panel_rects.workspace.x + self.panel_rects.workspace.width;
+                let room_right = self.panel_rects.room.x + self.panel_rects.room.width;
+                if x.abs_diff(ws_right) <= 1 {
+                    self.dragging = Some(DragTarget::WorkspaceRoom);
+                    self.handle_drag(x);
+                } else if x.abs_diff(room_right) <= 1 {
+                    self.dragging = Some(DragTarget::RoomTerminal);
+                    self.handle_drag(x);
+                }
+            }
+        }
+    }
+
+    /// Handle keyboard resize actions (Resize / ResizeReverse).
+    fn handle_resize_action(&mut self, dir: NavDirection, reverse: bool) {
+        match self.focus {
+            FocusedPanel::Terminal => {
+                if let Some(pane_id) = self.focused_pane
+                    && let Some(tree) = self.tabs.active_tree_mut()
+                {
+                    // Positive delta grows the first child; direction determines sign.
+                    let sign: f64 = match dir {
+                        NavDirection::Left | NavDirection::Up => {
+                            if reverse { 0.05 } else { -0.05 }
+                        }
+                        NavDirection::Right | NavDirection::Down => {
+                            if reverse { -0.05 } else { 0.05 }
+                        }
+                    };
+                    tree.resize(pane_id, sign);
+                }
+            }
+            FocusedPanel::Workspace => {
+                let delta: i16 = match dir {
+                    NavDirection::Right => if reverse { -1 } else { 1 },
+                    NavDirection::Left => if reverse { 1 } else { -1 },
+                    _ => 0,
+                };
+                self.panel_widths[0] =
+                    (self.panel_widths[0] as i16 + delta).clamp(5, 60) as u16;
+            }
+            FocusedPanel::Room => {
+                let delta: i16 = match dir {
+                    NavDirection::Right => if reverse { -1 } else { 1 },
+                    NavDirection::Left => if reverse { 1 } else { -1 },
+                    _ => 0,
+                };
+                self.panel_widths[1] =
+                    (self.panel_widths[1] as i16 + delta).clamp(5, 60) as u16;
             }
         }
     }
