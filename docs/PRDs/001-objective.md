@@ -10,7 +10,7 @@
 
 ## Interface
 
-TUI-based, designed to be fully usable over SSH for remote work. Implemented in Rust.
+TUI-based. Implemented in Rust.
 
 ## Directory Structure
 

@@ -23,8 +23,8 @@ Workspace name is derived from the repo directory name.
 
 ### Delete
 
-- Removes the workspace from humu. Does **not** delete the git repository on disk.
-- Cascade: All associated rooms (worktrees) under `~/.humu/worktrees/<workspaceName>/` are removed.
+- Removes the workspace from humu. Prompts user: "Also delete the repo on disk?" If yes, removes the directory.
+- Cascade: All associated rooms (worktrees) under `~/.humu/worktrees/<workspaceName>/` are removed either way.
 
 ---
 
