@@ -179,14 +179,18 @@ Fields:
 
 ### Hook Script
 
-Shipped with or installed by humu. Forwards the full hook JSON payload from stdin, injecting workspace/room identifiers:
+Shipped with or installed by humu. Merges workspace/room identifiers into the hook's JSON payload as flat top-level fields:
 
 ```bash
 #!/bin/bash
-if [ -n "$HUMU_SOCKET" ]; then
+if [ -n "$HUMU_SOCKET" ] && command -v socat &> /dev/null && command -v jq &> /dev/null; then
   INPUT=$(cat)
-  echo "{\"workspace\":\"$HUMU_WORKSPACE\",\"room\":\"$HUMU_ROOM\",\"hook_type\":\"$CLAUDE_HOOK_TYPE\",\"payload\":$INPUT}" \
-    | socat - UNIX-CONNECT:"$HUMU_SOCKET"
+  echo "$INPUT" | jq -c \
+    --arg ws "$HUMU_WORKSPACE" \
+    --arg rm "$HUMU_ROOM" \
+    --arg ht "$CLAUDE_HOOK_TYPE" \
+    '. + {workspace: $ws, room: $rm, hook_type: $ht}' \
+    | socat - UNIX-CONNECT:"$HUMU_SOCKET" 2>/dev/null || true
 fi
 ```
 
