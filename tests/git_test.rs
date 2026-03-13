@@ -1,4 +1,5 @@
 use humu::config::HumuState;
+use humu::git::room::RoomManager;
 use humu::git::workspace::WorkspaceManager;
 use tempfile::TempDir;
 
@@ -83,4 +84,77 @@ fn test_delete_workspace_removes_repo() {
 
     assert!(!state.workspaces.contains_key(&name));
     assert!(!project_path.exists());
+}
+
+fn git_init_with_commit(repo_path: &std::path::Path) {
+    std::process::Command::new("git")
+        .args(["init", "-b", "main", repo_path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .args([
+            "-C",
+            repo_path.to_str().unwrap(),
+            "-c",
+            "user.email=test@test.com",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "init",
+        ])
+        .output()
+        .unwrap();
+}
+
+#[test]
+fn test_list_rooms_default_only() {
+    let dir = TempDir::new().unwrap();
+    git_init_with_commit(dir.path());
+
+    let mgr = RoomManager::new();
+    let rooms = mgr.list(dir.path()).unwrap();
+
+    assert_eq!(rooms.len(), 1);
+    assert!(rooms[0].is_default);
+}
+
+#[test]
+fn test_create_and_list_room() {
+    let dir = TempDir::new().unwrap();
+    let repo = dir.path().join("repo");
+    git_init_with_commit(&repo);
+
+    let worktree_base = dir.path().join("worktrees");
+    let mgr = RoomManager::new();
+    mgr.create(
+        &repo,
+        "feat/auth",
+        "main",
+        &worktree_base.join("repo").join("feat/auth"),
+    )
+    .unwrap();
+
+    let rooms = mgr.list(&repo).unwrap();
+    assert_eq!(rooms.len(), 2);
+    assert!(rooms.iter().any(|r| r.branch == "feat/auth" && !r.is_default));
+}
+
+#[test]
+fn test_delete_room() {
+    let dir = TempDir::new().unwrap();
+    let repo = dir.path().join("repo");
+    git_init_with_commit(&repo);
+
+    let wt_path = dir.path().join("worktrees/repo/feat-x");
+    let mgr = RoomManager::new();
+    mgr.create(&repo, "feat-x", "main", &wt_path).unwrap();
+    assert!(wt_path.exists());
+
+    mgr.delete(&repo, "feat-x", &wt_path).unwrap();
+    assert!(!wt_path.exists());
+
+    let rooms = mgr.list(&repo).unwrap();
+    assert_eq!(rooms.len(), 1); // only default remains
 }
