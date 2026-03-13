@@ -3,37 +3,26 @@
 ## Main Layout
 
 ```
-+──────────────────────────────────────── Header ─────────────────────────────────────────+
-│                  │   │           │   │                           │   │                  │
-│  WorkspacePanel  │⠿  │ RoomPanel │⠿  │         ChatPanel         │⠿  │   AgentPanel     │
-│                  │   │           │   │  ┌─────────────────────┐  │   │                  │
-│  > my-app    ⠹   │   │ > design  │   │  │   #chat-messages    │  │   │  * leader        │
-│    infra         │   │   dev     │   │  │                     │  │   │    opus          │
-│    docs          │   │   review  │   │  │  [you] How should   │  │   │    backend       │
-│                  │   │           │   │  │  we structure this? │  │   │    sonnet        │
-│                  │   │           │   │  │                     │  │   │    security      │
-│                  │   │           │   │  │  [leader] Routing…  │  │   │    haiku         │
-│                  │   │           │   │  │                     │  │   │                  │
-│                  │   │           │   │  │  [backend] I would  │  │   │                  │
-│                  │   │           │   │  │  recommend REST…    │  │   │                  │
-│                  │   │           │   │  └─────────────────────┘  │   │                  │
-│                  │   │           │   │  ┌─────────────────────┐  │   │                  │
-│                  │   │           │   │  │   #queue-display    │  │   │                  │
-│                  │   │           │   │  │  Queued (1) …       │  │   │                  │
-│                  │   │           │   │  ├─────────────────────┤  │   │                  │
-│                  │   │           │   │  │     #chat-input     │  │   │                  │
-│                  │   │           │   │  │  > your message…    │  │   │                  │
-│                  │   │           │   │  └─────────────────────┘  │   │                  │
-│                  │   │           │   │  ┌─────────────────────┐  │   │                  │
-│                  │   │           │   │  │  #autocomplete      │  │   │                  │
-│                  │   │           │   │  │   ❯ src/            │  │   │                  │
-│                  │   │           │   │  └─────────────────────┘  │   │                  │
-+──────────────────────────────────────── Footer ─────────────────────────────────────────+
++──────────────────────────────────────────────────────────────────────────────+
+│                  │   │           │   │                                       │
+│  WorkspacePanel  │ ⠿ │ RoomPanel │ ⠿ │            Terminal Area              │
+│                  │   │           │   │                                       │
+│  > my-app        │   │ > main    │   │  ┌─────────────────────────────────┐  │
+│    infra         │   │   feat/x  │   │  │  $ cargo build                  │  │
+│    docs          │   │   fix/y   │   │  │  Compiling humu v0.1.0          │  │
+│                  │   │           │   │  │  Finished dev [unoptimized]     │  │
+│                  │   │           │   │  │  $                              │  │
+│                  │   │           │   │  ├─────────────────────────────────┤  │
+│                  │   │           │   │  │  $ git log --oneline -5         │  │
+│                  │   │           │   │  │  abc1234 feat: add router       │  │
+│                  │   │           │   │  │  $                              │  │
+│                  │   │           │   │  └─────────────────────────────────┘  │
+│                  │   │           │   │                                       │
++──────────────────────────────────────────────────────────────────────────────+
 ```
 
-Four panels separated by draggable `ResizeHandle` widgets (`⠿`):
+Three panels separated by draggable `ResizeHandle` widgets (`⠿`):
 
-- **WorkspacePanel**: Lists workspaces. Selected prefixed with `>`, spinner badge on active tasks.
-- **RoomPanel**: Lists rooms in the selected workspace. Same selection/spinner behavior.
-- **ChatPanel**: Central area with scrollable messages, queue display, multi-line input (`Enter` to submit, `Shift+Enter` for newline), and autocomplete (paths, commands, skills, etc.).
-- **AgentPanel**: Lists agents in the selected room. Leader prefixed with `*`. Double-click to edit agent config.
+- **WorkspacePanel**: Lists workspaces (repo names). Selected prefixed with `>`.
+- **RoomPanel**: Lists rooms in the selected workspace. Default room (`main`) is always first. Selected prefixed with `>`.
+- **Terminal Area**: Contains one or more terminal panes for the selected room. Each pane runs a shell with `cwd` set to the room's working directory. Panes can be split horizontally.
