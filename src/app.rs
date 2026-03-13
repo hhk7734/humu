@@ -1,6 +1,7 @@
 use humu::config::{humu_dir, HumuConfig, HumuState, RoomLayout, SplitDirection as CfgDir, SplitNode, TabLayout};
 use humu::git::room::RoomManager;
 use humu::git::workspace::WorkspaceManager;
+use humu::hook::server::{HookEvent, HookServer};
 use humu::pty::pane::PtyPane;
 use humu::tui::input::{handle_key, Action, Direction as NavDirection, Mode};
 use humu::tui::layout::{PaneId, SplitDirection, SplitTree, TabContainer};
@@ -21,7 +22,10 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::Terminal;
 use std::collections::HashMap;
 use std::io::stdout;
-use std::time::Duration;
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
+use tokio::runtime::Runtime;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusedPanel {
@@ -87,6 +91,10 @@ pub struct App {
     pub popup: PopupState,
     /// Last error message to display (cleared on next action).
     pub last_error: Option<String>,
+    /// Spinner state: (workspace, room) → last event time.
+    pub spinner_state: HashMap<(String, String), Instant>,
+    /// Receiver for hook events forwarded from the background tokio thread.
+    pub hook_rx: Option<mpsc::Receiver<HookEvent>>,
 }
 
 impl App {
@@ -129,6 +137,29 @@ impl App {
         pane_presets.insert(pane_id, "shell".to_string());
         tabs.add_tab("shell".into(), SplitTree::leaf(pane_id));
 
+        // Start hook server in a background tokio runtime and forward events over
+        // a std mpsc channel so the synchronous event loop can call try_recv().
+        let sock_path = humu_dir().join("humu.sock");
+        let (hook_tx, hook_rx) = mpsc::channel::<HookEvent>();
+        thread::spawn(move || {
+            let rt = Runtime::new().unwrap();
+            rt.block_on(async {
+                match HookServer::new(&sock_path).await {
+                    Ok(server) => {
+                        let mut rx = server.subscribe();
+                        loop {
+                            if let Ok(event) = rx.recv().await {
+                                let _ = hook_tx.send(event);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("hook server error: {e}");
+                    }
+                }
+            });
+        });
+
         Ok(Self {
             config,
             state,
@@ -144,6 +175,8 @@ impl App {
             pane_presets,
             popup: PopupState::None,
             last_error: None,
+            spinner_state: HashMap::new(),
+            hook_rx: Some(hook_rx),
         })
     }
 
@@ -171,6 +204,9 @@ impl App {
                     self.handle_action(handle_key(self.mode, key));
                 }
             }
+
+            // Process hook events each tick.
+            self.process_hook_events();
 
             // Process PTY output each tick
             for pane in self.panes.values_mut() {
@@ -652,9 +688,27 @@ impl App {
             Rect::new(area.x, area.y, area.width, 0)
         };
 
-        // Render tab bar
+        // Render tab bar — a tab is active if any of its panes is a "claude"
+        // preset and the current workspace/room has an active spinner entry.
         let tab_names: Vec<&str> = self.tabs.tab_names();
-        let active_indicators: Vec<bool> = vec![false; tab_names.len()];
+        let active_indicators: Vec<bool> = (0..tab_names.len())
+            .map(|i| {
+                let tree = match self.tabs.tree_at(i) {
+                    Some(t) => t,
+                    None => return false,
+                };
+                tree.pane_ids().iter().any(|pid| {
+                    if self.pane_presets.get(pid).map(String::as_str) != Some("claude") {
+                        return false;
+                    }
+                    // Check if any spinner entry matches the current workspace/room.
+                    self.spinner_state.keys().any(|(ws, room)| {
+                        self.state.active_workspace.as_deref() == Some(ws.as_str())
+                            && self.state.active_room.as_deref() == Some(room.as_str())
+                    })
+                })
+            })
+            .collect();
         let tab_bar = TabBar::new(&tab_names, self.tabs.active_index(), &active_indicators);
         frame.render_widget(tab_bar, tab_bar_area);
 
@@ -854,7 +908,29 @@ impl App {
         let arg_refs: Vec<&str> = shell_args.iter().map(String::as_str).collect();
         let (cmd, args) = humu::preset::resolve_preset(&shell_cmd, &arg_refs);
 
-        let pane = PtyPane::spawn(&cmd, &args, None, 80, 24).ok()?;
+        // Set HUMU_* env vars when spawning the "claude" preset.
+        let envs: Vec<(String, String)> = if preset_name == "claude" {
+            let sock = humu_dir().join("humu.sock");
+            let workspace = self
+                .state
+                .active_workspace
+                .clone()
+                .unwrap_or_default();
+            let room = self
+                .state
+                .active_room
+                .clone()
+                .unwrap_or_default();
+            vec![
+                ("HUMU_SOCKET".to_string(), sock.to_string_lossy().into_owned()),
+                ("HUMU_WORKSPACE".to_string(), workspace),
+                ("HUMU_ROOM".to_string(), room),
+            ]
+        } else {
+            vec![]
+        };
+
+        let pane = PtyPane::spawn_with_envs(&cmd, &args, None, 80, 24, &envs).ok()?;
         let id = self.next_pane_id;
         self.panes.insert(id, pane);
         self.pane_presets.insert(id, preset_name.to_string());
@@ -1053,14 +1129,35 @@ impl App {
         // TODO: restore from state.toml
     }
 
+    /// Drain the hook event channel and update spinner_state.
+    fn process_hook_events(&mut self) {
+        if let Some(rx) = &self.hook_rx {
+            while let Ok(event) = rx.try_recv() {
+                let key = (event.workspace.clone(), event.room.clone());
+                if event.hook_type == "Stop" {
+                    self.spinner_state.remove(&key);
+                } else {
+                    self.spinner_state.insert(key, Instant::now());
+                }
+            }
+        }
+        // Timeout: remove entries older than 10 seconds.
+        let now = Instant::now();
+        self.spinner_state
+            .retain(|_, time| now.duration_since(*time) < Duration::from_secs(10));
+    }
+
     fn workspace_items(&self) -> Vec<WorkspaceItem> {
         let mut names: Vec<_> = self.state.workspaces.keys().cloned().collect();
         names.sort();
         names
             .into_iter()
-            .map(|name| WorkspaceItem {
-                name,
-                active: false, // TODO: hook integration
+            .map(|name| {
+                let active = self
+                    .spinner_state
+                    .keys()
+                    .any(|(ws, _)| ws == &name);
+                WorkspaceItem { name, active }
             })
             .collect()
     }

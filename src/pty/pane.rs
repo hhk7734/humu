@@ -22,6 +22,17 @@ impl PtyPane {
         cols: u16,
         rows: u16,
     ) -> Result<Self> {
+        Self::spawn_with_envs(command, args, cwd, cols, rows, &[])
+    }
+
+    pub fn spawn_with_envs(
+        command: &str,
+        args: &[String],
+        cwd: Option<&Path>,
+        cols: u16,
+        rows: u16,
+        envs: &[(String, String)],
+    ) -> Result<Self> {
         let pty_system = native_pty_system();
         let pair = pty_system.openpty(PtySize {
             rows,
@@ -34,6 +45,9 @@ impl PtyPane {
         cmd.args(args);
         if let Some(dir) = cwd {
             cmd.cwd(dir);
+        }
+        for (k, v) in envs {
+            cmd.env(k, v);
         }
 
         let child = pair.slave.spawn_command(cmd)?;
