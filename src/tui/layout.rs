@@ -227,4 +227,9 @@ impl TabContainer {
             tab.name = name;
         }
     }
+
+    /// Return an immutable reference to the split tree at `index`.
+    pub fn tree_at(&self, index: usize) -> Option<&SplitTree> {
+        self.tabs.get(index).map(|t| &t.tree)
+    }
 }

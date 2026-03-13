@@ -1,7 +1,7 @@
-use humu::config::{humu_dir, HumuConfig, HumuState};
+use humu::config::{humu_dir, HumuConfig, HumuState, RoomLayout, SplitDirection as CfgDir, SplitNode, TabLayout};
 use humu::pty::pane::PtyPane;
 use humu::tui::input::{handle_key, Action, Direction as NavDirection, Mode};
-use humu::tui::layout::{PaneId, SplitTree, TabContainer};
+use humu::tui::layout::{PaneId, SplitDirection, SplitTree, TabContainer};
 use humu::tui::widgets::room_panel::{RoomItem, RoomPanel};
 use humu::tui::widgets::status_bar::StatusBar;
 use humu::tui::widgets::terminal_area::TabBar;
@@ -39,6 +39,8 @@ pub struct App {
     pub tabs: TabContainer,
     pub next_pane_id: PaneId,
     pub focused_pane: Option<PaneId>,
+    /// Tracks which preset name was used to spawn each pane.
+    pub pane_presets: HashMap<PaneId, String>,
 }
 
 impl App {
@@ -60,6 +62,7 @@ impl App {
 
         let mut tabs = TabContainer::new();
         let mut panes = HashMap::new();
+        let mut pane_presets = HashMap::new();
         let pane_id: PaneId = 0;
 
         // Spawn a default shell pane
@@ -77,6 +80,7 @@ impl App {
         let args_refs: Vec<String> = args;
         let pane = PtyPane::spawn(&cmd, &args_refs, None, 80, 24)?;
         panes.insert(pane_id, pane);
+        pane_presets.insert(pane_id, "shell".to_string());
         tabs.add_tab("shell".into(), SplitTree::leaf(pane_id));
 
         Ok(Self {
@@ -91,6 +95,7 @@ impl App {
             tabs,
             next_pane_id: 1,
             focused_pane: Some(pane_id),
+            pane_presets,
         })
     }
 
@@ -124,7 +129,8 @@ impl App {
         stdout().execute(LeaveAlternateScreen)?;
         disable_raw_mode()?;
 
-        // Save state on exit
+        // Save layout then persist state on exit.
+        self.persist_layout();
         let state_path = humu_dir().join("state.toml");
         self.state.save(&state_path)?;
 
@@ -280,6 +286,7 @@ impl App {
         let pane = PtyPane::spawn(&cmd, &args, None, 80, 24).ok()?;
         let id = self.next_pane_id;
         self.panes.insert(id, pane);
+        self.pane_presets.insert(id, preset_name.to_string());
         self.next_pane_id += 1;
         Some(id)
     }
@@ -463,7 +470,12 @@ impl App {
     }
 
     fn select_current(&mut self) {
-        // TODO: implement workspace/room selection
+        match self.focus {
+            FocusedPanel::Workspace | FocusedPanel::Room => {
+                self.switch_to_selected_room();
+            }
+            FocusedPanel::Terminal => {}
+        }
     }
 
     fn restore_selection(&mut self) {
@@ -485,6 +497,253 @@ impl App {
     fn room_items(&self) -> Vec<RoomItem> {
         // TODO: list rooms from git
         vec![]
+    }
+
+    /// Convert the current runtime TabContainer into a `RoomLayout` for persistence.
+    /// Returns `None` if there are no tabs.
+    fn save_layout(&self) -> Option<RoomLayout> {
+        if self.tabs.is_empty() {
+            return None;
+        }
+        let tabs: Vec<TabLayout> = self
+            .tabs
+            .tab_names()
+            .into_iter()
+            .enumerate()
+            .filter_map(|(i, name)| {
+                // Temporarily obtain the tree via index by iterating — we use
+                // a helper that borrows self immutably.
+                let tree = self.tabs.tree_at(i)?;
+                let split = Self::split_tree_to_node(tree, &self.pane_presets)?;
+                Some(TabLayout {
+                    name: name.to_string(),
+                    split,
+                })
+            })
+            .collect();
+
+        if tabs.is_empty() {
+            return None;
+        }
+
+        Some(RoomLayout {
+            active_tab: self.tabs.active_index(),
+            tabs,
+        })
+    }
+
+    /// Recursively convert a runtime `SplitTree` to the serializable `SplitNode`.
+    fn split_tree_to_node(
+        tree: &SplitTree,
+        pane_presets: &HashMap<PaneId, String>,
+    ) -> Option<SplitNode> {
+        match tree {
+            SplitTree::Leaf(id) => {
+                let preset = pane_presets.get(id)?.clone();
+                Some(SplitNode::Leaf { preset })
+            }
+            SplitTree::Split {
+                direction,
+                ratio,
+                children,
+            } => {
+                let left = Self::split_tree_to_node(&children.0, pane_presets)?;
+                let right = Self::split_tree_to_node(&children.1, pane_presets)?;
+                let dir = match direction {
+                    SplitDirection::Vertical => CfgDir::Vertical,
+                    SplitDirection::Horizontal => CfgDir::Horizontal,
+                };
+                Some(SplitNode::Split {
+                    direction: dir,
+                    ratio: *ratio,
+                    children: vec![left, right],
+                })
+            }
+        }
+    }
+
+    /// Persist the current layout for the active workspace/room into `self.state`.
+    fn persist_layout(&mut self) {
+        let ws = match self.state.active_workspace.clone() {
+            Some(w) => w,
+            None => return,
+        };
+        let room = match self.state.active_room.clone() {
+            Some(r) => r,
+            None => return,
+        };
+        if let Some(layout) = self.save_layout() {
+            self.state
+                .layout
+                .entry(ws)
+                .or_default()
+                .insert(room, layout);
+        }
+    }
+
+    /// Close all existing panes and rebuild the TabContainer from a saved `RoomLayout`.
+    fn restore_layout(&mut self, layout: &RoomLayout) {
+        // Drop all existing panes.
+        self.panes.clear();
+        self.pane_presets.clear();
+        self.tabs = TabContainer::new();
+        self.focused_pane = None;
+
+        let active_tab = layout.active_tab;
+
+        for tab_layout in &layout.tabs {
+            match Self::node_to_split_tree(
+                &tab_layout.split,
+                &self.config,
+                &mut self.panes,
+                &mut self.pane_presets,
+                &mut self.next_pane_id,
+            ) {
+                Some(tree) => {
+                    self.tabs.add_tab(tab_layout.name.clone(), tree);
+                }
+                None => {
+                    // Fallback: spawn a plain shell tab if restore fails for this tab.
+                    if let Some(id) = self.spawn_pane("shell") {
+                        self.tabs
+                            .add_tab(tab_layout.name.clone(), SplitTree::leaf(id));
+                    }
+                }
+            }
+        }
+
+        // If nothing was restored, create a default shell tab.
+        if self.tabs.is_empty()
+            && let Some(id) = self.spawn_pane("shell")
+        {
+            self.tabs.add_tab("shell".into(), SplitTree::leaf(id));
+        }
+
+        // Restore active tab.
+        let last = self.tabs.len().saturating_sub(1);
+        self.tabs.set_active(active_tab.min(last));
+        self.sync_focused_pane();
+    }
+
+    /// Recursively convert a `SplitNode` (config) into a runtime `SplitTree`,
+    /// spawning PTY panes as needed.
+    fn node_to_split_tree(
+        node: &SplitNode,
+        config: &humu::config::HumuConfig,
+        panes: &mut HashMap<PaneId, PtyPane>,
+        pane_presets: &mut HashMap<PaneId, String>,
+        next_id: &mut PaneId,
+    ) -> Option<SplitTree> {
+        match node {
+            SplitNode::Leaf { preset } => {
+                let shell_cmd = config
+                    .presets
+                    .get(preset.as_str())
+                    .map(|p| p.command.as_str())
+                    .unwrap_or("sh")
+                    .to_string();
+                let shell_args: Vec<String> = config
+                    .presets
+                    .get(preset.as_str())
+                    .map(|p| p.args.clone())
+                    .unwrap_or_default();
+                let arg_refs: Vec<&str> = shell_args.iter().map(String::as_str).collect();
+                let (cmd, args) = humu::preset::resolve_preset(&shell_cmd, &arg_refs);
+                let pane = PtyPane::spawn(&cmd, &args, None, 80, 24).ok()?;
+                let id = *next_id;
+                panes.insert(id, pane);
+                pane_presets.insert(id, preset.clone());
+                *next_id += 1;
+                Some(SplitTree::Leaf(id))
+            }
+            SplitNode::Split {
+                direction,
+                ratio,
+                children,
+            } => {
+                // Config always stores exactly 2 children for a binary split.
+                if children.len() < 2 {
+                    return None;
+                }
+                let left = Self::node_to_split_tree(
+                    &children[0],
+                    config,
+                    panes,
+                    pane_presets,
+                    next_id,
+                )?;
+                let right = Self::node_to_split_tree(
+                    &children[1],
+                    config,
+                    panes,
+                    pane_presets,
+                    next_id,
+                )?;
+                let dir = match direction {
+                    CfgDir::Vertical => SplitDirection::Vertical,
+                    CfgDir::Horizontal => SplitDirection::Horizontal,
+                };
+                Some(SplitTree::Split {
+                    direction: dir,
+                    ratio: *ratio,
+                    children: Box::new((left, right)),
+                })
+            }
+        }
+    }
+
+    /// Switch to the room identified by the current workspace/room selection,
+    /// saving the current layout first and restoring the new room's layout.
+    fn switch_to_selected_room(&mut self) {
+        // Resolve workspace name from index.
+        let ws_name = {
+            let mut names: Vec<_> = self.state.workspaces.keys().cloned().collect();
+            names.sort();
+            match self.workspace_selected {
+                Some(i) => names.into_iter().nth(i),
+                None => None,
+            }
+        };
+        let ws_name = match ws_name {
+            Some(w) => w,
+            None => return,
+        };
+
+        // For now room_selected is always None (room panel not yet wired);
+        // we still handle the workspace-only case.
+        let room_name = match &self.state.active_room {
+            Some(r) => r.clone(),
+            None => "default".to_string(),
+        };
+
+        // Save current layout before switching.
+        self.persist_layout();
+
+        // Update active workspace/room in state.
+        self.state.active_workspace = Some(ws_name.clone());
+        self.state.active_room = Some(room_name.clone());
+
+        // Restore layout for the new room, if any.
+        let layout = self
+            .state
+            .layout
+            .get(&ws_name)
+            .and_then(|rooms| rooms.get(&room_name))
+            .cloned();
+
+        if let Some(layout) = layout {
+            self.restore_layout(&layout);
+        } else {
+            // No saved layout — create a default shell tab.
+            self.panes.clear();
+            self.pane_presets.clear();
+            self.tabs = TabContainer::new();
+            self.focused_pane = None;
+            if let Some(id) = self.spawn_pane("shell") {
+                self.tabs.add_tab("shell".into(), SplitTree::leaf(id));
+                self.focused_pane = Some(id);
+            }
+        }
     }
 }
 
