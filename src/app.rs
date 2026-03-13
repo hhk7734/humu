@@ -1,7 +1,11 @@
 use humu::config::{humu_dir, HumuConfig, HumuState, RoomLayout, SplitDirection as CfgDir, SplitNode, TabLayout};
+use humu::git::room::RoomManager;
+use humu::git::workspace::WorkspaceManager;
 use humu::pty::pane::PtyPane;
 use humu::tui::input::{handle_key, Action, Direction as NavDirection, Mode};
 use humu::tui::layout::{PaneId, SplitDirection, SplitTree, TabContainer};
+use humu::tui::widgets::dialog::{Dialog, DialogField};
+use humu::tui::widgets::preset_selector::PresetSelector;
 use humu::tui::widgets::room_panel::{RoomItem, RoomPanel};
 use humu::tui::widgets::status_bar::StatusBar;
 use humu::tui::widgets::terminal_area::TabBar;
@@ -26,6 +30,44 @@ pub enum FocusedPanel {
     Terminal,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PresetAction {
+    NewTab,
+    SplitDown,
+    SplitRight,
+}
+
+pub enum PopupState {
+    None,
+    PresetSelector {
+        presets: Vec<String>,
+        selected: usize,
+        action: PresetAction,
+    },
+    WorkspaceCreate {
+        /// field indices: 0=Mode, 1=Path, 2=URL
+        fields: Vec<DialogField>,
+        focused_field: usize,
+    },
+    RoomCreate {
+        /// field indices: 0=Branch name, 1=Base branch
+        fields: Vec<DialogField>,
+        focused_field: usize,
+    },
+    WorkspaceDelete {
+        /// field index 0=Confirm (yes/no)
+        fields: Vec<DialogField>,
+        focused_field: usize,
+        workspace_name: String,
+    },
+    RoomDelete {
+        /// field index 0=Confirm (yes/no)
+        fields: Vec<DialogField>,
+        focused_field: usize,
+        branch: String,
+    },
+}
+
 #[allow(dead_code)]
 pub struct App {
     pub config: HumuConfig,
@@ -41,6 +83,10 @@ pub struct App {
     pub focused_pane: Option<PaneId>,
     /// Tracks which preset name was used to spawn each pane.
     pub pane_presets: HashMap<PaneId, String>,
+    /// Active popup (None when no popup is showing).
+    pub popup: PopupState,
+    /// Last error message to display (cleared on next action).
+    pub last_error: Option<String>,
 }
 
 impl App {
@@ -96,6 +142,8 @@ impl App {
             next_pane_id: 1,
             focused_pane: Some(pane_id),
             pane_presets,
+            popup: PopupState::None,
+            last_error: None,
         })
     }
 
@@ -116,7 +164,12 @@ impl App {
                 && let Event::Key(key) = event::read()?
                 && key.kind == KeyEventKind::Press
             {
-                self.handle_action(handle_key(self.mode, key));
+                // Popup intercepts all key handling when active.
+                if self.handle_popup_key(key) {
+                    // key was consumed by popup
+                } else {
+                    self.handle_action(handle_key(self.mode, key));
+                }
             }
 
             // Process PTY output each tick
@@ -135,6 +188,392 @@ impl App {
         self.state.save(&state_path)?;
 
         Ok(())
+    }
+
+    /// Handle a key event when a popup is active.
+    /// Returns `true` if the key was consumed (popup was active), `false` otherwise.
+    fn handle_popup_key(&mut self, key: KeyEvent) -> bool {
+        match &self.popup {
+            PopupState::None => false,
+
+            PopupState::PresetSelector { .. } => {
+                self.handle_preset_selector_key(key);
+                true
+            }
+            PopupState::WorkspaceCreate { .. }
+            | PopupState::RoomCreate { .. }
+            | PopupState::WorkspaceDelete { .. }
+            | PopupState::RoomDelete { .. } => {
+                self.handle_dialog_key(key);
+                true
+            }
+        }
+    }
+
+    fn handle_preset_selector_key(&mut self, key: KeyEvent) {
+        let PopupState::PresetSelector { presets, selected, action } = &self.popup else {
+            return;
+        };
+        let presets = presets.clone();
+        let mut selected = *selected;
+        let action = *action;
+
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if selected + 1 < presets.len() {
+                    selected += 1;
+                }
+                self.popup = PopupState::PresetSelector { presets, selected, action };
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                selected = selected.saturating_sub(1);
+                self.popup = PopupState::PresetSelector { presets, selected, action };
+            }
+            KeyCode::Enter => {
+                let chosen = presets[selected].clone();
+                self.popup = PopupState::None;
+                match action {
+                    PresetAction::NewTab => self.new_tab_with_preset(&chosen),
+                    PresetAction::SplitDown => self.split_pane_with_preset(&chosen, false),
+                    PresetAction::SplitRight => self.split_pane_with_preset(&chosen, true),
+                }
+            }
+            KeyCode::Esc => {
+                self.popup = PopupState::None;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_dialog_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.popup = PopupState::None;
+            }
+            KeyCode::Enter => {
+                self.confirm_dialog();
+            }
+            KeyCode::Tab | KeyCode::BackTab => {
+                self.dialog_move_focus(key.code == KeyCode::Tab);
+            }
+            KeyCode::Up => {
+                self.dialog_move_focus(false);
+            }
+            KeyCode::Down => {
+                self.dialog_move_focus(true);
+            }
+            KeyCode::Left => {
+                self.dialog_field_left();
+            }
+            KeyCode::Right => {
+                self.dialog_field_right();
+            }
+            KeyCode::Backspace => {
+                self.dialog_field_backspace();
+            }
+            KeyCode::Char(c) => {
+                self.dialog_field_insert(c);
+            }
+            _ => {}
+        }
+    }
+
+    fn dialog_field_count(&self) -> usize {
+        match &self.popup {
+            PopupState::WorkspaceCreate { fields, .. }
+            | PopupState::RoomCreate { fields, .. }
+            | PopupState::WorkspaceDelete { fields, .. }
+            | PopupState::RoomDelete { fields, .. } => fields.len(),
+            _ => 0,
+        }
+    }
+
+    fn dialog_move_focus(&mut self, forward: bool) {
+        let count = self.dialog_field_count();
+        if count == 0 {
+            return;
+        }
+        match &mut self.popup {
+            PopupState::WorkspaceCreate { focused_field, .. }
+            | PopupState::RoomCreate { focused_field, .. }
+            | PopupState::WorkspaceDelete { focused_field, .. }
+            | PopupState::RoomDelete { focused_field, .. } => {
+                if forward {
+                    *focused_field = (*focused_field + 1) % count;
+                } else {
+                    *focused_field = focused_field.checked_sub(1).unwrap_or(count - 1);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Left arrow: for Select fields cycle backwards; for Confirm toggle yes/no.
+    fn dialog_field_left(&mut self) {
+        match &mut self.popup {
+            PopupState::WorkspaceCreate { fields, focused_field, .. }
+            | PopupState::RoomCreate { fields, focused_field, .. }
+            | PopupState::WorkspaceDelete { fields, focused_field, .. }
+            | PopupState::RoomDelete { fields, focused_field, .. } => {
+                let idx = *focused_field;
+                if idx < fields.len() {
+                    match &mut fields[idx] {
+                        DialogField::Select { options, selected, .. } => {
+                            if *selected > 0 {
+                                *selected -= 1;
+                            } else {
+                                *selected = options.len().saturating_sub(1);
+                            }
+                        }
+                        DialogField::Confirm { yes, .. } => {
+                            *yes = !*yes;
+                        }
+                        DialogField::TextInput { .. } => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Right arrow: for Select fields cycle forwards; for Confirm toggle yes/no.
+    fn dialog_field_right(&mut self) {
+        match &mut self.popup {
+            PopupState::WorkspaceCreate { fields, focused_field, .. }
+            | PopupState::RoomCreate { fields, focused_field, .. }
+            | PopupState::WorkspaceDelete { fields, focused_field, .. }
+            | PopupState::RoomDelete { fields, focused_field, .. } => {
+                let idx = *focused_field;
+                if idx < fields.len() {
+                    match &mut fields[idx] {
+                        DialogField::Select { options, selected, .. } => {
+                            *selected = (*selected + 1) % options.len().max(1);
+                        }
+                        DialogField::Confirm { yes, .. } => {
+                            *yes = !*yes;
+                        }
+                        DialogField::TextInput { .. } => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn dialog_field_backspace(&mut self) {
+        match &mut self.popup {
+            PopupState::WorkspaceCreate { fields, focused_field, .. }
+            | PopupState::RoomCreate { fields, focused_field, .. }
+            | PopupState::WorkspaceDelete { fields, focused_field, .. }
+            | PopupState::RoomDelete { fields, focused_field, .. } => {
+                let idx = *focused_field;
+                if idx < fields.len()
+                    && let DialogField::TextInput { value, .. } = &mut fields[idx]
+                {
+                    value.pop();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn dialog_field_insert(&mut self, c: char) {
+        match &mut self.popup {
+            PopupState::WorkspaceCreate { fields, focused_field, .. }
+            | PopupState::RoomCreate { fields, focused_field, .. }
+            | PopupState::WorkspaceDelete { fields, focused_field, .. }
+            | PopupState::RoomDelete { fields, focused_field, .. } => {
+                let idx = *focused_field;
+                if idx < fields.len()
+                    && let DialogField::TextInput { value, .. } = &mut fields[idx]
+                {
+                    value.push(c);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn confirm_dialog(&mut self) {
+        // Swap popup to None so we can consume the data.
+        let popup = std::mem::replace(&mut self.popup, PopupState::None);
+        match popup {
+            PopupState::WorkspaceCreate { fields, .. } => {
+                self.execute_workspace_create(fields);
+            }
+            PopupState::RoomCreate { fields, .. } => {
+                self.execute_room_create(fields);
+            }
+            PopupState::WorkspaceDelete { fields, workspace_name, .. } => {
+                self.execute_workspace_delete(fields, workspace_name);
+            }
+            PopupState::RoomDelete { fields, branch, .. } => {
+                self.execute_room_delete(fields, branch);
+            }
+            other => {
+                // Restore if we didn't handle it.
+                self.popup = other;
+            }
+        }
+    }
+
+    fn execute_workspace_create(&mut self, fields: Vec<DialogField>) {
+        // Field 0: Mode (Clone/Existing/New)
+        // Field 1: Path
+        // Field 2: URL (only used for Clone)
+        let mode_idx = match &fields[0] {
+            DialogField::Select { selected, .. } => *selected,
+            _ => 0,
+        };
+        let path_str = match &fields[1] {
+            DialogField::TextInput { value, .. } => value.clone(),
+            _ => String::new(),
+        };
+        if path_str.is_empty() {
+            self.last_error = Some("Path is required".to_string());
+            return;
+        }
+        let path = std::path::Path::new(&path_str);
+        let mgr = WorkspaceManager::new();
+        let result = match mode_idx {
+            0 => {
+                // Clone
+                let url = match &fields[2] {
+                    DialogField::TextInput { value, .. } => value.clone(),
+                    _ => String::new(),
+                };
+                if url.is_empty() {
+                    self.last_error = Some("URL is required for Clone".to_string());
+                    return;
+                }
+                mgr.clone_remote(&mut self.state, &url, path)
+            }
+            1 => {
+                // Existing
+                mgr.register(&mut self.state, path)
+            }
+            _ => {
+                // New
+                mgr.init(&mut self.state, path)
+            }
+        };
+        match result {
+            Ok(_name) => {
+                self.last_error = None;
+            }
+            Err(e) => {
+                self.last_error = Some(e.to_string());
+            }
+        }
+    }
+
+    fn execute_room_create(&mut self, fields: Vec<DialogField>) {
+        // Field 0: Branch name
+        // Field 1: Base branch
+        let branch = match &fields[0] {
+            DialogField::TextInput { value, .. } => value.clone(),
+            _ => String::new(),
+        };
+        let base_branch = match &fields[1] {
+            DialogField::TextInput { value, .. } => value.clone(),
+            _ => String::new(),
+        };
+        if branch.is_empty() {
+            self.last_error = Some("Branch name is required".to_string());
+            return;
+        }
+
+        let ws_name = match &self.state.active_workspace {
+            Some(w) => w.clone(),
+            None => {
+                self.last_error = Some("No active workspace".to_string());
+                return;
+            }
+        };
+        let ws_path = match self.state.workspaces.get(&ws_name) {
+            Some(e) => e.path.clone(),
+            None => {
+                self.last_error = Some("Workspace not found".to_string());
+                return;
+            }
+        };
+        let base = if base_branch.is_empty() { "HEAD" } else { &base_branch };
+        let worktree_path = humu_dir()
+            .join("worktrees")
+            .join(&ws_name)
+            .join(&branch);
+        let mgr = RoomManager::new();
+        match mgr.create(&ws_path, &branch, base, &worktree_path) {
+            Ok(()) => {
+                self.last_error = None;
+            }
+            Err(e) => {
+                self.last_error = Some(e.to_string());
+            }
+        }
+    }
+
+    fn execute_workspace_delete(&mut self, fields: Vec<DialogField>, workspace_name: String) {
+        // Field 0: Confirm — also used as "remove from disk?" prompt
+        let remove_from_disk = match &fields[0] {
+            DialogField::Confirm { yes, .. } => *yes,
+            _ => false,
+        };
+        let mgr = WorkspaceManager::new();
+        match mgr.delete(&mut self.state, &workspace_name, remove_from_disk) {
+            Ok(()) => {
+                // Adjust selection if needed.
+                let count = self.state.workspaces.len();
+                if count == 0 {
+                    self.workspace_selected = None;
+                } else if let Some(sel) = self.workspace_selected
+                    && sel >= count
+                {
+                    self.workspace_selected = Some(count - 1);
+                }
+                self.last_error = None;
+            }
+            Err(e) => {
+                self.last_error = Some(e.to_string());
+            }
+        }
+    }
+
+    fn execute_room_delete(&mut self, fields: Vec<DialogField>, branch: String) {
+        let confirmed = match &fields[0] {
+            DialogField::Confirm { yes, .. } => *yes,
+            _ => false,
+        };
+        if !confirmed {
+            return;
+        }
+        let ws_name = match &self.state.active_workspace {
+            Some(w) => w.clone(),
+            None => {
+                self.last_error = Some("No active workspace".to_string());
+                return;
+            }
+        };
+        let ws_path = match self.state.workspaces.get(&ws_name) {
+            Some(e) => e.path.clone(),
+            None => {
+                self.last_error = Some("Workspace not found".to_string());
+                return;
+            }
+        };
+        let worktree_path = humu_dir()
+            .join("worktrees")
+            .join(&ws_name)
+            .join(&branch);
+        let mgr = RoomManager::new();
+        match mgr.delete(&ws_path, &branch, &worktree_path) {
+            Ok(()) => {
+                self.last_error = None;
+            }
+            Err(e) => {
+                self.last_error = Some(e.to_string());
+            }
+        }
     }
 
     fn render(&self, frame: &mut ratatui::Frame) {
@@ -174,6 +613,30 @@ impl App {
 
         // Status bar
         frame.render_widget(StatusBar::new(self.mode), main_chunks[1]);
+
+        // Render popup on top of everything when active.
+        self.render_popup(frame, size);
+    }
+
+    fn render_popup(&self, frame: &mut ratatui::Frame, area: Rect) {
+        match &self.popup {
+            PopupState::None => {}
+            PopupState::PresetSelector { presets, selected, .. } => {
+                frame.render_widget(PresetSelector::new(presets, *selected), area);
+            }
+            PopupState::WorkspaceCreate { fields, focused_field } => {
+                frame.render_widget(Dialog::new("Create Workspace", fields, *focused_field), area);
+            }
+            PopupState::RoomCreate { fields, focused_field } => {
+                frame.render_widget(Dialog::new("Create Room", fields, *focused_field), area);
+            }
+            PopupState::WorkspaceDelete { fields, focused_field, .. } => {
+                frame.render_widget(Dialog::new("Delete Workspace", fields, *focused_field), area);
+            }
+            PopupState::RoomDelete { fields, focused_field, .. } => {
+                frame.render_widget(Dialog::new("Delete Room", fields, *focused_field), area);
+            }
+        }
     }
 
     fn render_terminal_area(&self, frame: &mut ratatui::Frame, area: Rect) {
@@ -231,7 +694,7 @@ impl App {
             Action::PassThrough(key) => self.handle_passthrough(key),
 
             // Tab actions
-            Action::NewTab => self.new_tab(),
+            Action::NewTab => self.show_preset_selector(PresetAction::NewTab),
             Action::CloseTab => self.close_tab(),
             Action::PrevTab => {
                 let active = self.tabs.active_index();
@@ -255,12 +718,120 @@ impl App {
             }
 
             // Split actions
-            Action::SplitDown => self.split_pane(false),
-            Action::SplitRight => self.split_pane(true),
+            Action::SplitDown => self.show_preset_selector(PresetAction::SplitDown),
+            Action::SplitRight => self.show_preset_selector(PresetAction::SplitRight),
             Action::ClosePane => self.close_pane(),
             Action::MoveFocus(dir) => self.move_focus(dir),
 
+            // Workspace/room actions
+            Action::Create => self.show_create_dialog(),
+            Action::Delete => self.show_delete_dialog(),
+
             _ => {}
+        }
+    }
+
+    /// Build and display the preset selector popup.
+    fn show_preset_selector(&mut self, action: PresetAction) {
+        let mut presets: Vec<String> = self.config.presets.keys().cloned().collect();
+        presets.sort();
+        if presets.is_empty() {
+            // No presets configured — fall back to direct action with "shell".
+            match action {
+                PresetAction::NewTab => self.new_tab_with_preset("shell"),
+                PresetAction::SplitDown => self.split_pane_with_preset("shell", false),
+                PresetAction::SplitRight => self.split_pane_with_preset("shell", true),
+            }
+            return;
+        }
+        self.popup = PopupState::PresetSelector { presets, selected: 0, action };
+    }
+
+    /// Show the appropriate create dialog based on focused panel.
+    fn show_create_dialog(&mut self) {
+        match self.focus {
+            FocusedPanel::Workspace => {
+                let fields = vec![
+                    DialogField::Select {
+                        label: "Mode".to_string(),
+                        options: vec![
+                            "Clone".to_string(),
+                            "Existing".to_string(),
+                            "New".to_string(),
+                        ],
+                        selected: 0,
+                    },
+                    DialogField::TextInput {
+                        label: "Path".to_string(),
+                        value: String::new(),
+                    },
+                    DialogField::TextInput {
+                        label: "URL (Clone only)".to_string(),
+                        value: String::new(),
+                    },
+                ];
+                self.popup = PopupState::WorkspaceCreate { fields, focused_field: 0 };
+            }
+            FocusedPanel::Room => {
+                let fields = vec![
+                    DialogField::TextInput {
+                        label: "Branch name".to_string(),
+                        value: String::new(),
+                    },
+                    DialogField::TextInput {
+                        label: "Base branch".to_string(),
+                        value: String::new(),
+                    },
+                ];
+                self.popup = PopupState::RoomCreate { fields, focused_field: 0 };
+            }
+            FocusedPanel::Terminal => {}
+        }
+    }
+
+    /// Show the appropriate delete dialog based on focused panel.
+    fn show_delete_dialog(&mut self) {
+        match self.focus {
+            FocusedPanel::Workspace => {
+                let ws_name = {
+                    let mut names: Vec<_> = self.state.workspaces.keys().cloned().collect();
+                    names.sort();
+                    match self.workspace_selected {
+                        Some(i) => names.into_iter().nth(i),
+                        None => None,
+                    }
+                };
+                let ws_name = match ws_name {
+                    Some(n) => n,
+                    None => return, // nothing selected
+                };
+                let fields = vec![DialogField::Confirm {
+                    message: format!("Delete workspace '{ws_name}'? Also remove from disk?"),
+                    yes: false,
+                }];
+                self.popup = PopupState::WorkspaceDelete {
+                    fields,
+                    focused_field: 0,
+                    workspace_name: ws_name,
+                };
+            }
+            FocusedPanel::Room => {
+                // Use active room as the target.
+                let branch = match &self.state.active_room {
+                    Some(r) => r.clone(),
+                    None => return,
+                };
+                let fields = vec![DialogField::Confirm {
+                    message: "Delete room? This removes worktree and branch.".to_string(),
+                    yes: false,
+                }];
+                self.popup = PopupState::RoomDelete {
+                    fields,
+                    focused_field: 0,
+                    branch,
+                };
+            }
+            FocusedPanel::Terminal => {}
         }
     }
 
@@ -291,9 +862,9 @@ impl App {
         Some(id)
     }
 
-    fn new_tab(&mut self) {
-        if let Some(new_id) = self.spawn_pane("shell") {
-            self.tabs.add_tab("shell".into(), SplitTree::leaf(new_id));
+    fn new_tab_with_preset(&mut self, preset_name: &str) {
+        if let Some(new_id) = self.spawn_pane(preset_name) {
+            self.tabs.add_tab(preset_name.to_string(), SplitTree::leaf(new_id));
             let last = self.tabs.len() - 1;
             self.tabs.set_active(last);
             self.focused_pane = Some(new_id);
@@ -321,12 +892,12 @@ impl App {
             .and_then(|t| t.pane_ids().into_iter().next());
     }
 
-    fn split_pane(&mut self, horizontal: bool) {
+    fn split_pane_with_preset(&mut self, preset_name: &str, horizontal: bool) {
         let focused = match self.focused_pane {
             Some(id) => id,
             None => return,
         };
-        let new_id = match self.spawn_pane("shell") {
+        let new_id = match self.spawn_pane(preset_name) {
             Some(id) => id,
             None => return,
         };
