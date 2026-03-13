@@ -39,21 +39,31 @@ impl RoomManager {
             bail!("git worktree list failed");
         }
 
+        let canon_repo = std::fs::canonicalize(repo_path).unwrap_or(repo_path.to_path_buf());
+
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut current_path: Option<PathBuf> = None;
         let mut current_branch: Option<String> = None;
+        let mut current_head: Option<String> = None;
 
         for line in stdout.lines() {
             if let Some(path) = line.strip_prefix("worktree ") {
                 current_path = Some(PathBuf::from(path));
                 current_branch = None;
+                current_head = None;
+            } else if let Some(sha) = line.strip_prefix("HEAD ") {
+                current_head = Some(sha.to_string());
             } else if let Some(branch_ref) = line.strip_prefix("branch refs/heads/") {
                 current_branch = Some(branch_ref.to_string());
             } else if line.is_empty() {
+                // For detached HEAD worktrees, fall back to short SHA
+                if current_branch.is_none()
+                    && let Some(ref sha) = current_head
+                {
+                    current_branch = Some(sha[..sha.len().min(7)].to_string());
+                }
                 if let (Some(path), Some(branch)) = (current_path.take(), current_branch.take()) {
                     // Skip the main worktree (already added as default)
-                    let canon_repo =
-                        std::fs::canonicalize(repo_path).unwrap_or(repo_path.to_path_buf());
                     let canon_wt = std::fs::canonicalize(&path).unwrap_or(path.clone());
                     if canon_wt != canon_repo {
                         rooms.push(RoomInfo {
@@ -63,15 +73,17 @@ impl RoomManager {
                         });
                     }
                 }
-                current_path = None;
-                current_branch = None;
+                current_head = None;
             }
         }
 
         // Handle last entry if no trailing newline
+        if current_branch.is_none()
+            && let Some(ref sha) = current_head
+        {
+            current_branch = Some(sha[..sha.len().min(7)].to_string());
+        }
         if let (Some(path), Some(branch)) = (current_path, current_branch) {
-            let canon_repo =
-                std::fs::canonicalize(repo_path).unwrap_or(repo_path.to_path_buf());
             let canon_wt = std::fs::canonicalize(&path).unwrap_or(path.clone());
             if canon_wt != canon_repo {
                 rooms.push(RoomInfo {
@@ -160,15 +172,20 @@ impl RoomManager {
             .output()?;
 
         if output.status.success() {
+            return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
+        }
+
+        // Detached HEAD — fall back to short commit hash
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo_path)
+            .args(["rev-parse", "--short", "HEAD"])
+            .output()?;
+
+        if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
         } else {
-            // Detached HEAD — fall back to short commit hash
-            let output = Command::new("git")
-                .arg("-C")
-                .arg(repo_path)
-                .args(["rev-parse", "--short", "HEAD"])
-                .output()?;
-            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+            bail!("cannot determine branch for repo: {}", repo_path.display())
         }
     }
 }
