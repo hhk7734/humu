@@ -9,6 +9,7 @@ pub struct TerminalWidget<'a> {
     screen: &'a Screen,
     has_focus: bool,
     exited: Option<i32>,
+    pane_count: usize,
     title: &'a str,
     palette: &'a Palette,
     ui_config: &'a UiConfig,
@@ -25,6 +26,7 @@ impl<'a> TerminalWidget<'a> {
             screen,
             has_focus: false,
             exited: None,
+            pane_count: 1,
             title,
             palette,
             ui_config,
@@ -38,6 +40,11 @@ impl<'a> TerminalWidget<'a> {
 
     pub fn exited(mut self, exit_code: Option<i32>) -> Self {
         self.exited = exit_code;
+        self
+    }
+
+    pub fn pane_count(mut self, count: usize) -> Self {
+        self.pane_count = count;
         self
     }
 }
@@ -185,7 +192,11 @@ impl Widget for TerminalWidget<'_> {
                 self.palette.accent_red
             };
             let line1 = format!(" exited: {code} ");
-            let line2 = " [p] close pane  [t] close tab ";
+            let line2 = if self.pane_count > 1 {
+                " [p] close pane "
+            } else {
+                " [t] close tab "
+            };
             let max_len = line1.len().max(line2.len()) as u16;
             if inner.width >= max_len && inner.height >= 2 {
                 let y1 = inner.y + inner.height / 2 - 1;

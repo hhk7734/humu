@@ -1012,6 +1012,11 @@ impl App {
                 }
             }
             let fs_exit_code = self.panes.get_mut(&fs_id).and_then(|p| p.exit_status());
+            let fs_pane_count = self
+                .tabs
+                .active_tree()
+                .map(|t| t.pane_ids().len())
+                .unwrap_or(1);
             if let Some(pane) = self.panes.get(&fs_id) {
                 let screen = pane.screen();
                 let preset_name = self
@@ -1022,7 +1027,8 @@ impl App {
                 let widget =
                     TerminalWidget::new(&screen, preset_name, &self.palette, &self.ui_config)
                         .focus(true)
-                        .exited(fs_exit_code);
+                        .exited(fs_exit_code)
+                        .pane_count(fs_pane_count);
                 frame.render_widget(widget, pane_area);
                 if fs_exit_code.is_none() {
                     let (crow, ccol) = screen.cursor_position();
@@ -1038,6 +1044,7 @@ impl App {
 
         if let Some(tree) = self.tabs.active_tree() {
             let rects = tree.compute_rects(pane_area);
+            let pane_count = rects.len();
             for (pane_id, rect) in &rects {
                 // Resize pane if its dimensions have changed since last render.
                 let inner_w = rect.width.saturating_sub(2);
@@ -1073,7 +1080,8 @@ impl App {
                         &self.ui_config,
                     )
                     .focus(is_focused)
-                    .exited(exit_code);
+                    .exited(exit_code)
+                    .pane_count(pane_count);
                     frame.render_widget(widget, rect);
                     if is_focused && exit_code.is_none() {
                         let (crow, ccol) = screen.cursor_position();
@@ -1660,9 +1668,14 @@ impl App {
             .and_then(|p| p.exit_status())
             .is_some();
         if exited {
+            let pane_count = self
+                .tabs
+                .active_tree()
+                .map(|t| t.pane_ids().len())
+                .unwrap_or(1);
             match key.code {
-                KeyCode::Char('p') => self.close_pane(),
-                KeyCode::Char('t') => self.close_tab(),
+                KeyCode::Char('p') if pane_count > 1 => self.close_pane(),
+                KeyCode::Char('t') if pane_count <= 1 => self.close_tab(),
                 _ => {}
             }
             return;
