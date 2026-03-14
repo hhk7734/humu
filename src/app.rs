@@ -984,13 +984,24 @@ impl App {
         // Fullscreen mode: render only the fullscreen pane filling the whole area.
         if let Some(fs_id) = self.fullscreen_pane {
             if let Some(pane) = self.panes.get_mut(&fs_id) {
-                if pane.cols() != pane_area.width || pane.rows() != pane_area.height {
-                    let _ = pane.resize(pane_area.width, pane_area.height);
+                let inner_w = pane_area.width.saturating_sub(2);
+                let inner_h = pane_area.height.saturating_sub(2);
+                if pane.cols() != inner_w || pane.rows() != inner_h {
+                    let _ = pane.resize(inner_w, inner_h);
                 }
             }
+            let fs_exit_code = self.panes.get_mut(&fs_id).and_then(|p| p.exit_status());
             if let Some(pane) = self.panes.get(&fs_id) {
                 let screen = pane.screen();
-                let widget = TerminalWidget::new(&screen).focus(true).exited(None);
+                let preset_name = self
+                    .pane_presets
+                    .get(&fs_id)
+                    .map(|s| s.as_str())
+                    .unwrap_or("shell");
+                let widget =
+                    TerminalWidget::new(&screen, preset_name, &self.palette, &self.ui_config)
+                        .focus(true)
+                        .exited(fs_exit_code);
                 frame.render_widget(widget, pane_area);
             }
             return;
@@ -1000,19 +1011,40 @@ impl App {
             let rects = tree.compute_rects(pane_area);
             for (pane_id, rect) in &rects {
                 // Resize pane if its dimensions have changed since last render.
+                let inner_w = rect.width.saturating_sub(2);
+                let inner_h = rect.height.saturating_sub(2);
                 if let Some(pane) = self.panes.get_mut(pane_id)
-                    && (pane.cols() != rect.width || pane.rows() != rect.height)
+                    && (pane.cols() != inner_w || pane.rows() != inner_h)
                 {
-                    let _ = pane.resize(rect.width, rect.height);
+                    let _ = pane.resize(inner_w, inner_h);
                 }
             }
+            // Collect exit codes while we still have mutable access.
+            let exit_codes: HashMap<PaneId, Option<i32>> = rects
+                .iter()
+                .filter_map(|(pid, _)| {
+                    self.panes.get_mut(pid).map(|p| (*pid, p.exit_status()))
+                })
+                .collect();
             for (pane_id, rect) in rects {
                 if let Some(pane) = self.panes.get(&pane_id) {
                     let screen = pane.screen();
                     let is_focused = self.focused_pane == Some(pane_id)
                         && self.focus == FocusedPanel::Terminal;
-                    // exit_status() requires &mut self; exit overlay wired in a later task
-                    let widget = TerminalWidget::new(&screen).focus(is_focused).exited(None);
+                    let preset_name = self
+                        .pane_presets
+                        .get(&pane_id)
+                        .map(|s| s.as_str())
+                        .unwrap_or("shell");
+                    let exit_code = exit_codes.get(&pane_id).copied().flatten();
+                    let widget = TerminalWidget::new(
+                        &screen,
+                        preset_name,
+                        &self.palette,
+                        &self.ui_config,
+                    )
+                    .focus(is_focused)
+                    .exited(exit_code);
                     frame.render_widget(widget, rect);
                 }
             }
