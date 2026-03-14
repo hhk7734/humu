@@ -27,8 +27,9 @@ src/
 │   └── room.rs      # Room CRUD (worktree add/remove/list)
 ├── pty/
 │   └── pane.rs      # PTY spawn, background reader thread, vt100 emulation
+├── id.rs            # Typed IDs (WorkspaceId, RoomId, TabId, PaneId)
 ├── hook/
-│   └── server.rs    # Unix socket hook server for Claude Code events
+│   └── http.rs      # HTTP hook server (axum) for Claude Code events
 └── tui/
     ├── mod.rs
     ├── input.rs       # Modal keybinding dispatch (Terminal/Locked/Pane/Tab/Workspace/Room)
