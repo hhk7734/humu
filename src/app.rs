@@ -1030,7 +1030,7 @@ impl App {
                         .exited(fs_exit_code)
                         .pane_count(fs_pane_count);
                 frame.render_widget(widget, pane_area);
-                if fs_exit_code.is_none() {
+                if fs_exit_code.is_none() && !screen.hide_cursor() {
                     let (crow, ccol) = screen.cursor_position();
                     let cx = pane_area.x + 1 + ccol;
                     let cy = pane_area.y + 1 + crow;
@@ -1083,7 +1083,7 @@ impl App {
                     .exited(exit_code)
                     .pane_count(pane_count);
                     frame.render_widget(widget, rect);
-                    if is_focused && exit_code.is_none() {
+                    if is_focused && exit_code.is_none() && !screen.hide_cursor() {
                         let (crow, ccol) = screen.cursor_position();
                         let cx = rect.x + 1 + ccol;
                         let cy = rect.y + 1 + crow;
