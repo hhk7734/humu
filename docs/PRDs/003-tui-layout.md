@@ -43,15 +43,15 @@ Modal approach. Terminal mode passes all input to the active terminal pane. Pres
 
 ### Mode Switching
 
-From any sub-mode, `Ctrl+w/r/t/p` switches directly to that mode. Pressing the same Ctrl+key that entered the current mode toggles back to Terminal.
+From any sub-mode, `Ctrl+w/r/t/p` switches directly to that mode. `Ctrl+w` and `Ctrl+r` are idempotent — pressing them while already in that mode keeps focus there. `Ctrl+t` always returns to Terminal mode, focusing the last active pane. `Ctrl+p` toggles between Pane and Terminal.
 
 | Key | Target Mode |
 | --- | ----------- |
 | `Ctrl+g` | Locked (toggle from Terminal) |
-| `Ctrl+p` | Pane |
-| `Ctrl+w` | Workspace |
-| `Ctrl+r` | Room |
-| `Ctrl+t` | Tab (from Terminal) / Terminal (from sub-modes) |
+| `Ctrl+p` | Pane (toggle with Terminal) |
+| `Ctrl+w` | Workspace (idempotent) |
+| `Ctrl+r` | Room (idempotent) |
+| `Ctrl+t` | Terminal (always) |
 | `Ctrl+q` | Quit (from Terminal only) |
 
 ### Locked Mode
@@ -94,7 +94,6 @@ Manages tabs within the terminal area. Enter via `Ctrl+t` from Terminal mode.
 | `n` | Create workspace or room (context-dependent) |
 | `x` | Delete workspace or room (context-dependent) |
 | `Shift+←/→` | Resize workspace panel |
-| `Esc` / `Ctrl+w` | Back to Terminal |
 
 ### Room Mode
 
@@ -105,7 +104,6 @@ Manages tabs within the terminal area. Enter via `Ctrl+t` from Terminal mode.
 | `n` | Create room |
 | `x` | Delete room |
 | `Shift+←/→` | Resize room panel |
-| `Esc` / `Ctrl+r` | Back to Terminal |
 
 ### Shared (all modes except Locked)
 
