@@ -4,7 +4,7 @@
 
 ```
 ╭──────────────╮╭───────────╮╭──────────────────────────────────────────╮
-│              ││           ││ [claude ⠋] [shell] [+]                  │
+│              ││           ││ claude ⠋▸▸ shell ▸ [+]                 │
 │  WORKSPACES  ││   ROOMS   ││ ╭──────────────────────────────────────╮ │
 │              ││           ││ │ $ claude                             │ │
 │  ▸ humu ⠋   ││   main    ││ │ ⏵ Claude is working...              │ │
@@ -15,7 +15,7 @@
 │              ││           ││ │ $  ▋                                 │ │
 │              ││           ││ ╰──────────────────────────────────────╯ │
 ╰──────────────╯╰───────────╯╰──────────────────────────────────────────╯
- TERMINAL ▸ Ctrl+  g LOCK  p PANE  t TAB  w WORKSPACE  r ROOM
+ TERMINAL ▸▸ Ctrl + ▸▸ g LOCK ▸▸ p PANE ▸▸ t TAB ▸▸ w WS ▸▸ r ROOM ▸
 ```
 
 Three panels separated by draggable resize handles, plus a status bar.
@@ -24,12 +24,12 @@ Three panels separated by draggable resize handles, plus a status bar.
 
 - **WorkspacePanel**: Lists workspaces (repo names). Rounded border, `accent_blue` when focused, `fg_muted` when unfocused. Selected item: `▸` prefix, bold. Spinner `⠋` when Claude is active.
 - **RoomPanel**: Lists rooms in the selected workspace. Same styling as WorkspacePanel. Default room always first.
-- **Terminal Area**: Tab bar (Powerline-style) at top with `+` button. Each tab contains one or more split panes (vertical/horizontal) with rounded borders and preset title. Panes run presets with `cwd` set to the room's working directory.
-- **StatusBar**: Borderless ribbon with Powerline mode badge (color-coded per mode) and context-aware key hints. `Ctrl+` prefix only in Terminal mode. Errors displayed in red, auto-clear on next keypress.
+- **Terminal Area**: Tab bar (Powerline-style) at top with `+` button. Each tab is a Powerline segment with entry/exit arrows (first tab has no entry arrow, second+ tabs do). Animated spinner on tabs with active Claude agents. Each tab contains one or more split panes (vertical/horizontal) with rounded borders and preset title. Panes run presets with `cwd` set to the room's working directory.
+- **StatusBar**: Borderless ribbon with Powerline mode badge (color-coded per mode), `Ctrl +` segment (Powerline arrows, orange text, `bg_tertiary`), and key hint segments (Powerline arrows, dark red bold keys, black labels on light gray `#8B949E` background). Errors displayed in red, auto-clear on next keypress.
 
 ## Terminal Area
 
-- **Tabs**: Each tab is a container for one or more split panes. Tab bar shows preset name + spinner for Claude. `+` button opens the preset selector.
+- **Tabs**: Each tab is a Powerline segment. First tab starts flush, second+ tabs have an entry arrow. Active tab: `accent_blue` bg, bold white text. Inactive tab: `bg_tertiary` bg. Animated braille spinner (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`) shown on tabs with active Claude agents. `+` button opens the preset selector.
 - **Splits within tabs**: Vertical and horizontal splits, nested. One tab might be a single Claude pane; another might be a vertical split with shell + cargo watch.
 - **Pane borders**: Rounded (`╭╮╯╰`), focused pane in `accent_blue`, unfocused in `fg_muted`. Title in top border (preset name), exit code in bottom border when process exits.
 
@@ -117,6 +117,20 @@ Manages tabs within the terminal area. Enter via `Ctrl+t` from Terminal mode.
 ### Mouse Support
 
 Clicking a panel enters the corresponding mode: workspace panel → Workspace mode, room panel → Room mode, terminal area → Terminal mode. Clicking tabs, `+` button, and dragging resize handles are also supported. All mouse interactions have keyboard equivalents.
+
+## Status Bar Structure
+
+All segments use Powerline-style arrows (entry + exit) for clear visual separation.
+
+```
+[MODE]▸ ▸[Ctrl +]▸ ▸[key label]▸ ▸[key label]▸ ...
+```
+
+| Segment | Background | Key color | Label color |
+|---|---|---|---|
+| Mode badge | `mode_color` (per mode) | — | `bg_primary` (bold) |
+| Ctrl + (Terminal only) | `bg_tertiary` | — | `accent_orange` (bold) |
+| Key hints | `#8B949E` (light gray) | `#B42828` (dark red, bold) | `#0D1117` (black) |
 
 ## Status Bar Mode Colors
 

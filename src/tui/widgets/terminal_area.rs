@@ -65,6 +65,14 @@ impl Widget for TabBar<'_> {
                 (self.palette.fg_secondary, self.palette.bg_tertiary)
             };
 
+            // Entry arrow for second+ tabs
+            if i > 0 && x < area.x + area.width {
+                buf[(x, area.y)]
+                    .set_symbol(sep)
+                    .set_style(Style::default().fg(self.palette.bg_secondary).bg(bg));
+                x += 1;
+            }
+
             // Draw tab body
             for (j, ch) in label.chars().enumerate() {
                 if x + j as u16 >= area.x + area.width {
@@ -78,7 +86,7 @@ impl Widget for TabBar<'_> {
             }
             x += label_width;
 
-            // Draw Powerline separator
+            // Draw Powerline separator (exit arrow)
             if x < area.x + area.width {
                 let next_bg = self.palette.bg_secondary;
                 buf[(x, area.y)]

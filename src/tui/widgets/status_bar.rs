@@ -2,7 +2,7 @@ use crate::tui::input::Mode;
 use crate::tui::theme::{Palette, UiConfig};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
 
 pub struct StatusBar<'a> {
@@ -130,16 +130,11 @@ impl Widget for StatusBar<'_> {
         }
         x += mode_width;
 
-        // Separator: mode_color -> next_bg
-        let next_bg = if self.mode == Mode::Locked {
-            self.palette.bg_secondary
-        } else {
-            self.palette.bg_tertiary
-        };
+        // Separator: mode_color -> bg_secondary
         if x < area.x + area.width {
             buf[(x, area.y)]
                 .set_symbol(sep)
-                .set_style(Style::default().fg(mode_color).bg(next_bg));
+                .set_style(Style::default().fg(mode_color).bg(self.palette.bg_secondary));
             x += 1;
         }
 
@@ -159,10 +154,20 @@ impl Widget for StatusBar<'_> {
             return;
         }
 
-        // "Ctrl +" segment only in Terminal mode (hints are Ctrl+ shortcuts).
+        // "Ctrl +" segment only in Terminal mode — Powerline style like hints.
         if self.mode == Mode::Terminal {
+            let ctrl_bg = self.palette.bg_tertiary;
             let ctrl_label = " Ctrl + ";
             let ctrl_width = ctrl_label.len() as u16;
+
+            // Entry arrow into Ctrl+ segment
+            if x < area.x + area.width {
+                buf[(x, area.y)].set_symbol(sep).set_style(
+                    Style::default().fg(self.palette.bg_secondary).bg(ctrl_bg),
+                );
+                x += 1;
+            }
+            // Ctrl+ text
             for (i, ch) in ctrl_label.chars().enumerate() {
                 if x + i as u16 >= area.x + area.width {
                     break;
@@ -170,54 +175,71 @@ impl Widget for StatusBar<'_> {
                 buf[(x + i as u16, area.y)].set_char(ch).set_style(
                     Style::default()
                         .fg(self.palette.accent_orange)
-                        .bg(self.palette.bg_tertiary)
+                        .bg(ctrl_bg)
                         .add_modifier(Modifier::BOLD),
                 );
             }
             x += ctrl_width;
-
+            // Exit arrow out of Ctrl+ segment
             if x < area.x + area.width {
                 buf[(x, area.y)].set_symbol(sep).set_style(
-                    Style::default()
-                        .fg(self.palette.bg_tertiary)
-                        .bg(self.palette.bg_secondary),
+                    Style::default().fg(ctrl_bg).bg(self.palette.bg_secondary),
                 );
                 x += 1;
             }
         }
 
-        // Key hints
+        // Key hints — each hint is a Powerline segment: [ key label ]▸
         let hints = self.mode_hints();
-        for (key, label) in hints {
-            let hint_width = (key.len() + 1 + label.len() + 2) as u16;
-            if x + hint_width > area.x + area.width {
+        let hint_bg = Color::Rgb(139, 148, 158);
+        let outer_bg = self.palette.bg_secondary;
+        for (key, label) in &hints {
+            // Width: space + key + space + label + space + separator(1)
+            let seg_width = 1 + key.len() as u16 + 1 + label.len() as u16 + 1 + 1;
+            if x + seg_width > area.x + area.width {
                 break;
             }
-            // Space before
-            x += 1;
-            // Key character
-            for ch in key.chars() {
-                buf[(x, area.y)].set_char(ch).set_style(
-                    Style::default()
-                        .fg(self.palette.fg_muted)
-                        .bg(self.palette.bg_secondary),
+            // Powerline arrow into segment (left=outer, right=inner)
+            if x < area.x + area.width {
+                buf[(x, area.y)].set_symbol(sep).set_style(
+                    Style::default().fg(outer_bg).bg(hint_bg),
                 );
                 x += 1;
             }
-            // Space
-            buf[(x, area.y)]
-                .set_char(' ')
-                .set_style(Style::default().bg(self.palette.bg_secondary));
+            // Key — bold bright
+            buf[(x, area.y)].set_char(' ').set_style(Style::default().bg(hint_bg));
             x += 1;
-            // Label
-            for ch in label.chars() {
-                if x >= area.x + area.width {
-                    break;
-                }
+            for ch in key.chars() {
+                if x >= area.x + area.width { break; }
                 buf[(x, area.y)].set_char(ch).set_style(
                     Style::default()
-                        .fg(self.palette.fg_secondary)
-                        .bg(self.palette.bg_secondary),
+                        .fg(Color::Rgb(180, 40, 40))
+                        .bg(hint_bg)
+                        .add_modifier(Modifier::BOLD),
+                );
+                x += 1;
+            }
+            // Space + label — dimmer
+            if x < area.x + area.width {
+                buf[(x, area.y)].set_char(' ').set_style(Style::default().bg(hint_bg));
+                x += 1;
+            }
+            for ch in label.chars() {
+                if x >= area.x + area.width { break; }
+                buf[(x, area.y)].set_char(ch).set_style(
+                    Style::default().fg(Color::Rgb(13, 17, 23)).bg(hint_bg),
+                );
+                x += 1;
+            }
+            // Trailing space
+            if x < area.x + area.width {
+                buf[(x, area.y)].set_char(' ').set_style(Style::default().bg(hint_bg));
+                x += 1;
+            }
+            // Powerline arrow out of segment
+            if x < area.x + area.width {
+                buf[(x, area.y)].set_symbol(sep).set_style(
+                    Style::default().fg(hint_bg).bg(outer_bg),
                 );
                 x += 1;
             }
