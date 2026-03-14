@@ -719,8 +719,25 @@ impl App {
             }
         };
         match result {
-            Ok(_name) => {
+            Ok(name) => {
                 self.last_error = None;
+                // Auto-select the new workspace and its default room (main branch).
+                let names = {
+                    let mut n: Vec<_> = self.state.workspaces.keys().cloned().collect();
+                    n.sort();
+                    n
+                };
+                if let Some(idx) = names.iter().position(|n| *n == name) {
+                    self.workspace_selected = Some(idx);
+                    self.state.active_workspace = Some(name.clone());
+                }
+                // Select the first room (default branch).
+                let rooms = self.room_items();
+                if let Some(room) = rooms.first() {
+                    self.room_selected = Some(0);
+                    self.state.active_room = Some(room.name.clone());
+                    self.switch_to_selected_room();
+                }
             }
             Err(e) => {
                 self.last_error = Some(e.to_string());
