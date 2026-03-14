@@ -10,6 +10,7 @@ pub struct TabBar<'a> {
     active_indicators: &'a [bool],
     palette: &'a Palette,
     ui_config: &'a UiConfig,
+    spinner_frame: &'a str,
 }
 
 impl<'a> TabBar<'a> {
@@ -26,7 +27,13 @@ impl<'a> TabBar<'a> {
             active_indicators,
             palette,
             ui_config,
+            spinner_frame: "⠋",
         }
+    }
+
+    pub fn spinner(mut self, frame: &'a str) -> Self {
+        self.spinner_frame = frame;
+        self
     }
 }
 
@@ -45,9 +52,9 @@ impl Widget for TabBar<'_> {
         for (i, name) in self.tab_names.iter().enumerate() {
             let is_active = i == self.active;
             let spinner = if self.active_indicators.get(i).copied().unwrap_or(false) {
-                " ⠋"
+                format!(" {}", self.spinner_frame)
             } else {
-                ""
+                String::new()
             };
             let label = format!(" {}{} ", name, spinner);
             let label_width = label.chars().count() as u16;

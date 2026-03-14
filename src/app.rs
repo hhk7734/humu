@@ -29,6 +29,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tokio::runtime::Runtime;
 
+const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusedPanel {
     Workspace,
@@ -136,6 +138,8 @@ pub struct App {
     pub fullscreen_pane: Option<PaneId>,
     pub palette: humu::tui::theme::Palette,
     pub ui_config: humu::tui::theme::UiConfig,
+    /// Counter incremented each event-loop tick for animating spinners.
+    pub spin_tick: usize,
 }
 
 impl App {
@@ -224,6 +228,7 @@ impl App {
             fullscreen_pane: None,
             palette: humu::tui::theme::Palette::GITHUB_DARK,
             ui_config,
+            spin_tick: 0,
         })
     }
 
@@ -244,6 +249,7 @@ impl App {
 
         while self.running {
             terminal.draw(|frame| self.render(frame))?;
+            self.spin_tick = self.spin_tick.wrapping_add(1);
 
             if event::poll(Duration::from_millis(50))? {
                 match event::read()? {
@@ -903,18 +909,23 @@ impl App {
             tab_bar: tab_bar_rect,
         };
 
+        // Compute animated spinner frame (~100ms per frame at 50ms tick).
+        let spinner_frame = SPINNER_FRAMES[self.spin_tick / 2 % SPINNER_FRAMES.len()];
+
         // Workspace panel
         let workspaces = self.workspace_items();
         let ws_widget = WorkspacePanel::new(&workspaces, &self.palette, &self.ui_config)
             .selected(self.workspace_selected)
-            .focus(self.focus == FocusedPanel::Workspace);
+            .focus(self.focus == FocusedPanel::Workspace)
+            .spinner(spinner_frame);
         frame.render_widget(ws_widget, panel_chunks[0]);
 
         // Room panel
         let rooms = self.room_items();
         let room_widget = RoomPanel::new(&rooms, &self.palette, &self.ui_config)
             .selected(self.room_selected)
-            .focus(self.focus == FocusedPanel::Room);
+            .focus(self.focus == FocusedPanel::Room)
+            .spinner(spinner_frame);
         frame.render_widget(room_widget, panel_chunks[1]);
 
         // Terminal area: tab bar (1 line) + pane area
@@ -1007,7 +1018,9 @@ impl App {
                 })
             })
             .collect();
-        let tab_bar = TabBar::new(&tab_names, self.tabs.active_index(), &active_indicators, &self.palette, &self.ui_config);
+        let spinner_frame = SPINNER_FRAMES[self.spin_tick / 2 % SPINNER_FRAMES.len()];
+        let tab_bar = TabBar::new(&tab_names, self.tabs.active_index(), &active_indicators, &self.palette, &self.ui_config)
+            .spinner(spinner_frame);
         frame.render_widget(tab_bar, tab_bar_area);
 
         // Render panes from active tab's split tree

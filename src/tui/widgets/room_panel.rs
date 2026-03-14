@@ -10,6 +10,7 @@ pub struct RoomPanel<'a> {
     has_focus: bool,
     palette: &'a Palette,
     ui_config: &'a UiConfig,
+    spinner_frame: &'a str,
 }
 
 pub struct RoomItem {
@@ -26,6 +27,7 @@ impl<'a> RoomPanel<'a> {
             has_focus: false,
             palette,
             ui_config,
+            spinner_frame: "⠋",
         }
     }
 
@@ -36,6 +38,11 @@ impl<'a> RoomPanel<'a> {
 
     pub fn focus(mut self, focused: bool) -> Self {
         self.has_focus = focused;
+        self
+    }
+
+    pub fn spinner(mut self, frame: &'a str) -> Self {
+        self.spinner_frame = frame;
         self
     }
 }
@@ -70,7 +77,7 @@ impl Widget for RoomPanel<'_> {
             let is_selected = self.selected == Some(i);
 
             let prefix = if is_selected { "▸ " } else { "  " };
-            let suffix = if room.active { " ⠋" } else { "" };
+            let suffix = if room.active { format!(" {}", self.spinner_frame) } else { String::new() };
             let text = format!("{prefix}{}{suffix}", room.name);
 
             let style = if is_selected {

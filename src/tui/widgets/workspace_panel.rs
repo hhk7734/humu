@@ -10,6 +10,7 @@ pub struct WorkspacePanel<'a> {
     has_focus: bool,
     palette: &'a Palette,
     ui_config: &'a UiConfig,
+    spinner_frame: &'a str,
 }
 
 pub struct WorkspaceItem {
@@ -25,6 +26,7 @@ impl<'a> WorkspacePanel<'a> {
             has_focus: false,
             palette,
             ui_config,
+            spinner_frame: "⠋",
         }
     }
 
@@ -35,6 +37,11 @@ impl<'a> WorkspacePanel<'a> {
 
     pub fn focus(mut self, focused: bool) -> Self {
         self.has_focus = focused;
+        self
+    }
+
+    pub fn spinner(mut self, frame: &'a str) -> Self {
+        self.spinner_frame = frame;
         self
     }
 }
@@ -69,7 +76,7 @@ impl Widget for WorkspacePanel<'_> {
             let is_selected = self.selected == Some(i);
 
             let prefix = if is_selected { "▸ " } else { "  " };
-            let suffix = if ws.active { " ⠋" } else { "" };
+            let suffix = if ws.active { format!(" {}", self.spinner_frame) } else { String::new() };
             let text = format!("{prefix}{}{suffix}", ws.name);
 
             let style = if is_selected {
