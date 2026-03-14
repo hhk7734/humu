@@ -1,7 +1,8 @@
+use crate::tui::theme::{Palette, UiConfig};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Block, Borders, Clear, Widget};
+use ratatui::style::{Modifier, Style};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Widget};
 
 pub struct Dialog<'a> {
     pub title: &'a str,
@@ -12,6 +13,8 @@ pub struct Dialog<'a> {
     pub completion_selected: Option<usize>,
     /// Which field index shows completions (e.g. Some(1) for Path).
     pub completion_field: Option<usize>,
+    palette: &'a Palette,
+    ui_config: &'a UiConfig,
 }
 
 pub enum DialogField {
@@ -31,7 +34,13 @@ impl DialogField {
 }
 
 impl<'a> Dialog<'a> {
-    pub fn new(title: &'a str, fields: &'a [DialogField], focused_field: usize) -> Self {
+    pub fn new(
+        title: &'a str,
+        fields: &'a [DialogField],
+        focused_field: usize,
+        palette: &'a Palette,
+        ui_config: &'a UiConfig,
+    ) -> Self {
         Self {
             title,
             fields,
@@ -39,13 +48,15 @@ impl<'a> Dialog<'a> {
             completions: &[],
             completion_selected: None,
             completion_field: None,
+            palette,
+            ui_config,
         }
     }
 }
 
 impl Widget for Dialog<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // Dialog size is based on fields only — completions render as an overlay.
+        // Dialog size is based on fields only -- completions render as an overlay.
         let field_rows = self.fields.len() as u16 * 2;
         let height = (field_rows + 3).min(area.height);
         let width = 60u16.min(area.width);
@@ -54,10 +65,17 @@ impl Widget for Dialog<'_> {
         let popup = Rect::new(x, y, width, height);
 
         Clear.render(popup, buf);
+
+        let border_type = if self.ui_config.rounded_corners {
+            BorderType::Rounded
+        } else {
+            BorderType::Plain
+        };
         let block = Block::default()
             .title(format!(" {} ", self.title))
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Yellow));
+            .border_style(Style::default().fg(self.palette.accent_orange))
+            .border_type(border_type);
         let inner = block.inner(popup);
         block.render(popup, buf);
 
@@ -76,9 +94,11 @@ impl Widget for Dialog<'_> {
                 DialogField::TextInput { label, value } => {
                     // Label line
                     let label_style = if focused {
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(self.palette.accent_orange)
+                            .add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(Color::Gray)
+                        Style::default().fg(self.palette.fg_secondary)
                     };
                     buf.set_string(inner.x, row, label, label_style);
                     row += 1;
@@ -87,9 +107,13 @@ impl Widget for Dialog<'_> {
                     }
                     // Input box line
                     let input_style = if focused {
-                        Style::default().fg(Color::White).bg(Color::DarkGray)
+                        Style::default()
+                            .fg(self.palette.fg_primary)
+                            .bg(self.palette.bg_tertiary)
                     } else {
-                        Style::default().fg(Color::Gray).bg(Color::DarkGray)
+                        Style::default()
+                            .fg(self.palette.fg_secondary)
+                            .bg(self.palette.bg_tertiary)
                     };
                     let display_width = inner.width as usize;
                     let padded = format!("{:<width$}", value, width = display_width);
@@ -102,11 +126,17 @@ impl Widget for Dialog<'_> {
                     }
                     row += 1;
                 }
-                DialogField::Select { label, options, selected } => {
+                DialogField::Select {
+                    label,
+                    options,
+                    selected,
+                } => {
                     let label_style = if focused {
-                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(self.palette.accent_orange)
+                            .add_modifier(Modifier::BOLD)
                     } else {
-                        Style::default().fg(Color::Gray)
+                        Style::default().fg(self.palette.fg_secondary)
                     };
                     buf.set_string(inner.x, row, label, label_style);
                     row += 1;
@@ -117,11 +147,14 @@ impl Widget for Dialog<'_> {
                     for (j, opt) in options.iter().enumerate() {
                         let text = format!("[{}]", opt);
                         let opt_style = if j == *selected && focused {
-                            Style::default().fg(Color::Black).bg(Color::Yellow)
+                            Style::default()
+                                .fg(self.palette.bg_primary)
+                                .bg(self.palette.accent_orange)
+                                .add_modifier(Modifier::BOLD)
                         } else if j == *selected {
-                            Style::default().fg(Color::Yellow)
+                            Style::default().fg(self.palette.accent_orange)
                         } else {
-                            Style::default().fg(Color::Gray)
+                            Style::default().fg(self.palette.fg_secondary)
                         };
                         buf.set_string(col, row, &text, opt_style);
                         col += text.len() as u16 + 1;
@@ -132,25 +165,35 @@ impl Widget for Dialog<'_> {
                     row += 1;
                 }
                 DialogField::Confirm { message, yes } => {
-                    let msg_style = Style::default().fg(Color::White);
+                    let msg_style = if focused {
+                        Style::default()
+                            .fg(self.palette.accent_orange)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(self.palette.fg_secondary)
+                    };
                     buf.set_string(inner.x, row, message, msg_style);
                     row += 1;
                     if row >= inner.y + inner.height {
                         break;
                     }
                     let yes_style = if *yes && focused {
-                        Style::default().fg(Color::Black).bg(Color::Green)
+                        Style::default()
+                            .fg(self.palette.bg_primary)
+                            .bg(self.palette.accent_green)
                     } else if *yes {
-                        Style::default().fg(Color::Green)
+                        Style::default().fg(self.palette.accent_green)
                     } else {
-                        Style::default().fg(Color::Gray)
+                        Style::default().fg(self.palette.fg_secondary)
                     };
                     let no_style = if !yes && focused {
-                        Style::default().fg(Color::Black).bg(Color::Red)
+                        Style::default()
+                            .fg(self.palette.bg_primary)
+                            .bg(self.palette.accent_red)
                     } else if !yes {
-                        Style::default().fg(Color::Red)
+                        Style::default().fg(self.palette.accent_red)
                     } else {
-                        Style::default().fg(Color::Gray)
+                        Style::default().fg(self.palette.fg_secondary)
                     };
                     buf.set_string(inner.x, row, "[Yes]", yes_style);
                     buf.set_string(inner.x + 6, row, "[No]", no_style);
@@ -164,11 +207,11 @@ impl Widget for Dialog<'_> {
             let has_completions =
                 self.completion_field.is_some() && !self.completions.is_empty();
             let hint = if has_completions {
-                "Tab: complete  ↑↓: move  Enter: confirm  Esc: cancel"
+                "Tab: complete  \u{2191}\u{2193}: move  Enter: confirm  Esc: cancel"
             } else {
-                "Tab/↑↓: move  Enter: confirm  Esc: cancel"
+                "Tab/\u{2191}\u{2193}: move  Enter: confirm  Esc: cancel"
             };
-            let hint_style = Style::default().fg(Color::DarkGray);
+            let hint_style = Style::default().fg(self.palette.fg_muted);
             buf.set_string(inner.x, row, hint, hint_style);
         }
 
@@ -182,14 +225,18 @@ impl Widget for Dialog<'_> {
                         break;
                     }
                     // Clear the row background for this overlay line.
-                    let bg_style = Style::default().bg(Color::Black);
+                    let bg_style = Style::default().bg(self.palette.bg_primary);
                     let blank = " ".repeat(max_width);
                     buf.set_string(completion_anchor_x, cy, &blank, bg_style);
 
                     let style = if self.completion_selected == Some(ci) {
-                        Style::default().fg(Color::Black).bg(Color::Cyan)
+                        Style::default()
+                            .fg(self.palette.bg_primary)
+                            .bg(self.palette.accent_blue)
                     } else {
-                        Style::default().fg(Color::Cyan).bg(Color::Black)
+                        Style::default()
+                            .fg(self.palette.accent_blue)
+                            .bg(self.palette.bg_primary)
                     };
                     let truncated: String = suggestion.chars().take(max_width).collect();
                     let padded = format!("{:<width$}", truncated, width = max_width);

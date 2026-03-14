@@ -924,20 +924,35 @@ impl App {
                 completions,
                 completion_selected,
             } => {
-                let mut dialog = Dialog::new("Create Workspace", fields, *focused_field);
+                let mut dialog = Dialog::new(
+                    "Create Workspace",
+                    fields,
+                    *focused_field,
+                    &self.palette,
+                    &self.ui_config,
+                );
                 dialog.completions = completions;
                 dialog.completion_selected = *completion_selected;
                 dialog.completion_field = Some(1); // Path field
                 frame.render_widget(dialog, area);
             }
             PopupState::RoomCreate { fields, focused_field } => {
-                frame.render_widget(Dialog::new("Create Room", fields, *focused_field), area);
+                frame.render_widget(
+                    Dialog::new("Create Room", fields, *focused_field, &self.palette, &self.ui_config),
+                    area,
+                );
             }
             PopupState::WorkspaceDelete { fields, focused_field, .. } => {
-                frame.render_widget(Dialog::new("Delete Workspace", fields, *focused_field), area);
+                frame.render_widget(
+                    Dialog::new("Delete Workspace", fields, *focused_field, &self.palette, &self.ui_config),
+                    area,
+                );
             }
             PopupState::RoomDelete { fields, focused_field, .. } => {
-                frame.render_widget(Dialog::new("Delete Room", fields, *focused_field), area);
+                frame.render_widget(
+                    Dialog::new("Delete Room", fields, *focused_field, &self.palette, &self.ui_config),
+                    area,
+                );
             }
         }
     }
