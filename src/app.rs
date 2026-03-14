@@ -1024,6 +1024,14 @@ impl App {
                         .focus(true)
                         .exited(fs_exit_code);
                 frame.render_widget(widget, pane_area);
+                if fs_exit_code.is_none() {
+                    let (crow, ccol) = screen.cursor_position();
+                    let cx = pane_area.x + 1 + ccol;
+                    let cy = pane_area.y + 1 + crow;
+                    if cx < pane_area.right() - 1 && cy < pane_area.bottom() - 1 {
+                        frame.set_cursor_position(Position::new(cx, cy));
+                    }
+                }
             }
             return;
         }
@@ -1067,6 +1075,14 @@ impl App {
                     .focus(is_focused)
                     .exited(exit_code);
                     frame.render_widget(widget, rect);
+                    if is_focused && exit_code.is_none() {
+                        let (crow, ccol) = screen.cursor_position();
+                        let cx = rect.x + 1 + ccol;
+                        let cy = rect.y + 1 + crow;
+                        if cx < rect.right() - 1 && cy < rect.bottom() - 1 {
+                            frame.set_cursor_position(Position::new(cx, cy));
+                        }
+                    }
                 }
             }
         }
