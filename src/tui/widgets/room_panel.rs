@@ -1,12 +1,15 @@
+use crate::tui::theme::{Palette, UiConfig};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Block, Borders, Widget};
+use ratatui::style::{Modifier, Style};
+use ratatui::widgets::{Block, BorderType, Borders, Widget};
 
 pub struct RoomPanel<'a> {
     rooms: &'a [RoomItem],
     selected: Option<usize>,
     has_focus: bool,
+    palette: &'a Palette,
+    ui_config: &'a UiConfig,
 }
 
 pub struct RoomItem {
@@ -16,11 +19,13 @@ pub struct RoomItem {
 }
 
 impl<'a> RoomPanel<'a> {
-    pub fn new(rooms: &'a [RoomItem]) -> Self {
+    pub fn new(rooms: &'a [RoomItem], palette: &'a Palette, ui_config: &'a UiConfig) -> Self {
         Self {
             rooms,
             selected: None,
             has_focus: false,
+            palette,
+            ui_config,
         }
     }
 
@@ -37,16 +42,23 @@ impl<'a> RoomPanel<'a> {
 
 impl Widget for RoomPanel<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let border_style = if self.has_focus {
-            Style::default().fg(Color::Cyan)
+        let border_color = if self.has_focus {
+            self.palette.accent_blue
         } else {
-            Style::default().fg(Color::DarkGray)
+            self.palette.fg_muted
+        };
+        let border_type = if self.ui_config.rounded_corners {
+            BorderType::Rounded
+        } else {
+            BorderType::Plain
         };
 
         let block = Block::default()
-            .title(" ROOMS ")
             .borders(Borders::ALL)
-            .border_style(border_style);
+            .border_style(Style::default().fg(border_color))
+            .border_type(border_type)
+            .title(" Rooms ")
+            .title_style(Style::default().fg(self.palette.fg_secondary));
         let inner = block.inner(area);
         block.render(area, buf);
 
@@ -62,9 +74,9 @@ impl Widget for RoomPanel<'_> {
             let text = format!("{prefix}{}{suffix}", room.name);
 
             let style = if is_selected {
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                Style::default().fg(self.palette.accent_blue).add_modifier(Modifier::BOLD)
             } else {
-                Style::default()
+                Style::default().fg(self.palette.fg_primary)
             };
 
             buf.set_string(inner.x, y, &text, style);
