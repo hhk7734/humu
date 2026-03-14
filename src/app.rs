@@ -885,14 +885,14 @@ impl App {
 
         // Workspace panel
         let workspaces = self.workspace_items();
-        let ws_widget = WorkspacePanel::new(&workspaces)
+        let ws_widget = WorkspacePanel::new(&workspaces, &self.palette, &self.ui_config)
             .selected(self.workspace_selected)
             .focus(self.focus == FocusedPanel::Workspace);
         frame.render_widget(ws_widget, panel_chunks[0]);
 
         // Room panel
         let rooms = self.room_items();
-        let room_widget = RoomPanel::new(&rooms)
+        let room_widget = RoomPanel::new(&rooms, &self.palette, &self.ui_config)
             .selected(self.room_selected)
             .focus(self.focus == FocusedPanel::Room);
         frame.render_widget(room_widget, panel_chunks[1]);
