@@ -4,17 +4,23 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
 
-pub struct StatusBar {
+pub struct StatusBar<'a> {
     mode: Mode,
+    error: Option<&'a str>,
 }
 
-impl StatusBar {
+impl<'a> StatusBar<'a> {
     pub fn new(mode: Mode) -> Self {
-        Self { mode }
+        Self { mode, error: None }
+    }
+
+    pub fn error(mut self, error: Option<&'a str>) -> Self {
+        self.error = error;
+        self
     }
 }
 
-impl Widget for StatusBar {
+impl Widget for StatusBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let bg = Style::default().bg(Color::DarkGray).fg(Color::White);
         for x in area.x..area.right() {
@@ -37,24 +43,34 @@ impl Widget for StatusBar {
         buf.set_string(x, area.y, " ", bg);
         x += 1;
 
-        let hints = mode_hints(self.mode);
+        // Show error on the right if present; otherwise show key hints.
+        if let Some(err) = self.error {
+            let err_style = Style::default()
+                .bg(Color::DarkGray)
+                .fg(Color::Red)
+                .add_modifier(Modifier::BOLD);
+            let msg: String = err.chars().take((area.width as usize).saturating_sub(x as usize - area.x as usize)).collect();
+            buf.set_string(x, area.y, &msg, err_style);
+        } else {
+            let hints = mode_hints(self.mode);
 
-        for (i, (key, label)) in hints.iter().enumerate() {
-            if i > 0 {
-                let sep = " │ ";
-                buf.set_string(x, area.y, sep, bg);
-                x += sep.len() as u16;
+            for (i, (key, label)) in hints.iter().enumerate() {
+                if i > 0 {
+                    let sep = " │ ";
+                    buf.set_string(x, area.y, sep, bg);
+                    x += sep.len() as u16;
+                }
+
+                let key_style = bg.add_modifier(Modifier::BOLD);
+                buf.set_string(x, area.y, key, key_style);
+                x += key.len() as u16;
+
+                buf.set_string(x, area.y, " ", bg);
+                x += 1;
+
+                buf.set_string(x, area.y, label, bg);
+                x += label.len() as u16;
             }
-
-            let key_style = bg.add_modifier(Modifier::BOLD);
-            buf.set_string(x, area.y, key, key_style);
-            x += key.len() as u16;
-
-            buf.set_string(x, area.y, " ", bg);
-            x += 1;
-
-            buf.set_string(x, area.y, label, bg);
-            x += label.len() as u16;
         }
     }
 }

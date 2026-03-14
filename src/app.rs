@@ -231,6 +231,8 @@ impl App {
             if event::poll(Duration::from_millis(50))? {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
+                        // Clear any previous error on new keypress.
+                        self.last_error = None;
                         // Popup intercepts all key handling when active.
                         if self.handle_popup_key(key) {
                             // key was consumed by popup
@@ -413,21 +415,13 @@ impl App {
         if let Some(DialogField::TextInput { value, .. }) = fields.get_mut(1) {
             *value = completions[next].clone();
         }
-        *completion_selected = Some(next);
-
         // Recompute completions for the new value (important for directories).
+        // Always clear selection so Enter submits the dialog next time
+        // unless the user explicitly navigates with Up/Down.
         if let Some(DialogField::TextInput { value, .. }) = fields.get(1) {
-            let new_completions = complete_path(value);
-            *completions = new_completions;
-            // Keep selection in range.
-            if completions.is_empty() {
-                *completion_selected = None;
-            } else if let Some(sel) = completion_selected {
-                if *sel >= completions.len() {
-                    *completion_selected = Some(0);
-                }
-            }
+            *completions = complete_path(value);
         }
+        *completion_selected = None;
 
         true
     }
@@ -698,7 +692,19 @@ impl App {
             self.last_error = Some("Path is required".to_string());
             return;
         }
-        let path = std::path::Path::new(&path_str);
+        // Expand ~ to the user's home directory (Rust's Path doesn't do this).
+        let expanded = if path_str.starts_with("~/") || path_str == "~" {
+            if let Some(home) = dirs::home_dir() {
+                format!("{}{}", home.display(), &path_str[1..])
+            } else {
+                path_str.clone()
+            }
+        } else {
+            path_str.clone()
+        };
+        // Strip trailing slash so Path resolves correctly.
+        let trimmed = expanded.trim_end_matches('/');
+        let path = std::path::Path::new(trimmed);
         let mgr = WorkspaceManager::new();
         let result = match mode_idx {
             0 => {
@@ -886,7 +892,8 @@ impl App {
         self.render_terminal_area(frame, panel_chunks[2]);
 
         // Status bar
-        frame.render_widget(StatusBar::new(self.mode), main_chunks[1]);
+        let status = StatusBar::new(self.mode).error(self.last_error.as_deref());
+        frame.render_widget(status, main_chunks[1]);
 
         // Render popup on top of everything when active.
         self.render_popup(frame, size);
