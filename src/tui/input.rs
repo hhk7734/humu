@@ -7,6 +7,7 @@ pub enum Mode {
     Pane,
     Tab,
     Workspace,
+    Room,
     Resize,
 }
 
@@ -55,6 +56,7 @@ pub fn handle_key(mode: Mode, key: KeyEvent) -> Action {
         Mode::Pane => handle_pane(key),
         Mode::Tab => handle_tab(key),
         Mode::Workspace => handle_workspace(key),
+        Mode::Room => handle_room(key),
         Mode::Resize => handle_resize(key),
     }
 }
@@ -74,6 +76,7 @@ fn handle_normal(key: KeyEvent) -> Action {
             KeyCode::Char('p') => Action::EnterMode(Mode::Pane),
             KeyCode::Char('t') => Action::EnterMode(Mode::Tab),
             KeyCode::Char('w') => Action::EnterMode(Mode::Workspace),
+            KeyCode::Char('r') => Action::EnterMode(Mode::Room),
             KeyCode::Char('n') => Action::EnterMode(Mode::Resize),
             KeyCode::Char('q') => Action::Quit,
             _ => Action::PassThrough(key),
@@ -148,6 +151,24 @@ fn handle_workspace(key: KeyEvent) -> Action {
         KeyCode::Char('x') => Action::Delete,
         KeyCode::Esc => Action::ExitToNormal,
         _ if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('w') => {
+            Action::ExitToNormal
+        }
+        _ => Action::None,
+    }
+}
+
+fn handle_room(key: KeyEvent) -> Action {
+    if let Some(action) = check_shared_alt(key) {
+        return action;
+    }
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => Action::NavigateDown,
+        KeyCode::Char('k') | KeyCode::Up => Action::NavigateUp,
+        KeyCode::Enter => Action::Select,
+        KeyCode::Char('n') => Action::Create,
+        KeyCode::Char('x') => Action::Delete,
+        KeyCode::Esc => Action::ExitToNormal,
+        _ if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') => {
             Action::ExitToNormal
         }
         _ => Action::None,

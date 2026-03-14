@@ -258,6 +258,59 @@ fn workspace_ctrl_w_exits() {
     ));
 }
 
+// ── Room mode ───────────────────────────────────────────────────────────────
+
+#[test]
+fn normal_ctrl_r_enters_room() {
+    assert!(matches!(
+        handle_key(Mode::Normal, ctrl('r')),
+        Action::EnterMode(Mode::Room)
+    ));
+}
+
+#[test]
+fn room_jk_navigates() {
+    assert!(matches!(
+        handle_key(Mode::Room, key(KeyCode::Char('j'))),
+        Action::NavigateDown
+    ));
+    assert!(matches!(
+        handle_key(Mode::Room, key(KeyCode::Char('k'))),
+        Action::NavigateUp
+    ));
+}
+
+#[test]
+fn room_enter_selects() {
+    assert!(matches!(
+        handle_key(Mode::Room, key(KeyCode::Enter)),
+        Action::Select
+    ));
+}
+
+#[test]
+fn room_n_creates() {
+    assert!(matches!(handle_key(Mode::Room, key(KeyCode::Char('n'))), Action::Create));
+}
+
+#[test]
+fn room_x_deletes() {
+    assert!(matches!(handle_key(Mode::Room, key(KeyCode::Char('x'))), Action::Delete));
+}
+
+#[test]
+fn room_esc_exits() {
+    assert!(matches!(
+        handle_key(Mode::Room, key(KeyCode::Esc)),
+        Action::ExitToNormal
+    ));
+}
+
+#[test]
+fn room_ctrl_r_exits() {
+    assert!(matches!(handle_key(Mode::Room, ctrl('r')), Action::ExitToNormal));
+}
+
 // ── Resize mode ──────────────────────────────────────────────────────────────
 
 #[test]
@@ -296,7 +349,7 @@ fn resize_ctrl_n_exits() {
 
 #[test]
 fn alt_overrides_in_submodes() {
-    for mode in [Mode::Pane, Mode::Tab, Mode::Workspace, Mode::Resize] {
+    for mode in [Mode::Pane, Mode::Tab, Mode::Workspace, Mode::Room, Mode::Resize] {
         assert!(
             matches!(handle_key(mode, alt('h')), Action::MoveFocus(Direction::Left)),
             "Alt+h should move focus left in {:?}",

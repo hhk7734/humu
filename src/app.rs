@@ -1013,9 +1013,11 @@ impl App {
         match action {
             Action::EnterMode(mode) => {
                 self.mode = mode;
-                // Auto-focus the relevant panel when entering Workspace mode.
+                // Auto-focus the relevant panel when entering Workspace/Room mode.
                 if mode == Mode::Workspace {
                     self.focus = FocusedPanel::Workspace;
+                } else if mode == Mode::Room {
+                    self.focus = FocusedPanel::Room;
                 }
             }
             Action::ExitToNormal => self.mode = Mode::Normal,

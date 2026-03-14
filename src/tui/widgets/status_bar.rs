@@ -82,6 +82,7 @@ fn mode_badge(mode: Mode) -> (&'static str, Color) {
         Mode::Pane => ("PANE", Color::Green),
         Mode::Tab => ("TAB", Color::Yellow),
         Mode::Workspace => ("WORKSPACE", Color::Magenta),
+        Mode::Room => ("ROOM", Color::LightMagenta),
         Mode::Resize => ("RESIZE", Color::Cyan),
     }
 }
@@ -94,6 +95,7 @@ fn mode_hints(mode: Mode) -> Vec<(&'static str, &'static str)> {
             ("p", "PANE"),
             ("t", "TAB"),
             ("w", "WORKSPACE"),
+            ("r", "ROOM"),
             ("n", "RESIZE"),
         ],
         Mode::Locked => vec![("Ctrl+g", "UNLOCK")],
@@ -116,6 +118,13 @@ fn mode_hints(mode: Mode) -> Vec<(&'static str, &'static str)> {
         ],
         Mode::Workspace => vec![
             ("h/l", "Panel"),
+            ("j/k", "Navigate"),
+            ("Enter", "Select"),
+            ("n", "Create"),
+            ("x", "Delete"),
+            ("Esc", "Back"),
+        ],
+        Mode::Room => vec![
             ("j/k", "Navigate"),
             ("Enter", "Select"),
             ("n", "Create"),
