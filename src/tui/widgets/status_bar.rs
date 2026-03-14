@@ -71,7 +71,6 @@ impl<'a> StatusBar<'a> {
                 ("n", "Create"),
                 ("x", "Delete"),
                 ("S+←→", "Resize"),
-                ("Esc", "Back"),
             ],
             Mode::Room => vec![
                 ("↑↓", "Navigate"),
@@ -79,7 +78,6 @@ impl<'a> StatusBar<'a> {
                 ("n", "Create"),
                 ("x", "Delete"),
                 ("S+←→", "Resize"),
-                ("Esc", "Back"),
             ],
         }
     }

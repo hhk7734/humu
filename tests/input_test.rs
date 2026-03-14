@@ -285,10 +285,10 @@ fn workspace_shift_arrows_resize() {
 }
 
 #[test]
-fn workspace_ctrl_w_exits() {
+fn workspace_ctrl_w_stays() {
     assert!(matches!(
         handle_key(Mode::Workspace, ctrl('w')),
-        Action::EnterMode(Mode::Terminal)
+        Action::EnterMode(Mode::Workspace)
     ));
 }
 
@@ -336,17 +336,10 @@ fn room_shift_arrows_resize() {
     ));
 }
 
-#[test]
-fn room_esc_exits() {
-    assert!(matches!(
-        handle_key(Mode::Room, key(KeyCode::Esc)),
-        Action::EnterMode(Mode::Terminal)
-    ));
-}
 
 #[test]
-fn room_ctrl_r_exits() {
-    assert!(matches!(handle_key(Mode::Room, ctrl('r')), Action::EnterMode(Mode::Terminal)));
+fn room_ctrl_r_stays() {
+    assert!(matches!(handle_key(Mode::Room, ctrl('r')), Action::EnterMode(Mode::Room)));
 }
 
 // ── Cross-mode switching ────────────────────────────────────────────────────

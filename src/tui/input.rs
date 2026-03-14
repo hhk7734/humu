@@ -159,7 +159,6 @@ fn handle_workspace(key: KeyEvent) -> Action {
         KeyCode::Enter => Action::Select,
         KeyCode::Char('n') => Action::Create,
         KeyCode::Char('x') => Action::Delete,
-        KeyCode::Esc => Action::EnterMode(Mode::Terminal),
         _ => Action::None,
     }
 }
@@ -184,28 +183,20 @@ fn handle_room(key: KeyEvent) -> Action {
         KeyCode::Enter => Action::Select,
         KeyCode::Char('n') => Action::Create,
         KeyCode::Char('x') => Action::Delete,
-        KeyCode::Esc => Action::EnterMode(Mode::Terminal),
         _ => Action::None,
     }
 }
 
-/// Universal mode switching via Ctrl+key. Pressing the same Ctrl+key that
-/// entered the current mode toggles back to Terminal.
+/// Universal mode switching via Ctrl+key.
+/// Ctrl+w always enters Workspace, Ctrl+r always enters Room,
+/// Ctrl+t always enters Terminal, Ctrl+p toggles Pane/Terminal.
 fn check_mode_switch(current: Mode, key: KeyEvent) -> Option<Action> {
     if !key.modifiers.contains(KeyModifiers::CONTROL) {
         return None;
     }
     match key.code {
-        KeyCode::Char('w') => Some(if current == Mode::Workspace {
-            Action::EnterMode(Mode::Terminal)
-        } else {
-            Action::EnterMode(Mode::Workspace)
-        }),
-        KeyCode::Char('r') => Some(if current == Mode::Room {
-            Action::EnterMode(Mode::Terminal)
-        } else {
-            Action::EnterMode(Mode::Room)
-        }),
+        KeyCode::Char('w') => Some(Action::EnterMode(Mode::Workspace)),
+        KeyCode::Char('r') => Some(Action::EnterMode(Mode::Room)),
         KeyCode::Char('t') => Some(Action::EnterMode(Mode::Terminal)),
         KeyCode::Char('p') => Some(if current == Mode::Pane {
             Action::EnterMode(Mode::Terminal)
