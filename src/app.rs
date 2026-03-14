@@ -147,28 +147,9 @@ impl App {
             HumuState::default()
         };
 
-        let mut tabs = TabContainer::new();
-        let mut panes = HashMap::new();
-        let mut pane_presets = HashMap::new();
-        let pane_id: PaneId = 0;
-
-        // Spawn a default shell pane
-        let shell_cmd = config
-            .presets
-            .get("shell")
-            .map(|p| p.command.as_str())
-            .unwrap_or("sh");
-        let shell_args: Vec<&str> = config
-            .presets
-            .get("shell")
-            .map(|p| p.args.iter().map(String::as_str).collect())
-            .unwrap_or_default();
-        let (cmd, args) = humu::preset::resolve_preset(shell_cmd, &shell_args);
-        let args_refs: Vec<String> = args;
-        let pane = PtyPane::spawn(&cmd, &args_refs, None, 80, 24)?;
-        panes.insert(pane_id, pane);
-        pane_presets.insert(pane_id, "shell".to_string());
-        tabs.add_tab("shell".into(), SplitTree::leaf(pane_id));
+        let tabs = TabContainer::new();
+        let panes = HashMap::new();
+        let pane_presets = HashMap::new();
 
         // Start hook server in a background tokio runtime and forward events over
         // a std mpsc channel so the synchronous event loop can call try_recv().
@@ -208,8 +189,8 @@ impl App {
             running: true,
             panes,
             tabs,
-            next_pane_id: 1,
-            focused_pane: Some(pane_id),
+            next_pane_id: 0,
+            focused_pane: None,
             pane_presets,
             popup: PopupState::None,
             last_error: None,
@@ -1277,6 +1258,10 @@ impl App {
 
     /// Build and display the preset selector popup.
     fn show_preset_selector(&mut self, action: PresetAction) {
+        if self.state.active_room.is_none() {
+            self.last_error = Some("Select a room first".to_string());
+            return;
+        }
         let mut presets: Vec<String> = self.config.presets.keys().cloned().collect();
         presets.sort();
         if presets.is_empty() {
