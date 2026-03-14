@@ -23,12 +23,37 @@ pub struct Preset {
     pub args: Vec<String>,
 }
 
+// ── UI Section ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiSection {
+    #[serde(default)]
+    pub simplified_ui: bool,
+    #[serde(default = "default_rounded_corners")]
+    pub rounded_corners: bool,
+}
+
+fn default_rounded_corners() -> bool {
+    true
+}
+
+impl Default for UiSection {
+    fn default() -> Self {
+        Self {
+            simplified_ui: false,
+            rounded_corners: true,
+        }
+    }
+}
+
 // ── HumuConfig ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HumuConfig {
     #[serde(default)]
     pub presets: HashMap<String, Preset>,
+    #[serde(default)]
+    pub ui: UiSection,
 }
 
 impl Default for HumuConfig {
@@ -48,7 +73,10 @@ impl Default for HumuConfig {
                 args: vec![],
             },
         );
-        Self { presets }
+        Self {
+            presets,
+            ui: UiSection::default(),
+        }
     }
 }
 
