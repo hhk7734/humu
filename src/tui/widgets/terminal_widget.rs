@@ -179,17 +179,25 @@ impl Widget for TerminalWidget<'_> {
 
         // Exit overlay centered in inner area
         if let Some(code) = self.exited {
-            let msg = format!(" [exited: {code}] Press Enter to restart ");
-            let msg_len = msg.len() as u16;
-            if inner.width >= msg_len && inner.height > 0 {
-                let x = inner.x + (inner.width - msg_len) / 2;
-                let y = inner.y + inner.height / 2;
-                let style = Style::default().fg(self.palette.bg_primary).bg(if code == 0 {
-                    self.palette.accent_green
-                } else {
-                    self.palette.accent_red
-                });
-                buf.set_string(x, y, &msg, style);
+            let exit_color = if code == 0 {
+                self.palette.accent_green
+            } else {
+                self.palette.accent_red
+            };
+            let line1 = format!(" exited: {code} ");
+            let line2 = " [p] close pane  [t] close tab ";
+            let max_len = line1.len().max(line2.len()) as u16;
+            if inner.width >= max_len && inner.height >= 2 {
+                let y1 = inner.y + inner.height / 2 - 1;
+                let y2 = y1 + 1;
+                let x1 = inner.x + (inner.width - line1.len() as u16) / 2;
+                let x2 = inner.x + (inner.width - line2.len() as u16) / 2;
+                let exit_style = Style::default().fg(self.palette.bg_primary).bg(exit_color);
+                let hint_style = Style::default()
+                    .fg(self.palette.bg_primary)
+                    .bg(self.palette.fg_muted);
+                buf.set_string(x1, y1, &line1, exit_style);
+                buf.set_string(x2, y2, line2, hint_style);
             }
         }
     }

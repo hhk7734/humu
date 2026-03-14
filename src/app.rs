@@ -1646,10 +1646,29 @@ impl App {
     }
 
     fn handle_passthrough(&mut self, key: KeyEvent) {
-        if self.focus == FocusedPanel::Terminal
-            && let Some(pane_id) = self.focused_pane
-            && let Some(pane) = self.panes.get_mut(&pane_id)
-        {
+        if self.focus != FocusedPanel::Terminal {
+            return;
+        }
+        let Some(pane_id) = self.focused_pane else {
+            return;
+        };
+
+        // If focused pane has exited, intercept p/t to close pane/tab.
+        let exited = self
+            .panes
+            .get_mut(&pane_id)
+            .and_then(|p| p.exit_status())
+            .is_some();
+        if exited {
+            match key.code {
+                KeyCode::Char('p') => self.close_pane(),
+                KeyCode::Char('t') => self.close_tab(),
+                _ => {}
+            }
+            return;
+        }
+
+        if let Some(pane) = self.panes.get_mut(&pane_id) {
             let bytes = key_event_to_bytes(&key);
             if !bytes.is_empty() {
                 let _ = pane.write_input(&bytes);
