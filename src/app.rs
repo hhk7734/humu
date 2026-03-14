@@ -2,7 +2,7 @@ use humu::config::{humu_dir, HumuConfig, HumuState, RoomLayout, SplitDirection a
 use humu::id::RoomId;
 use humu::git::room::RoomManager;
 use humu::git::workspace::WorkspaceManager;
-use humu::hook::server::{HookEvent, HookServer};
+use humu::hook::http::{AgentState, HookEvent, HookServer};
 use humu::pty::pane::PtyPane;
 use humu::tui::completion::complete_path;
 use humu::tui::input::{handle_key, Action, Direction as NavDirection, Mode};
@@ -63,6 +63,12 @@ pub enum PresetAction {
     SplitRight,
 }
 
+pub struct AgentStateEntry {
+    pub state: AgentState,
+    pub session_id: Option<String>,
+    pub updated_at: Instant,
+}
+
 pub enum PopupState {
     None,
     PresetSelector {
@@ -115,10 +121,12 @@ pub struct App {
     pub popup: PopupState,
     /// Last error message to display (cleared on next action).
     pub last_error: Option<String>,
-    /// Spinner state: (workspace, room) → last event time.
-    pub spinner_state: HashMap<(String, String), Instant>,
+    /// Per-pane agent state from the HTTP hook server.
+    pub agent_states: HashMap<PaneId, AgentStateEntry>,
     /// Receiver for hook events forwarded from the background tokio thread.
     pub hook_rx: Option<mpsc::Receiver<HookEvent>>,
+    /// Port the HTTP hook server is listening on.
+    pub hook_port: Option<u16>,
     /// Last-rendered panel rects used for mouse hit-testing.
     pub panel_rects: PanelRects,
     /// Panel widths: [workspace, room]. Used in the layout constraints.
@@ -152,28 +160,37 @@ impl App {
         let panes = HashMap::new();
         let pane_presets = HashMap::new();
 
-        // Start hook server in a background tokio runtime and forward events over
-        // a std mpsc channel so the synchronous event loop can call try_recv().
-        let sock_path = humu_dir().join("humu.sock");
+        // Start HTTP hook server in a background tokio runtime and forward events
+        // over a std mpsc channel so the synchronous event loop can call try_recv().
         let (hook_tx, hook_rx) = mpsc::channel::<HookEvent>();
+        let (port_tx, port_rx) = mpsc::channel::<u16>();
         thread::spawn(move || {
             let rt = Runtime::new().unwrap();
             rt.block_on(async {
-                match HookServer::new(&sock_path).await {
+                match HookServer::start().await {
                     Ok(server) => {
+                        let _ = port_tx.send(server.port());
                         let mut rx = server.subscribe();
                         loop {
-                            if let Ok(event) = rx.recv().await {
-                                let _ = hook_tx.send(event);
+                            match rx.recv().await {
+                                Ok(event) => {
+                                    let _ = hook_tx.send(event);
+                                }
+                                Err(_) => break,
                             }
                         }
                     }
-                    Err(e) => {
-                        eprintln!("hook server error: {e}");
-                    }
+                    Err(e) => eprintln!("hook server error: {e}"),
                 }
             });
         });
+        let hook_port = port_rx.recv().ok();
+
+        // Write port file so external tools can discover the hook server.
+        if let Some(port) = hook_port {
+            let port_path = humu_dir().join("port");
+            let _ = std::fs::write(&port_path, port.to_string());
+        }
 
         let ui_config = humu::tui::theme::UiConfig {
             simplified_ui: config.ui.simplified_ui,
@@ -195,8 +212,9 @@ impl App {
             pane_presets,
             popup: PopupState::None,
             last_error: None,
-            spinner_state: HashMap::new(),
+            agent_states: HashMap::new(),
             hook_rx: Some(hook_rx),
+            hook_port,
             panel_rects: PanelRects::default(),
             panel_widths: [20, 18],
             dragging: None,
@@ -274,11 +292,6 @@ impl App {
         // Graceful shutdown: persist layout, then drop all PTY children.
         self.persist_layout();
         self.panes.clear(); // Drop all PTY panes, killing child processes.
-
-        // Remove the socket file explicitly — the hook server thread runs
-        // forever so its Drop impl never fires during normal exit.
-        let sock_path = humu_dir().join("humu.sock");
-        let _ = std::fs::remove_file(&sock_path);
 
         let state_path = humu_dir().join("state.toml");
         self.state.save(&state_path)?;
@@ -974,8 +987,8 @@ impl App {
             Rect::new(area.x, area.y, area.width, 0)
         };
 
-        // Render tab bar — a tab is active if any of its panes is a "claude"
-        // preset and the current workspace/room has an active spinner entry.
+        // Render tab bar — a tab is active if any of its panes has a non-Idle
+        // agent state in agent_states.
         let tab_names: Vec<&str> = self.tabs.tab_names();
         let active_indicators: Vec<bool> = (0..tab_names.len())
             .map(|i| {
@@ -984,14 +997,10 @@ impl App {
                     None => return false,
                 };
                 tree.pane_ids().iter().any(|pid| {
-                    if self.pane_presets.get(pid).map(String::as_str) != Some("claude") {
-                        return false;
-                    }
-                    // Check if any spinner entry matches the current workspace/room.
-                    self.spinner_state.keys().any(|(ws, room)| {
-                        self.active_workspace_name().as_deref() == Some(ws.as_str())
-                            && self.active_room_name().as_deref() == Some(room.as_str())
-                    })
+                    self.agent_states
+                        .get(pid)
+                        .map(|e| matches!(e.state, AgentState::Working | AgentState::NeedsInput))
+                        .unwrap_or(false)
                 })
             })
             .collect();
@@ -1466,14 +1475,17 @@ impl App {
 
         // Set HUMU_* env vars when spawning the "claude" preset.
         let envs: Vec<(String, String)> = if preset_name == "claude" {
-            let sock = humu_dir().join("humu.sock");
-            let workspace = self.active_workspace_name().unwrap_or_default();
-            let room = self.active_room_name().unwrap_or_default();
-            vec![
-                ("HUMU_SOCKET".to_string(), sock.to_string_lossy().into_owned()),
-                ("HUMU_WORKSPACE".to_string(), workspace),
-                ("HUMU_ROOM".to_string(), room),
-            ]
+            let mut envs = vec![];
+            if let Some(port) = self.hook_port {
+                envs.push(("HUMU_PORT".to_string(), port.to_string()));
+            }
+            if let Some(ws_name) = self.active_workspace_name() {
+                envs.push(("HUMU_WORKSPACE".to_string(), ws_name));
+            }
+            if let Some(room_name) = self.active_room_name() {
+                envs.push(("HUMU_ROOM".to_string(), room_name));
+            }
+            envs
         } else {
             vec![]
         };
@@ -1757,34 +1769,40 @@ impl App {
         }
     }
 
-    /// Drain the hook event channel and update spinner_state.
+    /// Drain the hook event channel and update agent_states.
     fn process_hook_events(&mut self) {
         if let Some(rx) = &self.hook_rx {
             while let Ok(event) = rx.try_recv() {
-                let key = (event.workspace.clone(), event.room.clone());
-                if event.hook_type == "Stop" {
-                    self.spinner_state.remove(&key);
-                } else {
-                    self.spinner_state.insert(key, Instant::now());
-                }
+                let pane_id = event.pane_id;
+                let new_session_id = event.session_id.clone();
+                let existing_session_id = self
+                    .agent_states
+                    .get(&pane_id)
+                    .and_then(|e| e.session_id.clone());
+                let session_id = new_session_id.or(existing_session_id);
+                self.agent_states.insert(
+                    pane_id,
+                    AgentStateEntry {
+                        state: event.event_type.clone(),
+                        session_id,
+                        updated_at: Instant::now(),
+                    },
+                );
             }
         }
-        // Timeout: remove entries older than 10 seconds.
-        let now = Instant::now();
-        self.spinner_state
-            .retain(|_, time| now.duration_since(*time) < Duration::from_secs(10));
     }
 
     fn workspace_items(&self) -> Vec<WorkspaceItem> {
+        let any_active = self.agent_states.values().any(|e| {
+            matches!(e.state, AgentState::Working | AgentState::NeedsInput)
+        });
+        let active_ws = self.active_workspace_name();
         let mut names: Vec<_> = self.state.workspaces.keys().cloned().collect();
         names.sort();
         names
             .into_iter()
             .map(|name| {
-                let active = self
-                    .spinner_state
-                    .keys()
-                    .any(|(ws, _)| ws == &name);
+                let active = any_active && active_ws.as_deref() == Some(&name);
                 WorkspaceItem { name, active }
             })
             .collect()
@@ -1799,14 +1817,16 @@ impl App {
             Some(ws) => ws,
             None => return vec![],
         };
+        let any_active = self.agent_states.values().any(|e| {
+            matches!(e.state, AgentState::Working | AgentState::NeedsInput)
+        });
+        let active_room = self.active_room_name();
         let mgr = RoomManager::new();
         match mgr.list(&ws.path) {
             Ok(rooms) => rooms
                 .into_iter()
                 .map(|r| {
-                    let active = self
-                        .spinner_state
-                        .contains_key(&(ws_name.clone(), r.branch.clone()));
+                    let active = any_active && active_room.as_deref() == Some(&r.branch);
                     RoomItem {
                         name: r.branch,
                         is_default: r.is_default,
@@ -2125,6 +2145,13 @@ impl App {
                 .id;
             self.state.active_room_id = Some(room_id);
         }
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        let port_path = humu_dir().join("port");
+        let _ = std::fs::remove_file(&port_path);
     }
 }
 
