@@ -972,7 +972,7 @@ impl App {
                 })
             })
             .collect();
-        let tab_bar = TabBar::new(&tab_names, self.tabs.active_index(), &active_indicators);
+        let tab_bar = TabBar::new(&tab_names, self.tabs.active_index(), &active_indicators, &self.palette, &self.ui_config);
         frame.render_widget(tab_bar, tab_bar_area);
 
         // Render panes from active tab's split tree
