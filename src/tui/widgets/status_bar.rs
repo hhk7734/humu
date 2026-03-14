@@ -21,8 +21,23 @@ impl Widget for StatusBar {
             buf.set_string(x, area.y, " ", bg);
         }
 
+        let mut x = area.x;
+
+        // Render a prominent mode badge on the left.
+        let (mode_label, mode_bg) = mode_badge(self.mode);
+        let badge_style = Style::default()
+            .bg(mode_bg)
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD);
+        let badge = format!(" {} ", mode_label);
+        buf.set_string(x, area.y, &badge, badge_style);
+        x += badge.len() as u16;
+
+        // Separator after badge.
+        buf.set_string(x, area.y, " ", bg);
+        x += 1;
+
         let hints = mode_hints(self.mode);
-        let mut x = area.x + 1;
 
         for (i, (key, label)) in hints.iter().enumerate() {
             if i > 0 {
@@ -41,6 +56,17 @@ impl Widget for StatusBar {
             buf.set_string(x, area.y, label, bg);
             x += label.len() as u16;
         }
+    }
+}
+
+fn mode_badge(mode: Mode) -> (&'static str, Color) {
+    match mode {
+        Mode::Normal => ("NORMAL", Color::Blue),
+        Mode::Locked => ("LOCKED", Color::Gray),
+        Mode::Pane => ("PANE", Color::Green),
+        Mode::Tab => ("TAB", Color::Yellow),
+        Mode::Workspace => ("WORKSPACE", Color::Magenta),
+        Mode::Resize => ("RESIZE", Color::Cyan),
     }
 }
 

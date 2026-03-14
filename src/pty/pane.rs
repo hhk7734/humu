@@ -2,12 +2,14 @@ use anyhow::Result;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::io::Read;
 use std::path::Path;
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
+use std::thread;
 
 pub struct PtyPane {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn std::io::Write + Send>,
-    reader: Box<dyn Read + Send>,
+    output_rx: mpsc::Receiver<Vec<u8>>,
     parser: Arc<Mutex<vt100::Parser>>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     exit_code: Option<i32>,
@@ -55,13 +57,30 @@ impl PtyPane {
         drop(pair.slave);
 
         let writer = pair.master.take_writer()?;
-        let reader = pair.master.try_clone_reader()?;
+        let mut reader = pair.master.try_clone_reader()?;
         let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 0)));
+
+        // Read PTY output in a background thread to avoid blocking the event loop.
+        let (output_tx, output_rx) = mpsc::channel();
+        thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if output_tx.send(buf[..n].to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
 
         Ok(Self {
             master: pair.master,
             writer,
-            reader,
+            output_rx,
             parser,
             child,
             exit_code: None,
@@ -70,25 +89,12 @@ impl PtyPane {
         })
     }
 
-    /// Read available PTY output and feed it to the vt100 parser.
+    /// Drain any PTY output received from the background reader thread.
     pub fn process_output(&mut self) -> Result<()> {
-        let mut buf = [0u8; 4096];
-        loop {
-            match self.reader.read(&mut buf) {
-                Ok(0) => {
-                    self.check_exit();
-                    break;
-                }
-                Ok(n) => {
-                    self.parser.lock().unwrap().process(&buf[..n]);
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
-                Err(_) => {
-                    self.check_exit();
-                    break;
-                }
-            }
+        while let Ok(data) = self.output_rx.try_recv() {
+            self.parser.lock().unwrap().process(&data);
         }
+        self.check_exit();
         Ok(())
     }
 

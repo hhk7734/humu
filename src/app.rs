@@ -3,6 +3,7 @@ use humu::git::room::RoomManager;
 use humu::git::workspace::WorkspaceManager;
 use humu::hook::server::{HookEvent, HookServer};
 use humu::pty::pane::PtyPane;
+use humu::tui::completion::complete_path;
 use humu::tui::input::{handle_key, Action, Direction as NavDirection, Mode};
 use humu::tui::layout::{PaneId, SplitDirection, SplitTree, TabContainer};
 use humu::tui::widgets::dialog::{Dialog, DialogField};
@@ -72,6 +73,8 @@ pub enum PopupState {
         /// field indices: 0=Mode, 1=Path, 2=URL
         fields: Vec<DialogField>,
         focused_field: usize,
+        completions: Vec<String>,
+        completion_selected: Option<usize>,
     },
     RoomCreate {
         /// field indices: 0=Branch name, 1=Base branch
@@ -343,19 +346,29 @@ impl App {
     fn handle_dialog_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => {
-                self.popup = PopupState::None;
+                if !self.try_dismiss_completions() {
+                    self.popup = PopupState::None;
+                }
             }
             KeyCode::Enter => {
-                self.confirm_dialog();
+                if !self.try_confirm_completion() {
+                    self.confirm_dialog();
+                }
             }
             KeyCode::Tab | KeyCode::BackTab => {
-                self.dialog_move_focus(key.code == KeyCode::Tab);
+                if !self.try_accept_completion() {
+                    self.dialog_move_focus(key.code == KeyCode::Tab);
+                }
             }
             KeyCode::Up => {
-                self.dialog_move_focus(false);
+                if !self.try_navigate_completion(false) {
+                    self.dialog_move_focus(false);
+                }
             }
             KeyCode::Down => {
-                self.dialog_move_focus(true);
+                if !self.try_navigate_completion(true) {
+                    self.dialog_move_focus(true);
+                }
             }
             KeyCode::Left => {
                 self.dialog_field_left();
@@ -365,11 +378,168 @@ impl App {
             }
             KeyCode::Backspace => {
                 self.dialog_field_backspace();
+                self.refresh_completions();
             }
             KeyCode::Char(c) => {
                 self.dialog_field_insert(c);
+                self.refresh_completions();
             }
             _ => {}
+        }
+    }
+
+    /// If the workspace-create Path field is focused and has completions,
+    /// accept the selected (or first) completion.  Returns `true` if consumed.
+    fn try_accept_completion(&mut self) -> bool {
+        let PopupState::WorkspaceCreate {
+            fields,
+            focused_field,
+            completions,
+            completion_selected,
+        } = &mut self.popup
+        else {
+            return false;
+        };
+
+        // Only act when focused on the Path field (index 1) and completions exist.
+        if *focused_field != 1 || completions.is_empty() {
+            return false;
+        }
+
+        // Accept the current selection, or pick the first item if none highlighted.
+        let next = completion_selected.unwrap_or(0);
+
+        // Write the selected completion into the Path field value.
+        if let Some(DialogField::TextInput { value, .. }) = fields.get_mut(1) {
+            *value = completions[next].clone();
+        }
+        *completion_selected = Some(next);
+
+        // Recompute completions for the new value (important for directories).
+        if let Some(DialogField::TextInput { value, .. }) = fields.get(1) {
+            let new_completions = complete_path(value);
+            *completions = new_completions;
+            // Keep selection in range.
+            if completions.is_empty() {
+                *completion_selected = None;
+            } else if let Some(sel) = completion_selected {
+                if *sel >= completions.len() {
+                    *completion_selected = Some(0);
+                }
+            }
+        }
+
+        true
+    }
+
+    /// Clear completions if they are visible.  Returns `true` if consumed
+    /// (so Esc dismisses suggestions first, closes dialog on second Esc).
+    fn try_dismiss_completions(&mut self) -> bool {
+        let PopupState::WorkspaceCreate {
+            focused_field,
+            completions,
+            completion_selected,
+            ..
+        } = &mut self.popup
+        else {
+            return false;
+        };
+
+        if *focused_field != 1 || completions.is_empty() {
+            return false;
+        }
+
+        completions.clear();
+        *completion_selected = None;
+        true
+    }
+
+    /// Accept the highlighted completion into the Path field on Enter.
+    /// Returns `true` if a completion was selected (dialog NOT submitted).
+    fn try_confirm_completion(&mut self) -> bool {
+        let PopupState::WorkspaceCreate {
+            fields,
+            focused_field,
+            completions,
+            completion_selected,
+        } = &mut self.popup
+        else {
+            return false;
+        };
+
+        if *focused_field != 1 {
+            return false;
+        }
+
+        let Some(sel) = *completion_selected else {
+            return false;
+        };
+
+        if sel >= completions.len() {
+            return false;
+        }
+
+        if let Some(DialogField::TextInput { value, .. }) = fields.get_mut(1) {
+            *value = completions[sel].clone();
+        }
+        *completions = if let Some(DialogField::TextInput { value, .. }) = fields.get(1) {
+            complete_path(value)
+        } else {
+            vec![]
+        };
+        *completion_selected = None;
+        true
+    }
+
+    /// Move the completion highlight up/down.  Returns `true` if consumed.
+    fn try_navigate_completion(&mut self, down: bool) -> bool {
+        let PopupState::WorkspaceCreate {
+            focused_field,
+            completions,
+            completion_selected,
+            ..
+        } = &mut self.popup
+        else {
+            return false;
+        };
+
+        if *focused_field != 1 || completions.is_empty() {
+            return false;
+        }
+
+        let next = match *completion_selected {
+            Some(idx) => {
+                if down {
+                    if idx + 1 < completions.len() { idx + 1 } else { 0 }
+                } else {
+                    if idx == 0 { completions.len() - 1 } else { idx - 1 }
+                }
+            }
+            None => if down { 0 } else { completions.len() - 1 },
+        };
+        *completion_selected = Some(next);
+        true
+    }
+
+    /// Recompute path completions when the Path text field changes.
+    fn refresh_completions(&mut self) {
+        let PopupState::WorkspaceCreate {
+            fields,
+            focused_field,
+            completions,
+            completion_selected,
+        } = &mut self.popup
+        else {
+            return;
+        };
+
+        if *focused_field != 1 {
+            return;
+        }
+
+        if let Some(DialogField::TextInput { value, .. }) = fields.get(1) {
+            *completions = complete_path(value);
+            *completion_selected = None;
         }
     }
 
@@ -728,8 +898,17 @@ impl App {
             PopupState::PresetSelector { presets, selected, .. } => {
                 frame.render_widget(PresetSelector::new(presets, *selected), area);
             }
-            PopupState::WorkspaceCreate { fields, focused_field } => {
-                frame.render_widget(Dialog::new("Create Workspace", fields, *focused_field), area);
+            PopupState::WorkspaceCreate {
+                fields,
+                focused_field,
+                completions,
+                completion_selected,
+            } => {
+                let mut dialog = Dialog::new("Create Workspace", fields, *focused_field);
+                dialog.completions = completions;
+                dialog.completion_selected = *completion_selected;
+                dialog.completion_field = Some(1); // Path field
+                frame.render_widget(dialog, area);
             }
             PopupState::RoomCreate { fields, focused_field } => {
                 frame.render_widget(Dialog::new("Create Room", fields, *focused_field), area);
@@ -825,7 +1004,13 @@ impl App {
 
     fn handle_action(&mut self, action: Action) {
         match action {
-            Action::EnterMode(mode) => self.mode = mode,
+            Action::EnterMode(mode) => {
+                self.mode = mode;
+                // Auto-focus the relevant panel when entering Workspace mode.
+                if mode == Mode::Workspace {
+                    self.focus = FocusedPanel::Workspace;
+                }
+            }
             Action::ExitToNormal => self.mode = Mode::Normal,
             Action::Quit => self.running = false,
 
@@ -1057,7 +1242,12 @@ impl App {
                         value: String::new(),
                     },
                 ];
-                self.popup = PopupState::WorkspaceCreate { fields, focused_field: 0 };
+                self.popup = PopupState::WorkspaceCreate {
+                    fields,
+                    focused_field: 0,
+                    completions: vec![],
+                    completion_selected: None,
+                };
             }
             FocusedPanel::Room => {
                 let fields = vec![
