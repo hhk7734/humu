@@ -1,4 +1,5 @@
 use humu::config::{humu_dir, HumuConfig, HumuState, RoomLayout, SplitDirection as CfgDir, SplitNode, TabLayout};
+use humu::id::{RoomId, WorkspaceId};
 use humu::git::room::RoomManager;
 use humu::git::workspace::WorkspaceManager;
 use humu::hook::http::{generate_hook_files, AgentState, HookEvent, HookServer};
@@ -62,6 +63,16 @@ pub enum PresetAction {
     NewTab,
     SplitDown,
     SplitRight,
+}
+
+/// Holds the live runtime state for a room so it can be suspended and restored
+/// without killing PTY processes.
+pub struct RoomState {
+    pub panes: HashMap<PaneId, PtyPane>,
+    pub tabs: TabContainer,
+    pub pane_presets: HashMap<PaneId, String>,
+    pub focused_pane: Option<PaneId>,
+    pub fullscreen_pane: Option<PaneId>,
 }
 
 pub struct AgentStateEntry {
@@ -140,6 +151,9 @@ pub struct App {
     pub ui_config: humu::tui::theme::UiConfig,
     /// Counter incremented each event-loop tick for animating spinners.
     pub spin_tick: usize,
+    /// Suspended room states keyed by (workspace_id, room_id).
+    /// Holds live PTY panes so they survive room/workspace switches.
+    pub suspended_rooms: HashMap<(WorkspaceId, RoomId), RoomState>,
 }
 
 impl App {
@@ -229,6 +243,7 @@ impl App {
             palette: humu::tui::theme::Palette::GITHUB_DARK,
             ui_config,
             spin_tick: 0,
+            suspended_rooms: HashMap::new(),
         })
     }
 
@@ -298,9 +313,45 @@ impl App {
         stdout().execute(LeaveAlternateScreen)?;
         disable_raw_mode()?;
 
-        // Graceful shutdown: persist layout, then drop all PTY children.
+        // Graceful shutdown: persist layout for current room and all suspended rooms,
+        // then drop all PTY children.
         self.persist_layout();
-        self.panes.clear(); // Drop all PTY panes, killing child processes.
+        self.panes.clear();
+
+        // Persist and drop suspended rooms.
+        let suspended: Vec<_> = self.suspended_rooms.drain().collect();
+        for ((ws_id, room_id), room_state) in suspended {
+            // Temporarily swap in the suspended state to reuse persist helpers.
+            let ws_name = self
+                .state
+                .workspaces
+                .iter()
+                .find(|(_, e)| e.id == ws_id)
+                .map(|(name, _)| name.clone());
+            let room_name = ws_name.as_ref().and_then(|ws| {
+                self.state.workspaces.get(ws).and_then(|entry| {
+                    entry
+                        .rooms
+                        .iter()
+                        .find(|(_, e)| e.id == room_id)
+                        .map(|(name, _)| name.clone())
+                })
+            });
+            if let (Some(ws), Some(room)) = (ws_name, room_name) {
+                self.panes = room_state.panes;
+                self.tabs = room_state.tabs;
+                self.pane_presets = room_state.pane_presets;
+                if let Some(layout) = self.save_layout() {
+                    self.state
+                        .layout
+                        .entry(ws)
+                        .or_default()
+                        .insert(room, layout);
+                }
+                self.panes.clear();
+            }
+            // room_state.panes dropped here, killing child processes.
+        }
 
         let state_path = humu_dir().join("state.toml");
         self.state.save(&state_path)?;
@@ -2041,8 +2092,98 @@ impl App {
         }
     }
 
+    /// Suspend the current room's live state (panes, tabs, etc.) into the
+    /// `suspended_rooms` map without killing PTY processes.
+    fn suspend_current_room(&mut self) {
+        let ws_id = match self.state.active_workspace_id {
+            Some(id) => id,
+            None => return,
+        };
+        let room_id = match self.state.active_room_id {
+            Some(id) => id,
+            None => return,
+        };
+
+        // Persist layout to state.toml so the room can also be cold-restored.
+        self.persist_layout();
+
+        // Move live state out of self into suspended storage.
+        // next_pane_id is kept global (monotonically increasing) for unique IDs.
+        let room_state = RoomState {
+            panes: std::mem::take(&mut self.panes),
+            tabs: std::mem::replace(&mut self.tabs, TabContainer::new()),
+            pane_presets: std::mem::take(&mut self.pane_presets),
+            focused_pane: self.focused_pane.take(),
+            fullscreen_pane: self.fullscreen_pane.take(),
+        };
+
+        self.suspended_rooms.insert((ws_id, room_id), room_state);
+    }
+
+    /// Restore a suspended room's live state, or fall back to cold restore from
+    /// the persisted layout, or create a default shell tab.
+    fn restore_room(&mut self, ws_id: WorkspaceId, room_id: RoomId) {
+        if let Some(room_state) = self.suspended_rooms.remove(&(ws_id, room_id)) {
+            // Hot restore: swap live PTY panes back in.
+            self.panes = room_state.panes;
+            self.tabs = room_state.tabs;
+            self.pane_presets = room_state.pane_presets;
+            self.focused_pane = room_state.focused_pane;
+            self.fullscreen_pane = room_state.fullscreen_pane;
+
+            // Drain any accumulated output while suspended.
+            for pane in self.panes.values_mut() {
+                let _ = pane.process_output();
+            }
+        } else {
+            // Cold restore from persisted layout, or create default.
+            let ws_name = self
+                .state
+                .workspaces
+                .iter()
+                .find(|(_, e)| e.id == ws_id)
+                .map(|(name, _)| name.clone());
+
+            let room_name = ws_name.as_ref().and_then(|ws| {
+                self.state.workspaces.get(ws).and_then(|entry| {
+                    entry
+                        .rooms
+                        .iter()
+                        .find(|(_, e)| e.id == room_id)
+                        .map(|(name, _)| name.clone())
+                })
+            });
+
+            let layout = ws_name
+                .as_ref()
+                .zip(room_name.as_ref())
+                .and_then(|(ws, room)| {
+                    self.state
+                        .layout
+                        .get(ws)
+                        .and_then(|rooms| rooms.get(room))
+                        .cloned()
+                });
+
+            if let Some(layout) = layout {
+                self.restore_layout(&layout);
+            } else {
+                // No saved layout — create a default shell tab.
+                self.panes.clear();
+                self.pane_presets.clear();
+                self.tabs = TabContainer::new();
+                self.focused_pane = None;
+                self.fullscreen_pane = None;
+                if let Some(id) = self.spawn_pane("shell", None) {
+                    self.tabs.add_tab("shell".into(), SplitTree::leaf(id));
+                    self.focused_pane = Some(id);
+                }
+            }
+        }
+    }
+
     /// Switch to the room identified by the current workspace/room selection,
-    /// saving the current layout first and restoring the new room's layout.
+    /// suspending the current room and restoring the target room.
     fn switch_to_selected_room(&mut self) {
         // Resolve workspace name from index.
         let ws_name = {
@@ -2074,34 +2215,19 @@ impl App {
             },
         };
 
-        // Save current layout before switching.
-        self.persist_layout();
+        // Suspend current room (preserves live PTY panes).
+        self.suspend_current_room();
 
         // Update active workspace/room in state.
         self.set_active_workspace_by_name(&ws_name);
         self.set_active_room_by_name(&room_name);
 
-        // Restore layout for the new room, if any.
-        let layout = self
-            .state
-            .layout
-            .get(&ws_name)
-            .and_then(|rooms| rooms.get(&room_name))
-            .cloned();
+        // Resolve IDs for the target room.
+        let target_ws_id = self.state.active_workspace_id.unwrap();
+        let target_room_id = self.state.active_room_id.unwrap();
 
-        if let Some(layout) = layout {
-            self.restore_layout(&layout);
-        } else {
-            // No saved layout — create a default shell tab.
-            self.panes.clear();
-            self.pane_presets.clear();
-            self.tabs = TabContainer::new();
-            self.focused_pane = None;
-            if let Some(id) = self.spawn_pane("shell", None) {
-                self.tabs.add_tab("shell".into(), SplitTree::leaf(id));
-                self.focused_pane = Some(id);
-            }
-        }
+        // Restore target room (hot if suspended, cold otherwise).
+        self.restore_room(target_ws_id, target_room_id);
     }
 
     // ── ID ↔ Name bridge helpers (Task 3 shims; superseded by Task 5) ─────────

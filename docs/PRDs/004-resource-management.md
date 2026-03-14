@@ -22,6 +22,7 @@ On creation, humu auto-selects the new workspace and its default room (main bran
 
 - Click a workspace in `WorkspacePanel` (enters Workspace mode) or use `Ctrl+w`. The last-selected room for that workspace is restored.
 - On startup, the last active workspace and room are restored.
+- **State preservation**: Switching workspaces suspends the current room's live PTY panes. The target workspace's last-active room is restored with live panes if previously suspended.
 
 ### Delete
 
@@ -49,8 +50,9 @@ A working context within a workspace.
 
 ### Select
 
-- Click a room in `RoomPanel` (enters Room mode) or use `Ctrl+r`. Terminal panes switch to the selected room's working directory.
+- Click a room in `RoomPanel` (enters Room mode) or use `Ctrl+r`. Terminal panes switch to the selected room's context.
 - Terminal panes are room-scoped: if no room is selected, the terminal area is empty and pane/tab creation is blocked.
+- **State preservation**: Switching rooms suspends the current room's live PTY panes rather than killing them. Switching back restores panes instantly with full terminal history. See Architecture > Room Suspension for details.
 
 ### Delete
 

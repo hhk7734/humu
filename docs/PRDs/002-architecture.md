@@ -114,6 +114,18 @@ Tab and pane layout is saved per room in `state.toml` and restored on room switc
 
 Layout keys use UUID strings for workspace and room identification.
 
+### Room Suspension (Hot Restore)
+
+When switching rooms or workspaces, live PTY panes are **suspended** rather than killed. The runtime state (`RoomState`: panes, tabs, pane_presets, focused_pane, fullscreen_pane) is moved into `suspended_rooms: HashMap<(WorkspaceId, RoomId), RoomState>`. When switching back:
+
+1. **Hot restore**: If the room has suspended state, swap it back in — PTY processes resume instantly with full terminal history intact.
+2. **Cold restore**: If no suspended state exists (e.g., after restart), rebuild from the persisted layout in `state.toml`, spawning new PTY processes.
+3. **Default**: If no persisted layout exists either, create a single shell tab.
+
+Suspended panes continue running in the background — their reader threads accumulate output in unbounded `mpsc` channels, which is drained on restore. `PaneId` remains globally unique (monotonically increasing `next_pane_id` is never saved/restored per room). `agent_states` is global since hook events can arrive for any pane.
+
+On graceful shutdown, all suspended rooms have their layouts persisted to `state.toml` before PTY processes are dropped.
+
 ## Claude Hook Integration
 
 ### HTTP Hook Server
