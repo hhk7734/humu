@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::id::{WorkspaceId, RoomId};
+
 // ── Directory helper ──────────────────────────────────────────────────────────
 
 /// Returns `~/.humu/`, creating it if it does not exist.
@@ -110,6 +112,8 @@ pub enum SplitDirection {
 pub enum SplitNode {
     Leaf {
         preset: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
     },
     Split {
         direction: SplitDirection,
@@ -130,31 +134,51 @@ pub struct RoomLayout {
     pub tabs: Vec<TabLayout>,
 }
 
-// ── WorkspaceEntry ────────────────────────────────────────────────────────────
+// ── WorkspaceEntry / RoomEntry ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WorkspaceEntry {
+    pub id: WorkspaceId,
     pub path: PathBuf,
+    #[serde(default)]
+    pub rooms: HashMap<String, RoomEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RoomEntry {
+    pub id: RoomId,
 }
 
 // ── HumuState ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HumuState {
-    pub active_workspace: Option<String>,
-    pub active_room: Option<String>,
+    pub active_workspace_id: Option<WorkspaceId>,
+    pub active_room_id: Option<RoomId>,
     #[serde(default)]
     pub workspaces: HashMap<String, WorkspaceEntry>,
-    /// layout[workspace][room] = RoomLayout
+    /// layout[workspace_id][room_id] = RoomLayout
     #[serde(default)]
     pub layout: HashMap<String, HashMap<String, RoomLayout>>,
 }
 
 impl HumuState {
     pub fn load(path: &Path) -> Result<Self> {
-        let contents = std::fs::read_to_string(path)?;
-        let state = toml::from_str(&contents)?;
-        Ok(state)
+        let content = std::fs::read_to_string(path)?;
+        match toml::from_str::<Self>(&content) {
+            Ok(mut state) => {
+                // If workspaces have no UUIDs (empty after migration), clear layout too
+                if state.workspaces.is_empty() && !state.layout.is_empty() {
+                    eprintln!("Clearing stale layout data from old format");
+                    state.layout.clear();
+                }
+                Ok(state)
+            }
+            Err(_) => {
+                eprintln!("Migrated state.toml to new format (old state discarded)");
+                Ok(Self::default())
+            }
+        }
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {

@@ -1,4 +1,5 @@
 use crate::config::{HumuState, WorkspaceEntry};
+use crate::id::WorkspaceId;
 use anyhow::{bail, Result};
 use std::path::Path;
 use std::process::Command;
@@ -20,7 +21,7 @@ impl WorkspaceManager {
         let name = self.unique_name(state, &path);
         state.workspaces.insert(
             name.clone(),
-            WorkspaceEntry { path },
+            WorkspaceEntry { id: WorkspaceId::new(), path, rooms: Default::default() },
         );
         Ok(name)
     }
@@ -94,10 +95,11 @@ impl WorkspaceManager {
             std::fs::remove_dir_all(&entry.path)?;
         }
 
-        if state.active_workspace.as_deref() == Some(name) {
-            state.active_workspace = None;
-            state.active_room = None;
-        }
+        // If the deleted workspace was active, clear the active workspace/room IDs
+        // (Task 5 will add proper name-to-ID lookup; for now just clear them)
+        let _ = name; // suppress unused warning until Task 5 wires name↔ID
+        state.active_workspace_id = None;
+        state.active_room_id = None;
 
         Ok(())
     }

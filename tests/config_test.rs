@@ -1,4 +1,6 @@
 use humu::config::{HumuConfig, HumuState, RoomLayout, SplitDirection, SplitNode, TabLayout, WorkspaceEntry};
+use humu::id::{WorkspaceId, RoomId};
+use humu::config::RoomEntry;
 use humu::preset::{expand_env, resolve_preset};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -31,11 +33,19 @@ fn state_round_trip() {
     let dir = tempdir().expect("tempdir failed");
     let path = dir.path().join("state.toml");
 
+    let ws_id = WorkspaceId::new();
+    let room_id = RoomId::new();
+
+    let mut rooms_map = std::collections::HashMap::new();
+    rooms_map.insert("room1".to_string(), RoomEntry { id: room_id });
+
     let mut workspaces = HashMap::new();
     workspaces.insert(
         "ws1".to_string(),
         WorkspaceEntry {
+            id: ws_id,
             path: PathBuf::from("/tmp/ws1"),
+            rooms: rooms_map,
         },
     );
 
@@ -49,6 +59,7 @@ fn state_round_trip() {
                 name: "tab1".to_string(),
                 split: SplitNode::Leaf {
                     preset: "shell".to_string(),
+                    session_id: None,
                 },
             }],
         },
@@ -56,8 +67,8 @@ fn state_round_trip() {
     layout.insert("ws1".to_string(), rooms);
 
     let state = HumuState {
-        active_workspace: Some("ws1".to_string()),
-        active_room: Some("room1".to_string()),
+        active_workspace_id: Some(ws_id),
+        active_room_id: Some(room_id),
         workspaces,
         layout,
     };
@@ -65,17 +76,21 @@ fn state_round_trip() {
     state.save(&path).expect("save failed");
     let loaded = HumuState::load(&path).expect("load failed");
 
-    assert_eq!(loaded.active_workspace, Some("ws1".to_string()));
-    assert_eq!(loaded.active_room, Some("room1".to_string()));
+    assert_eq!(loaded.active_workspace_id, Some(ws_id));
+    assert_eq!(loaded.active_room_id, Some(room_id));
     assert_eq!(
         loaded.workspaces["ws1"].path,
         PathBuf::from("/tmp/ws1")
     );
+    assert_eq!(loaded.workspaces["ws1"].id, ws_id);
     let room = &loaded.layout["ws1"]["room1"];
     assert_eq!(room.active_tab, 0);
     assert_eq!(room.tabs[0].name, "tab1");
     match &room.tabs[0].split {
-        SplitNode::Leaf { preset } => assert_eq!(preset, "shell"),
+        SplitNode::Leaf { preset, session_id } => {
+            assert_eq!(preset, "shell");
+            assert_eq!(*session_id, None);
+        }
         other => panic!("expected Leaf, got {other:?}"),
     }
 }
@@ -86,8 +101,8 @@ fn split_node_nested_round_trip() {
         direction: SplitDirection::Vertical,
         ratio: 0.5,
         children: vec![
-            SplitNode::Leaf { preset: "shell".to_string() },
-            SplitNode::Leaf { preset: "claude".to_string() },
+            SplitNode::Leaf { preset: "shell".to_string(), session_id: None },
+            SplitNode::Leaf { preset: "claude".to_string(), session_id: None },
         ],
     };
 
@@ -104,7 +119,82 @@ fn split_node_nested_round_trip() {
     }
 }
 
-// ── Task 3: Preset Expansion ──────────────────────────────────────────────────
+// ── Task 3: Typed IDs ─────────────────────────────────────────────────────────
+
+#[test]
+fn state_round_trip_with_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("state.toml");
+
+    let ws_id = WorkspaceId::new();
+    let room_id = RoomId::new();
+
+    let mut state = HumuState::default();
+    state.active_workspace_id = Some(ws_id);
+    state.active_room_id = Some(room_id);
+
+    let mut rooms = std::collections::HashMap::new();
+    rooms.insert("main".to_string(), RoomEntry { id: room_id });
+
+    state.workspaces.insert(
+        "humu".to_string(),
+        WorkspaceEntry {
+            id: ws_id,
+            path: PathBuf::from("/tmp/humu"),
+            rooms,
+        },
+    );
+
+    state.save(&path).unwrap();
+    let loaded = HumuState::load(&path).unwrap();
+
+    assert_eq!(loaded.active_workspace_id, Some(ws_id));
+    assert_eq!(loaded.active_room_id, Some(room_id));
+    assert_eq!(loaded.workspaces["humu"].id, ws_id);
+    assert_eq!(loaded.workspaces["humu"].rooms["main"].id, room_id);
+}
+
+#[test]
+fn split_node_leaf_with_session_id() {
+    let node = SplitNode::Leaf {
+        preset: "claude".to_string(),
+        session_id: Some("abc123".to_string()),
+    };
+    let toml_str = toml::to_string(&node).unwrap();
+    let parsed: SplitNode = toml::from_str(&toml_str).unwrap();
+    assert_eq!(parsed, node);
+}
+
+#[test]
+fn split_node_leaf_without_session_id() {
+    let node = SplitNode::Leaf {
+        preset: "shell".to_string(),
+        session_id: None,
+    };
+    let toml_str = toml::to_string(&node).unwrap();
+    let parsed: SplitNode = toml::from_str(&toml_str).unwrap();
+    assert_eq!(parsed, node);
+}
+
+#[test]
+fn state_load_old_format_returns_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("state.toml");
+    // Write old-format state with string active_workspace (no UUIDs)
+    std::fs::write(&path, r#"
+active_workspace = "humu"
+active_room = "main"
+
+[workspaces.humu]
+path = "/tmp/humu"
+"#).unwrap();
+    let loaded = HumuState::load(&path).unwrap();
+    // Old format can't deserialize into new types — returns default
+    assert!(loaded.active_workspace_id.is_none());
+    assert!(loaded.workspaces.is_empty());
+}
+
+// ── Task 4: Preset Expansion ──────────────────────────────────────────────────
 
 #[test]
 fn expand_env_known_var() {
