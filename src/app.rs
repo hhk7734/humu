@@ -126,6 +126,8 @@ pub struct App {
     pub dragging: Option<DragTarget>,
     /// When Some(id), only that pane is rendered filling the full terminal area.
     pub fullscreen_pane: Option<PaneId>,
+    pub palette: humu::tui::theme::Palette,
+    pub ui_config: humu::tui::theme::UiConfig,
 }
 
 impl App {
@@ -191,6 +193,11 @@ impl App {
             });
         });
 
+        let ui_config = humu::tui::theme::UiConfig {
+            simplified_ui: config.ui.simplified_ui,
+            rounded_corners: config.ui.rounded_corners,
+        };
+
         Ok(Self {
             config,
             state,
@@ -212,6 +219,8 @@ impl App {
             panel_widths: [20, 18],
             dragging: None,
             fullscreen_pane: None,
+            palette: humu::tui::theme::Palette::GITHUB_DARK,
+            ui_config,
         })
     }
 
