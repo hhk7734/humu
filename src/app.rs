@@ -190,7 +190,7 @@ impl App {
             running: true,
             panes,
             tabs,
-            next_pane_id: 0,
+            next_pane_id: PaneId(0),
             focused_pane: None,
             pane_presets,
             popup: PopupState::None,
@@ -1483,7 +1483,7 @@ impl App {
         let id = self.next_pane_id;
         self.panes.insert(id, pane);
         self.pane_presets.insert(id, preset_name.to_string());
-        self.next_pane_id += 1;
+        self.next_pane_id = PaneId(self.next_pane_id.0 + 1);
         Some(id)
     }
 
@@ -1975,7 +1975,7 @@ impl App {
                 let id = *next_id;
                 panes.insert(id, pane);
                 pane_presets.insert(id, preset.clone());
-                *next_id += 1;
+                *next_id = PaneId(next_id.0 + 1);
                 Some(SplitTree::Leaf(id))
             }
             SplitNode::Split {

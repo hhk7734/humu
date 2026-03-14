@@ -1,6 +1,6 @@
 use ratatui::layout::Rect;
 
-pub type PaneId = usize;
+pub use crate::id::PaneId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplitDirection {
