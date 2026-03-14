@@ -901,7 +901,8 @@ impl App {
         self.render_terminal_area(frame, panel_chunks[2]);
 
         // Status bar
-        let status = StatusBar::new(self.mode).error(self.last_error.as_deref());
+        let status = StatusBar::new(self.mode, &self.palette, &self.ui_config)
+            .error(self.last_error.as_deref());
         frame.render_widget(status, main_chunks[1]);
 
         // Render popup on top of everything when active.

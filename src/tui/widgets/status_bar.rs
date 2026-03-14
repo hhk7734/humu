@@ -1,140 +1,229 @@
 use crate::tui::input::Mode;
+use crate::tui::theme::{Palette, UiConfig};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::widgets::Widget;
 
 pub struct StatusBar<'a> {
     mode: Mode,
     error: Option<&'a str>,
+    palette: &'a Palette,
+    ui_config: &'a UiConfig,
 }
 
 impl<'a> StatusBar<'a> {
-    pub fn new(mode: Mode) -> Self {
-        Self { mode, error: None }
+    pub fn new(mode: Mode, palette: &'a Palette, ui_config: &'a UiConfig) -> Self {
+        Self {
+            mode,
+            error: None,
+            palette,
+            ui_config,
+        }
     }
 
     pub fn error(mut self, error: Option<&'a str>) -> Self {
         self.error = error;
         self
     }
+
+    fn mode_label(&self) -> &'static str {
+        match self.mode {
+            Mode::Normal => "NORMAL",
+            Mode::Locked => "LOCKED",
+            Mode::Pane => "PANE",
+            Mode::Tab => "TAB",
+            Mode::Workspace => "WORKSPACE",
+            Mode::Room => "ROOM",
+            Mode::Resize => "RESIZE",
+        }
+    }
+
+    fn mode_hints(&self) -> Vec<(&'static str, &'static str)> {
+        match self.mode {
+            Mode::Normal => vec![
+                ("g", "LOCK"),
+                ("p", "PANE"),
+                ("t", "TAB"),
+                ("w", "WORKSPACE"),
+                ("n", "RESIZE"),
+            ],
+            Mode::Locked => vec![("Ctrl+g", "UNLOCK")],
+            Mode::Pane => vec![
+                ("n", "New"),
+                ("d", "Split↓"),
+                ("r", "Split→"),
+                ("x", "Close"),
+                ("hjkl", "Move"),
+                ("f", "Fullscreen"),
+                ("Esc", "Back"),
+            ],
+            Mode::Tab => vec![
+                ("n", "New"),
+                ("x", "Close"),
+                ("h/l", "Prev/Next"),
+                ("1-9", "GoTo"),
+                ("r", "Rename"),
+                ("Esc", "Back"),
+            ],
+            Mode::Workspace => vec![
+                ("h/l", "Panel"),
+                ("j/k", "Navigate"),
+                ("Enter", "Select"),
+                ("n", "Create"),
+                ("x", "Delete"),
+                ("Esc", "Back"),
+            ],
+            Mode::Room => vec![
+                ("j/k", "Navigate"),
+                ("Enter", "Select"),
+                ("n", "Create"),
+                ("x", "Delete"),
+                ("Esc", "Back"),
+            ],
+            Mode::Resize => vec![
+                ("hjkl", "Resize"),
+                ("HJKL", "Reverse"),
+                ("Esc", "Back"),
+            ],
+        }
+    }
 }
 
 impl Widget for StatusBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let bg = Style::default().bg(Color::DarkGray).fg(Color::White);
-        for x in area.x..area.right() {
-            buf.set_string(x, area.y, " ", bg);
+        // Fill background with bg_secondary
+        for x in area.x..area.x + area.width {
+            buf[(x, area.y)]
+                .set_char(' ')
+                .set_style(Style::default().bg(self.palette.bg_secondary));
         }
 
-        let mut x = area.x;
-
-        // Render a prominent mode badge on the left.
-        let (mode_label, mode_bg) = mode_badge(self.mode);
-        let badge_style = Style::default()
-            .bg(mode_bg)
-            .fg(Color::Black)
-            .add_modifier(Modifier::BOLD);
-        let badge = format!(" {} ", mode_label);
-        buf.set_string(x, area.y, &badge, badge_style);
-        x += badge.len() as u16;
-
-        // Separator after badge.
-        buf.set_string(x, area.y, " ", bg);
-        x += 1;
-
-        // Show error on the right if present; otherwise show key hints.
+        // If error, show error message and return
         if let Some(err) = self.error {
             let err_style = Style::default()
-                .bg(Color::DarkGray)
-                .fg(Color::Red)
+                .fg(self.palette.accent_red)
+                .bg(self.palette.bg_secondary)
                 .add_modifier(Modifier::BOLD);
-            let msg: String = err.chars().take((area.width as usize).saturating_sub(x as usize - area.x as usize)).collect();
-            buf.set_string(x, area.y, &msg, err_style);
-        } else {
-            let hints = mode_hints(self.mode);
-
-            for (i, (key, label)) in hints.iter().enumerate() {
-                if i > 0 {
-                    let sep = " │ ";
-                    buf.set_string(x, area.y, sep, bg);
-                    x += sep.len() as u16;
+            let msg = format!(" ERROR: {} ", err);
+            for (i, ch) in msg.chars().enumerate() {
+                if area.x + i as u16 >= area.x + area.width {
+                    break;
                 }
+                buf[(area.x + i as u16, area.y)].set_char(ch).set_style(err_style);
+            }
+            return;
+        }
 
-                let key_style = bg.add_modifier(Modifier::BOLD);
-                buf.set_string(x, area.y, key, key_style);
-                x += key.len() as u16;
+        let sep = self.ui_config.tab_chars().separator;
+        let mode_color = self.palette.mode_color(&self.mode);
+        let mut x = area.x;
 
-                buf.set_string(x, area.y, " ", bg);
+        // Mode badge: [MODE_NAME] + separator
+        let mode_label = format!(" {} ", self.mode_label());
+        let mode_width = mode_label.chars().count() as u16;
+        for (i, ch) in mode_label.chars().enumerate() {
+            if x + i as u16 >= area.x + area.width {
+                break;
+            }
+            buf[(x + i as u16, area.y)].set_char(ch).set_style(
+                Style::default()
+                    .fg(self.palette.bg_primary)
+                    .bg(mode_color)
+                    .add_modifier(Modifier::BOLD),
+            );
+        }
+        x += mode_width;
+
+        // Separator: mode_color -> next_bg
+        let next_bg = if self.mode == Mode::Locked {
+            self.palette.bg_secondary
+        } else {
+            self.palette.bg_tertiary
+        };
+        if x < area.x + area.width {
+            buf[(x, area.y)]
+                .set_symbol(sep)
+                .set_style(Style::default().fg(mode_color).bg(next_bg));
+            x += 1;
+        }
+
+        // LOCKED mode: just show message
+        if self.mode == Mode::Locked {
+            let msg = " ── INTERFACE LOCKED ── ";
+            for (i, ch) in msg.chars().enumerate() {
+                if x + i as u16 >= area.x + area.width {
+                    break;
+                }
+                buf[(x + i as u16, area.y)].set_char(ch).set_style(
+                    Style::default()
+                        .fg(self.palette.fg_muted)
+                        .bg(self.palette.bg_secondary),
+                );
+            }
+            return;
+        }
+
+        // "Ctrl +" segment + separator
+        let ctrl_label = " Ctrl + ";
+        let ctrl_width = ctrl_label.len() as u16;
+        for (i, ch) in ctrl_label.chars().enumerate() {
+            if x + i as u16 >= area.x + area.width {
+                break;
+            }
+            buf[(x + i as u16, area.y)].set_char(ch).set_style(
+                Style::default()
+                    .fg(self.palette.accent_orange)
+                    .bg(self.palette.bg_tertiary)
+                    .add_modifier(Modifier::BOLD),
+            );
+        }
+        x += ctrl_width;
+
+        if x < area.x + area.width {
+            buf[(x, area.y)].set_symbol(sep).set_style(
+                Style::default()
+                    .fg(self.palette.bg_tertiary)
+                    .bg(self.palette.bg_secondary),
+            );
+            x += 1;
+        }
+
+        // Key hints
+        let hints = self.mode_hints();
+        for (key, label) in hints {
+            let hint_width = (key.len() + 1 + label.len() + 2) as u16;
+            if x + hint_width > area.x + area.width {
+                break;
+            }
+            // Space before
+            x += 1;
+            // Key character
+            for ch in key.chars() {
+                buf[(x, area.y)].set_char(ch).set_style(
+                    Style::default()
+                        .fg(self.palette.fg_muted)
+                        .bg(self.palette.bg_secondary),
+                );
                 x += 1;
-
-                buf.set_string(x, area.y, label, bg);
-                x += label.len() as u16;
+            }
+            // Space
+            buf[(x, area.y)]
+                .set_char(' ')
+                .set_style(Style::default().bg(self.palette.bg_secondary));
+            x += 1;
+            // Label
+            for ch in label.chars() {
+                if x >= area.x + area.width {
+                    break;
+                }
+                buf[(x, area.y)].set_char(ch).set_style(
+                    Style::default()
+                        .fg(self.palette.fg_secondary)
+                        .bg(self.palette.bg_secondary),
+                );
+                x += 1;
             }
         }
-    }
-}
-
-fn mode_badge(mode: Mode) -> (&'static str, Color) {
-    match mode {
-        Mode::Normal => ("NORMAL", Color::Blue),
-        Mode::Locked => ("LOCKED", Color::Gray),
-        Mode::Pane => ("PANE", Color::Green),
-        Mode::Tab => ("TAB", Color::Yellow),
-        Mode::Workspace => ("WORKSPACE", Color::Magenta),
-        Mode::Room => ("ROOM", Color::LightMagenta),
-        Mode::Resize => ("RESIZE", Color::Cyan),
-    }
-}
-
-fn mode_hints(mode: Mode) -> Vec<(&'static str, &'static str)> {
-    match mode {
-        Mode::Normal => vec![
-            ("Ctrl+", ""),
-            ("g", "LOCK"),
-            ("p", "PANE"),
-            ("t", "TAB"),
-            ("w", "WORKSPACE"),
-            ("r", "ROOM"),
-            ("n", "RESIZE"),
-        ],
-        Mode::Locked => vec![("Ctrl+g", "UNLOCK")],
-        Mode::Pane => vec![
-            ("n", "New"),
-            ("d", "Split↓"),
-            ("r", "Split→"),
-            ("x", "Close"),
-            ("hjkl", "Move"),
-            ("f", "Fullscreen"),
-            ("Esc", "Back"),
-        ],
-        Mode::Tab => vec![
-            ("n", "New"),
-            ("x", "Close"),
-            ("h/l", "Prev/Next"),
-            ("1-9", "GoTo"),
-            ("r", "Rename"),
-            ("Esc", "Back"),
-        ],
-        Mode::Workspace => vec![
-            ("h/l", "Panel"),
-            ("j/k", "Navigate"),
-            ("Enter", "Select"),
-            ("n", "Create"),
-            ("x", "Delete"),
-            ("Esc", "Back"),
-        ],
-        Mode::Room => vec![
-            ("j/k", "Navigate"),
-            ("Enter", "Select"),
-            ("n", "Create"),
-            ("x", "Delete"),
-            ("Esc", "Back"),
-        ],
-        Mode::Resize => vec![
-            ("hjkl", "Resize"),
-            ("HJKL", "Reverse"),
-            ("Esc", "Back"),
-        ],
     }
 }
