@@ -1,5 +1,4 @@
 use humu::config::{humu_dir, HumuConfig, HumuState, RoomLayout, SplitDirection as CfgDir, SplitNode, TabLayout};
-use humu::id::RoomId;
 use humu::git::room::RoomManager;
 use humu::git::workspace::WorkspaceManager;
 use humu::hook::http::{generate_hook_files, AgentState, HookEvent, HookServer};
@@ -1754,6 +1753,25 @@ impl App {
     }
 
     fn restore_selection(&mut self) {
+        // Prune stale room entries for every workspace before restoring selection.
+        // Discover actual rooms from git and remove any persisted entries that no
+        // longer correspond to a live worktree.
+        let ws_names: Vec<String> = self.state.workspaces.keys().cloned().collect();
+        for ws_name in ws_names {
+            if let Some(ws_path) = self.state.workspaces.get(&ws_name).map(|w| w.path.clone()) {
+                let mgr = RoomManager::new();
+                if let Ok(rooms) = mgr.list(&ws_path) {
+                    let discovered: std::collections::HashSet<String> =
+                        rooms.into_iter().map(|r| r.branch).collect();
+                    humu::config::prune_stale_rooms_for_workspace(
+                        &mut self.state,
+                        &ws_name,
+                        &discovered,
+                    );
+                }
+            }
+        }
+
         if let Some(ws_name) = self.active_workspace_name() {
             let names: Vec<_> = {
                 let mut n: Vec<_> = self.state.workspaces.keys().cloned().collect();
@@ -2109,13 +2127,11 @@ impl App {
             Some(n) => n,
             None => return,
         };
-        if let Some(ws) = self.state.workspaces.get_mut(&ws_name) {
-            // Create room entry if not present yet (lazy ID assignment).
-            let room_id = ws
-                .rooms
-                .entry(name.to_string())
-                .or_insert_with(|| humu::config::RoomEntry { id: RoomId::new() })
-                .id;
+        if let Some(room_id) = humu::config::ensure_room_id_for_workspace(
+            &mut self.state,
+            &ws_name,
+            name,
+        ) {
             self.state.active_room_id = Some(room_id);
         }
     }

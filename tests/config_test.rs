@@ -1,8 +1,9 @@
 use humu::config::{HumuConfig, HumuState, RoomLayout, SplitDirection, SplitNode, TabLayout, WorkspaceEntry};
+use humu::config::{ensure_room_id_for_workspace, prune_stale_rooms_for_workspace};
 use humu::id::{WorkspaceId, RoomId};
 use humu::config::RoomEntry;
 use humu::preset::{expand_env, resolve_preset};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use tempfile::tempdir;
 
@@ -228,4 +229,49 @@ fn resolve_preset_expands_env() {
     let (cmd, args) = resolve_preset("$TEST_HUMU_CMD", &["$TEST_HUMU_ARG", "literal"]);
     assert_eq!(cmd, "my_cmd");
     assert_eq!(args, vec!["my_arg", "literal"]);
+}
+
+// ── Task 11: Room ID lazy assignment and pruning ───────────────────────────────
+
+#[test]
+fn ensure_room_id_creates_new_id() {
+    let mut state = HumuState::default();
+    let ws_id = WorkspaceId::new();
+    state.workspaces.insert("test".to_string(), WorkspaceEntry {
+        id: ws_id,
+        path: PathBuf::from("/tmp/test"),
+        rooms: HashMap::new(),
+    });
+
+    // First call creates ID
+    let id1 = ensure_room_id_for_workspace(&mut state, "test", "main").unwrap();
+    // Second call returns same ID
+    let id2 = ensure_room_id_for_workspace(&mut state, "test", "main").unwrap();
+    assert_eq!(id1, id2);
+
+    // Different room gets different ID
+    let id3 = ensure_room_id_for_workspace(&mut state, "test", "dev").unwrap();
+    assert_ne!(id1, id3);
+}
+
+#[test]
+fn prune_removes_stale_rooms() {
+    let mut state = HumuState::default();
+    let ws_id = WorkspaceId::new();
+    let mut rooms = HashMap::new();
+    rooms.insert("main".to_string(), RoomEntry { id: RoomId::new() });
+    rooms.insert("deleted-branch".to_string(), RoomEntry { id: RoomId::new() });
+    state.workspaces.insert("test".to_string(), WorkspaceEntry {
+        id: ws_id,
+        path: PathBuf::from("/tmp/test"),
+        rooms,
+    });
+
+    // Only "main" exists on disk
+    let discovered = HashSet::from(["main".to_string()]);
+    prune_stale_rooms_for_workspace(&mut state, "test", &discovered);
+
+    let ws = &state.workspaces["test"];
+    assert!(ws.rooms.contains_key("main"));
+    assert!(!ws.rooms.contains_key("deleted-branch"));
 }

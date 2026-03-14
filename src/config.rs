@@ -1,6 +1,6 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::id::{WorkspaceId, RoomId};
@@ -185,5 +185,39 @@ impl HumuState {
         let contents = toml::to_string_pretty(self)?;
         std::fs::write(path, contents)?;
         Ok(())
+    }
+}
+
+// ── Room ID helpers ────────────────────────────────────────────────────────────
+
+/// Returns the `RoomId` for `room_name` within the named workspace, creating a
+/// new entry if one does not already exist (lazy assignment).
+///
+/// Returns `None` if `workspace_name` is not found in `state`.
+pub fn ensure_room_id_for_workspace(
+    state: &mut HumuState,
+    workspace_name: &str,
+    room_name: &str,
+) -> Option<RoomId> {
+    let ws = state.workspaces.get_mut(workspace_name)?;
+    if let Some(entry) = ws.rooms.get(room_name) {
+        Some(entry.id)
+    } else {
+        let id = RoomId::new();
+        ws.rooms.insert(room_name.to_string(), RoomEntry { id });
+        Some(id)
+    }
+}
+
+/// Removes any room entries from the named workspace whose names are not present
+/// in `discovered_rooms`. Silently does nothing if `workspace_name` is not
+/// found in `state`.
+pub fn prune_stale_rooms_for_workspace(
+    state: &mut HumuState,
+    workspace_name: &str,
+    discovered_rooms: &HashSet<String>,
+) {
+    if let Some(ws) = state.workspaces.get_mut(workspace_name) {
+        ws.rooms.retain(|name, _| discovered_rooms.contains(name));
     }
 }
