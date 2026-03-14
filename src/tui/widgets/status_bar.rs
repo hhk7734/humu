@@ -29,24 +29,21 @@ impl<'a> StatusBar<'a> {
 
     fn mode_label(&self) -> &'static str {
         match self.mode {
-            Mode::Normal => "NORMAL",
+            Mode::Terminal => "TERMINAL",
             Mode::Locked => "LOCKED",
             Mode::Pane => "PANE",
-            Mode::Tab => "TAB",
             Mode::Workspace => "WORKSPACE",
             Mode::Room => "ROOM",
-            Mode::Resize => "RESIZE",
         }
     }
 
     fn mode_hints(&self) -> Vec<(&'static str, &'static str)> {
         match self.mode {
-            Mode::Normal => vec![
+            Mode::Terminal => vec![
                 ("g", "LOCK"),
                 ("p", "PANE"),
-                ("t", "TAB"),
                 ("w", "WORKSPACE"),
-                ("n", "RESIZE"),
+                ("r", "ROOM"),
             ],
             Mode::Locked => vec![("Ctrl+g", "UNLOCK")],
             Mode::Pane => vec![
@@ -54,36 +51,27 @@ impl<'a> StatusBar<'a> {
                 ("d", "Split↓"),
                 ("r", "Split→"),
                 ("x", "Close"),
-                ("hjkl", "Move"),
-                ("f", "Fullscreen"),
-                ("Esc", "Back"),
-            ],
-            Mode::Tab => vec![
-                ("n", "New"),
-                ("x", "Close"),
-                ("h/l", "Prev/Next"),
-                ("1-9", "GoTo"),
-                ("r", "Rename"),
+                ("←→↑↓", "Move"),
+                ("S+←→↑↓", "Resize"),
+                ("f", "Full"),
+                ("t", "Tab"),
+                ("c", "CloseTab"),
                 ("Esc", "Back"),
             ],
             Mode::Workspace => vec![
-                ("h/l", "Panel"),
-                ("j/k", "Navigate"),
+                ("↑↓", "Navigate"),
                 ("Enter", "Select"),
                 ("n", "Create"),
                 ("x", "Delete"),
+                ("S+←→", "Resize"),
                 ("Esc", "Back"),
             ],
             Mode::Room => vec![
-                ("j/k", "Navigate"),
+                ("↑↓", "Navigate"),
                 ("Enter", "Select"),
                 ("n", "Create"),
                 ("x", "Delete"),
-                ("Esc", "Back"),
-            ],
-            Mode::Resize => vec![
-                ("hjkl", "Resize"),
-                ("HJKL", "Reverse"),
+                ("S+←→", "Resize"),
                 ("Esc", "Back"),
             ],
         }
@@ -164,8 +152,8 @@ impl Widget for StatusBar<'_> {
             return;
         }
 
-        // "Ctrl +" segment only in Normal mode (hints are Ctrl+ shortcuts).
-        if self.mode == Mode::Normal {
+        // "Ctrl +" segment only in Terminal mode (hints are Ctrl+ shortcuts).
+        if self.mode == Mode::Terminal {
             let ctrl_label = " Ctrl + ";
             let ctrl_width = ctrl_label.len() as u16;
             for (i, ch) in ctrl_label.chars().enumerate() {

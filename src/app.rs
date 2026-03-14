@@ -182,7 +182,7 @@ impl App {
         Ok(Self {
             config,
             state,
-            mode: Mode::Normal,
+            mode: Mode::Terminal,
             focus: FocusedPanel::Terminal,
             workspace_selected: None,
             room_selected: None,
@@ -214,6 +214,11 @@ impl App {
         let mut terminal = Terminal::new(backend)?;
 
         self.restore_selection();
+
+        if self.state.active_room.is_none() {
+            self.mode = Mode::Workspace;
+            self.focus = FocusedPanel::Workspace;
+        }
 
         while self.running {
             terminal.draw(|frame| self.render(frame))?;
@@ -309,13 +314,13 @@ impl App {
         let action = *action;
 
         match key.code {
-            KeyCode::Char('j') | KeyCode::Down => {
+            KeyCode::Down => {
                 if selected + 1 < presets.len() {
                     selected += 1;
                 }
                 self.popup = PopupState::PresetSelector { presets, selected, action };
             }
-            KeyCode::Char('k') | KeyCode::Up => {
+            KeyCode::Up => {
                 selected = selected.saturating_sub(1);
                 self.popup = PopupState::PresetSelector { presets, selected, action };
             }
@@ -1078,7 +1083,6 @@ impl App {
                     self.focus = FocusedPanel::Room;
                 }
             }
-            Action::ExitToNormal => self.mode = Mode::Normal,
             Action::Quit => self.running = false,
 
             Action::FocusWorkspacePanel => self.focus = FocusedPanel::Workspace,
@@ -1121,15 +1125,13 @@ impl App {
             Action::ClosePane => self.close_pane(),
             Action::MoveFocus(dir) => self.move_focus(dir),
             Action::ToggleFullscreen => self.toggle_fullscreen(),
-            Action::RenameTab => {} // stub: inline rename popup deferred
 
             // Workspace/room actions
             Action::Create => self.show_create_dialog(),
             Action::Delete => self.show_delete_dialog(),
 
             // Resize actions
-            Action::Resize(dir) => self.handle_resize_action(dir, false),
-            Action::ResizeReverse(dir) => self.handle_resize_action(dir, true),
+            Action::Resize(dir) => self.handle_resize_action(dir),
 
             _ => {}
         }
@@ -1139,20 +1141,34 @@ impl App {
     fn handle_click(&mut self, x: u16, y: u16) {
         let pos = Position::new(x, y);
         if self.panel_rects.workspace.contains(pos) {
-            self.mode = Mode::Workspace;
-            self.focus = FocusedPanel::Workspace;
-            let row = y.saturating_sub(self.panel_rects.workspace.y + 1); // +1 for border
-            self.workspace_selected = Some(row as usize);
+            let row = y.saturating_sub(self.panel_rects.workspace.y + 1) as usize;
+            let count = self.state.workspaces.len();
+            if row < count {
+                self.workspace_selected = Some(row);
+                self.switch_to_selected_room();
+                self.mode = Mode::Room;
+                self.focus = FocusedPanel::Room;
+            } else {
+                self.mode = Mode::Workspace;
+                self.focus = FocusedPanel::Workspace;
+            }
         } else if self.panel_rects.room.contains(pos) {
-            self.mode = Mode::Room;
-            self.focus = FocusedPanel::Room;
-            let row = y.saturating_sub(self.panel_rects.room.y + 1);
-            self.room_selected = Some(row as usize);
+            let row = y.saturating_sub(self.panel_rects.room.y + 1) as usize;
+            let count = self.room_items().len();
+            if row < count {
+                self.room_selected = Some(row);
+                self.select_current();
+                self.mode = Mode::Terminal;
+                self.focus = FocusedPanel::Terminal;
+            } else {
+                self.mode = Mode::Room;
+                self.focus = FocusedPanel::Room;
+            }
         } else if self.panel_rects.tab_bar.contains(pos) {
             // Determine which tab or "+" was clicked.
             self.handle_tab_bar_click(x);
         } else if self.panel_rects.terminal.contains(pos) {
-            self.mode = Mode::Normal;
+            self.mode = Mode::Terminal;
             self.focus = FocusedPanel::Terminal;
             let pane_area = {
                 let r = self.panel_rects.terminal;
@@ -1214,29 +1230,24 @@ impl App {
         }
     }
 
-    /// Handle keyboard resize actions (Resize / ResizeReverse).
-    fn handle_resize_action(&mut self, dir: NavDirection, reverse: bool) {
+    /// Handle keyboard resize actions.
+    fn handle_resize_action(&mut self, dir: NavDirection) {
         match self.focus {
             FocusedPanel::Terminal => {
                 if let Some(pane_id) = self.focused_pane
                     && let Some(tree) = self.tabs.active_tree_mut()
                 {
-                    // Positive delta grows the first child; direction determines sign.
                     let sign: f64 = match dir {
-                        NavDirection::Left | NavDirection::Up => {
-                            if reverse { 0.05 } else { -0.05 }
-                        }
-                        NavDirection::Right | NavDirection::Down => {
-                            if reverse { -0.05 } else { 0.05 }
-                        }
+                        NavDirection::Left | NavDirection::Up => -0.05,
+                        NavDirection::Right | NavDirection::Down => 0.05,
                     };
                     tree.resize(pane_id, sign);
                 }
             }
             FocusedPanel::Workspace => {
                 let delta: i16 = match dir {
-                    NavDirection::Right => if reverse { -1 } else { 1 },
-                    NavDirection::Left => if reverse { 1 } else { -1 },
+                    NavDirection::Right => 1,
+                    NavDirection::Left => -1,
                     _ => 0,
                 };
                 self.panel_widths[0] =
@@ -1244,8 +1255,8 @@ impl App {
             }
             FocusedPanel::Room => {
                 let delta: i16 = match dir {
-                    NavDirection::Right => if reverse { -1 } else { 1 },
-                    NavDirection::Left => if reverse { 1 } else { -1 },
+                    NavDirection::Right => 1,
+                    NavDirection::Left => -1,
                     _ => 0,
                 };
                 self.panel_widths[1] =
@@ -1654,8 +1665,15 @@ impl App {
 
     fn select_current(&mut self) {
         match self.focus {
-            FocusedPanel::Workspace | FocusedPanel::Room => {
+            FocusedPanel::Workspace => {
                 self.switch_to_selected_room();
+                self.mode = Mode::Room;
+                self.focus = FocusedPanel::Room;
+            }
+            FocusedPanel::Room => {
+                self.switch_to_selected_room();
+                self.mode = Mode::Terminal;
+                self.focus = FocusedPanel::Terminal;
             }
             FocusedPanel::Terminal => {}
         }

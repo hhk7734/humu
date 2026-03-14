@@ -38,13 +38,11 @@ impl Palette {
 
     pub fn mode_color(&self, mode: &Mode) -> Color {
         match mode {
-            Mode::Normal => self.accent_green,
+            Mode::Terminal => self.accent_green,
             Mode::Locked => self.fg_secondary,
             Mode::Pane => self.accent_blue,
-            Mode::Tab => self.accent_orange,
             Mode::Workspace => self.accent_purple,
             Mode::Room => self.accent_magenta,
-            Mode::Resize => self.accent_yellow,
         }
     }
 }

@@ -15,7 +15,7 @@
 │              ││           ││ │ $  ▋                                 │ │
 │              ││           ││ ╰──────────────────────────────────────╯ │
 ╰──────────────╯╰───────────╯╰──────────────────────────────────────────╯
- NORMAL ▸ Ctrl+  g LOCK  p PANE  t TAB  w WORKSPACE  r ROOM  n RESIZE
+ TERMINAL ▸ Ctrl+  g LOCK  p PANE  w WORKSPACE  r ROOM
 ```
 
 Three panels separated by draggable resize handles, plus a status bar.
@@ -25,7 +25,7 @@ Three panels separated by draggable resize handles, plus a status bar.
 - **WorkspacePanel**: Lists workspaces (repo names). Rounded border, `accent_blue` when focused, `fg_muted` when unfocused. Selected item: `▸` prefix, bold. Spinner `⠋` when Claude is active.
 - **RoomPanel**: Lists rooms in the selected workspace. Same styling as WorkspacePanel. Default room always first.
 - **Terminal Area**: Tab bar (Powerline-style) at top with `+` button. Each tab contains one or more split panes (vertical/horizontal) with rounded borders and preset title. Panes run presets with `cwd` set to the room's working directory.
-- **StatusBar**: Borderless ribbon with Powerline mode badge (color-coded per mode) and context-aware key hints. `Ctrl+` prefix only in Normal mode. Errors displayed in red, auto-clear on next keypress.
+- **StatusBar**: Borderless ribbon with Powerline mode badge (color-coded per mode) and context-aware key hints. `Ctrl+` prefix only in Terminal mode. Errors displayed in red, auto-clear on next keypress.
 
 ## Terminal Area
 
@@ -35,28 +35,32 @@ Three panels separated by draggable resize handles, plus a status bar.
 
 ## Preset Selector
 
-When creating a new tab or pane, a popup lists available presets from `config.toml`. Navigate with `j/k`, select with `Enter`, dismiss with `Esc`. Blocked if no room is selected.
+When creating a new tab or pane, a popup lists available presets from `config.toml`. Navigate with arrow keys, select with `Enter`, dismiss with `Esc`. Blocked if no room is selected.
 
 ## Keybindings
 
-Zellij-style modal approach. Normal mode passes all input to the active terminal pane. Press a Ctrl key to enter a mode, single keys act within that mode.
+Modal approach. Terminal mode passes all input to the active terminal pane. Press a Ctrl key to enter a mode. Arrow keys only — no hjkl.
 
-### Mode Entry (from Normal mode)
+### Mode Switching
 
-| Key | Mode | Purpose |
-| --- | ---- | ------- |
-| `Ctrl+g` | Locked | Pass all input to terminal |
-| `Ctrl+p` | Pane | Manage splits within a tab |
-| `Ctrl+t` | Tab | Manage tabs |
-| `Ctrl+w` | Workspace | Navigate workspaces and rooms |
-| `Ctrl+r` | Room | Navigate rooms |
-| `Ctrl+n` | Resize | Resize panels and panes |
+From any sub-mode, `Ctrl+w/r/t/p` switches directly to that mode. Pressing the same Ctrl+key that entered the current mode toggles back to Terminal.
+
+| Key | Target Mode |
+| --- | ----------- |
+| `Ctrl+g` | Locked (toggle from Terminal) |
+| `Ctrl+p` | Pane |
+| `Ctrl+w` | Workspace |
+| `Ctrl+r` | Room |
+| `Ctrl+t` | Terminal |
+| `Ctrl+q` | Quit (from Terminal only) |
 
 ### Locked Mode
 
-`Ctrl+g` toggles between Normal and Locked. In Locked mode, all input passes directly to the terminal. For programs that conflict with humu's Ctrl key combos.
+`Ctrl+g` toggles between Terminal and Locked. In Locked mode, all input passes directly to the terminal. For programs that conflict with humu's Ctrl key combos.
 
 ### Pane Mode
+
+Manages panes and tabs within the terminal area.
 
 | Key | Action |
 | --- | ------ |
@@ -64,71 +68,54 @@ Zellij-style modal approach. Normal mode passes all input to the active terminal
 | `d` | Split down |
 | `r` | Split right |
 | `x` | Close pane |
-| `h/j/k/l` | Move focus between panes |
+| `←↓↑→` | Move focus between panes |
+| `Shift+←↓↑→` | Resize pane |
 | `f` | Toggle fullscreen |
-| `Esc` / `Ctrl+p` | Back to Normal |
-
-### Tab Mode
-
-| Key | Action |
-| --- | ------ |
-| `n` | New tab (select preset) |
-| `x` | Close tab |
-| `h/l` | Previous / next tab |
+| `t` | New tab |
+| `c` | Close tab |
+| `[` / `]` | Previous / next tab |
 | `1-9` | Go to tab N |
-| `r` | Rename tab |
-| `Esc` / `Ctrl+t` | Back to Normal |
+| `Esc` / `Ctrl+p` | Back to Terminal |
 
 ### Workspace Mode
 
 | Key | Action |
 | --- | ------ |
-| `h/l` | Focus workspace panel / room panel |
-| `j/k` | Navigate list up / down |
+| `↑/↓` | Navigate list |
 | `Enter` | Select |
 | `n` | Create workspace or room (context-dependent) |
 | `x` | Delete workspace or room (context-dependent) |
-| `Esc` / `Ctrl+w` | Back to Normal |
+| `Shift+←/→` | Resize workspace panel |
+| `Esc` / `Ctrl+w` | Back to Terminal |
 
 ### Room Mode
 
 | Key | Action |
 | --- | ------ |
-| `j/k` | Navigate list up / down |
+| `↑/↓` | Navigate list |
 | `Enter` | Select room |
 | `n` | Create room |
 | `x` | Delete room |
-| `Esc` / `Ctrl+r` | Back to Normal |
-
-### Resize Mode
-
-Targets the boundary nearest to the focused element.
-
-| Key | Action |
-| --- | ------ |
-| `h/j/k/l` | Resize in direction |
-| `H/J/K/L` | Resize in opposite direction |
-| `Esc` / `Ctrl+n` | Back to Normal |
+| `Shift+←/→` | Resize room panel |
+| `Esc` / `Ctrl+r` | Back to Terminal |
 
 ### Shared (all modes except Locked)
 
 | Key | Action |
 | --- | ------ |
-| `Alt+h/l` | Move focus left / right between panels |
-| `Alt+j/k` | Move focus up / down within panel |
+| `Alt+←/→` | Move focus left / right between panels |
+| `Alt+↑/↓` | Navigate up / down within panel |
 
 ### Mouse Support
 
-Clicking a panel enters the corresponding mode: workspace panel → Workspace mode, room panel → Room mode, terminal area → Normal mode. Clicking tabs, `+` button, and dragging resize handles are also supported. All mouse interactions have keyboard equivalents.
+Clicking a panel enters the corresponding mode: workspace panel → Workspace mode, room panel → Room mode, terminal area → Terminal mode. Clicking tabs, `+` button, and dragging resize handles are also supported. All mouse interactions have keyboard equivalents.
 
 ## Status Bar Mode Colors
 
 | Mode | Color |
 |---|---|
-| NORMAL | green (#3fb950) |
+| TERMINAL | green (#3fb950) |
 | LOCKED | gray (#8b949e) |
 | PANE | blue (#58a6ff) |
-| TAB | orange (#d29922) |
 | WORKSPACE | purple (#bc8cff) |
 | ROOM | magenta (#f778ba) |
-| RESIZE | yellow (#e3b341) |

@@ -19,93 +19,98 @@ fn ctrl(c: char) -> KeyEvent {
     }
 }
 
-fn alt(c: char) -> KeyEvent {
+fn alt_arrow(code: KeyCode) -> KeyEvent {
     KeyEvent {
-        code: KeyCode::Char(c),
+        code,
         modifiers: KeyModifiers::ALT,
         kind: KeyEventKind::Press,
         state: KeyEventState::NONE,
     }
 }
 
-// ── Normal mode ──────────────────────────────────────────────────────────────
-
-#[test]
-fn normal_ctrl_w_enters_workspace() {
-    assert!(matches!(
-        handle_key(Mode::Normal, ctrl('w')),
-        Action::EnterMode(Mode::Workspace)
-    ));
+fn shift_arrow(code: KeyCode) -> KeyEvent {
+    KeyEvent {
+        code,
+        modifiers: KeyModifiers::SHIFT,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    }
 }
 
-#[test]
-fn normal_ctrl_p_enters_pane() {
-    assert!(matches!(
-        handle_key(Mode::Normal, ctrl('p')),
-        Action::EnterMode(Mode::Pane)
-    ));
-}
+// ── Terminal mode ───────────────────────────────────────────────────────────
 
 #[test]
-fn normal_ctrl_t_enters_tab() {
+fn terminal_ctrl_g_enters_locked() {
     assert!(matches!(
-        handle_key(Mode::Normal, ctrl('t')),
-        Action::EnterMode(Mode::Tab)
-    ));
-}
-
-#[test]
-fn normal_ctrl_g_enters_locked() {
-    assert!(matches!(
-        handle_key(Mode::Normal, ctrl('g')),
+        handle_key(Mode::Terminal, ctrl('g')),
         Action::EnterMode(Mode::Locked)
     ));
 }
 
 #[test]
-fn normal_ctrl_n_enters_resize() {
+fn terminal_ctrl_p_enters_pane() {
     assert!(matches!(
-        handle_key(Mode::Normal, ctrl('n')),
-        Action::EnterMode(Mode::Resize)
+        handle_key(Mode::Terminal, ctrl('p')),
+        Action::EnterMode(Mode::Pane)
     ));
 }
 
 #[test]
-fn normal_ctrl_q_quits() {
-    assert!(matches!(handle_key(Mode::Normal, ctrl('q')), Action::Quit));
+fn terminal_ctrl_w_enters_workspace() {
+    assert!(matches!(
+        handle_key(Mode::Terminal, ctrl('w')),
+        Action::EnterMode(Mode::Workspace)
+    ));
 }
 
 #[test]
-fn normal_plain_key_passes_through() {
+fn terminal_ctrl_r_enters_room() {
     assert!(matches!(
-        handle_key(Mode::Normal, key(KeyCode::Char('a'))),
+        handle_key(Mode::Terminal, ctrl('r')),
+        Action::EnterMode(Mode::Room)
+    ));
+}
+
+#[test]
+fn terminal_ctrl_q_quits() {
+    assert!(matches!(handle_key(Mode::Terminal, ctrl('q')), Action::Quit));
+}
+
+#[test]
+fn terminal_plain_key_passes_through() {
+    assert!(matches!(
+        handle_key(Mode::Terminal, key(KeyCode::Char('a'))),
         Action::PassThrough(_)
     ));
 }
 
 #[test]
-fn normal_alt_h_moves_focus_left() {
+fn terminal_alt_arrows() {
     assert!(matches!(
-        handle_key(Mode::Normal, alt('h')),
+        handle_key(Mode::Terminal, alt_arrow(KeyCode::Left)),
         Action::MoveFocus(Direction::Left)
     ));
-}
-
-#[test]
-fn normal_alt_j_navigates_down() {
     assert!(matches!(
-        handle_key(Mode::Normal, alt('j')),
+        handle_key(Mode::Terminal, alt_arrow(KeyCode::Right)),
+        Action::MoveFocus(Direction::Right)
+    ));
+    assert!(matches!(
+        handle_key(Mode::Terminal, alt_arrow(KeyCode::Down)),
         Action::NavigateDown
+    ));
+    assert!(matches!(
+        handle_key(Mode::Terminal, alt_arrow(KeyCode::Up)),
+        Action::NavigateUp
     ));
 }
 
-// ── Locked mode ──────────────────────────────────────────────────────────────
+// ── Locked mode ─────────────────────────────────────────────────────────────
 
 #[test]
 fn locked_ctrl_g_unlocks() {
     assert!(matches!(
         handle_key(Mode::Locked, ctrl('g')),
-        Action::EnterMode(Mode::Normal)
+        Action::EnterMode(Mode::Terminal)
     ));
 }
 
@@ -117,7 +122,7 @@ fn locked_other_keys_pass_through() {
     ));
 }
 
-// ── Pane mode ────────────────────────────────────────────────────────────────
+// ── Pane mode ───────────────────────────────────────────────────────────────
 
 #[test]
 fn pane_n_creates_new() {
@@ -130,22 +135,42 @@ fn pane_x_closes() {
 }
 
 #[test]
-fn pane_hjkl_moves_focus() {
+fn pane_arrows_move_focus() {
     assert!(matches!(
-        handle_key(Mode::Pane, key(KeyCode::Char('h'))),
+        handle_key(Mode::Pane, key(KeyCode::Left)),
         Action::MoveFocus(Direction::Left)
     ));
     assert!(matches!(
-        handle_key(Mode::Pane, key(KeyCode::Char('j'))),
+        handle_key(Mode::Pane, key(KeyCode::Down)),
         Action::MoveFocus(Direction::Down)
     ));
     assert!(matches!(
-        handle_key(Mode::Pane, key(KeyCode::Char('k'))),
+        handle_key(Mode::Pane, key(KeyCode::Up)),
         Action::MoveFocus(Direction::Up)
     ));
     assert!(matches!(
-        handle_key(Mode::Pane, key(KeyCode::Char('l'))),
+        handle_key(Mode::Pane, key(KeyCode::Right)),
         Action::MoveFocus(Direction::Right)
+    ));
+}
+
+#[test]
+fn pane_shift_arrows_resize() {
+    assert!(matches!(
+        handle_key(Mode::Pane, shift_arrow(KeyCode::Left)),
+        Action::Resize(Direction::Left)
+    ));
+    assert!(matches!(
+        handle_key(Mode::Pane, shift_arrow(KeyCode::Down)),
+        Action::Resize(Direction::Down)
+    ));
+    assert!(matches!(
+        handle_key(Mode::Pane, shift_arrow(KeyCode::Up)),
+        Action::Resize(Direction::Up)
+    ));
+    assert!(matches!(
+        handle_key(Mode::Pane, shift_arrow(KeyCode::Right)),
+        Action::Resize(Direction::Right)
     ));
 }
 
@@ -153,13 +178,13 @@ fn pane_hjkl_moves_focus() {
 fn pane_esc_exits() {
     assert!(matches!(
         handle_key(Mode::Pane, key(KeyCode::Esc)),
-        Action::ExitToNormal
+        Action::EnterMode(Mode::Terminal)
     ));
 }
 
 #[test]
 fn pane_ctrl_p_exits() {
-    assert!(matches!(handle_key(Mode::Pane, ctrl('p')), Action::ExitToNormal));
+    assert!(matches!(handle_key(Mode::Pane, ctrl('p')), Action::EnterMode(Mode::Terminal)));
 }
 
 #[test]
@@ -170,52 +195,32 @@ fn pane_f_toggles_fullscreen() {
     ));
 }
 
-// ── Tab mode ─────────────────────────────────────────────────────────────────
-
 #[test]
-fn tab_n_creates_new() {
-    assert!(matches!(handle_key(Mode::Tab, key(KeyCode::Char('n'))), Action::NewTab));
-}
-
-#[test]
-fn tab_h_prev_l_next() {
+fn pane_tab_management() {
+    assert!(matches!(handle_key(Mode::Pane, key(KeyCode::Char('t'))), Action::NewTab));
+    assert!(matches!(handle_key(Mode::Pane, key(KeyCode::Char('c'))), Action::CloseTab));
+    assert!(matches!(handle_key(Mode::Pane, key(KeyCode::Char('['))), Action::PrevTab));
+    assert!(matches!(handle_key(Mode::Pane, key(KeyCode::Char(']'))), Action::NextTab));
     assert!(matches!(
-        handle_key(Mode::Tab, key(KeyCode::Char('h'))),
-        Action::PrevTab
-    ));
-    assert!(matches!(
-        handle_key(Mode::Tab, key(KeyCode::Char('l'))),
-        Action::NextTab
-    ));
-}
-
-#[test]
-fn tab_digit_goes_to_tab() {
-    assert!(matches!(
-        handle_key(Mode::Tab, key(KeyCode::Char('1'))),
+        handle_key(Mode::Pane, key(KeyCode::Char('1'))),
         Action::GoToTab(0)
     ));
     assert!(matches!(
-        handle_key(Mode::Tab, key(KeyCode::Char('3'))),
+        handle_key(Mode::Pane, key(KeyCode::Char('3'))),
         Action::GoToTab(2)
     ));
 }
 
-#[test]
-fn tab_ctrl_t_exits() {
-    assert!(matches!(handle_key(Mode::Tab, ctrl('t')), Action::ExitToNormal));
-}
-
-// ── Workspace mode ───────────────────────────────────────────────────────────
+// ── Workspace mode ──────────────────────────────────────────────────────────
 
 #[test]
-fn workspace_jk_navigates() {
+fn workspace_arrows_navigate() {
     assert!(matches!(
-        handle_key(Mode::Workspace, key(KeyCode::Char('j'))),
+        handle_key(Mode::Workspace, key(KeyCode::Down)),
         Action::NavigateDown
     ));
     assert!(matches!(
-        handle_key(Mode::Workspace, key(KeyCode::Char('k'))),
+        handle_key(Mode::Workspace, key(KeyCode::Up)),
         Action::NavigateUp
     ));
 }
@@ -239,14 +244,14 @@ fn workspace_x_deletes() {
 }
 
 #[test]
-fn workspace_hl_switches_panels() {
+fn workspace_shift_arrows_resize() {
     assert!(matches!(
-        handle_key(Mode::Workspace, key(KeyCode::Char('h'))),
-        Action::FocusWorkspacePanel
+        handle_key(Mode::Workspace, shift_arrow(KeyCode::Left)),
+        Action::Resize(Direction::Left)
     ));
     assert!(matches!(
-        handle_key(Mode::Workspace, key(KeyCode::Char('l'))),
-        Action::FocusRoomPanel
+        handle_key(Mode::Workspace, shift_arrow(KeyCode::Right)),
+        Action::Resize(Direction::Right)
     ));
 }
 
@@ -254,28 +259,20 @@ fn workspace_hl_switches_panels() {
 fn workspace_ctrl_w_exits() {
     assert!(matches!(
         handle_key(Mode::Workspace, ctrl('w')),
-        Action::ExitToNormal
+        Action::EnterMode(Mode::Terminal)
     ));
 }
 
 // ── Room mode ───────────────────────────────────────────────────────────────
 
 #[test]
-fn normal_ctrl_r_enters_room() {
+fn room_arrows_navigate() {
     assert!(matches!(
-        handle_key(Mode::Normal, ctrl('r')),
-        Action::EnterMode(Mode::Room)
-    ));
-}
-
-#[test]
-fn room_jk_navigates() {
-    assert!(matches!(
-        handle_key(Mode::Room, key(KeyCode::Char('j'))),
+        handle_key(Mode::Room, key(KeyCode::Down)),
         Action::NavigateDown
     ));
     assert!(matches!(
-        handle_key(Mode::Room, key(KeyCode::Char('k'))),
+        handle_key(Mode::Room, key(KeyCode::Up)),
         Action::NavigateUp
     ));
 }
@@ -299,75 +296,73 @@ fn room_x_deletes() {
 }
 
 #[test]
+fn room_shift_arrows_resize() {
+    assert!(matches!(
+        handle_key(Mode::Room, shift_arrow(KeyCode::Left)),
+        Action::Resize(Direction::Left)
+    ));
+    assert!(matches!(
+        handle_key(Mode::Room, shift_arrow(KeyCode::Right)),
+        Action::Resize(Direction::Right)
+    ));
+}
+
+#[test]
 fn room_esc_exits() {
     assert!(matches!(
         handle_key(Mode::Room, key(KeyCode::Esc)),
-        Action::ExitToNormal
+        Action::EnterMode(Mode::Terminal)
     ));
 }
 
 #[test]
 fn room_ctrl_r_exits() {
-    assert!(matches!(handle_key(Mode::Room, ctrl('r')), Action::ExitToNormal));
+    assert!(matches!(handle_key(Mode::Room, ctrl('r')), Action::EnterMode(Mode::Terminal)));
 }
 
-// ── Resize mode ──────────────────────────────────────────────────────────────
+// ── Cross-mode switching ────────────────────────────────────────────────────
 
 #[test]
-fn resize_hjkl_resizes() {
-    assert!(matches!(
-        handle_key(Mode::Resize, key(KeyCode::Char('h'))),
-        Action::Resize(Direction::Left)
-    ));
-    assert!(matches!(
-        handle_key(Mode::Resize, key(KeyCode::Char('j'))),
-        Action::Resize(Direction::Down)
-    ));
+fn cross_mode_switching() {
+    // From Pane: Ctrl+w → Workspace, Ctrl+r → Room, Ctrl+t → Terminal
+    assert!(matches!(handle_key(Mode::Pane, ctrl('w')), Action::EnterMode(Mode::Workspace)));
+    assert!(matches!(handle_key(Mode::Pane, ctrl('r')), Action::EnterMode(Mode::Room)));
+    assert!(matches!(handle_key(Mode::Pane, ctrl('t')), Action::EnterMode(Mode::Terminal)));
+
+    // From Workspace: Ctrl+r → Room, Ctrl+t → Terminal, Ctrl+p → Pane
+    assert!(matches!(handle_key(Mode::Workspace, ctrl('r')), Action::EnterMode(Mode::Room)));
+    assert!(matches!(handle_key(Mode::Workspace, ctrl('t')), Action::EnterMode(Mode::Terminal)));
+    assert!(matches!(handle_key(Mode::Workspace, ctrl('p')), Action::EnterMode(Mode::Pane)));
+
+    // From Room: Ctrl+w → Workspace, Ctrl+t → Terminal, Ctrl+p → Pane
+    assert!(matches!(handle_key(Mode::Room, ctrl('w')), Action::EnterMode(Mode::Workspace)));
+    assert!(matches!(handle_key(Mode::Room, ctrl('t')), Action::EnterMode(Mode::Terminal)));
+    assert!(matches!(handle_key(Mode::Room, ctrl('p')), Action::EnterMode(Mode::Pane)));
 }
 
-#[test]
-fn resize_shift_reverses() {
-    assert!(matches!(
-        handle_key(Mode::Resize, key(KeyCode::Char('H'))),
-        Action::ResizeReverse(Direction::Left)
-    ));
-    assert!(matches!(
-        handle_key(Mode::Resize, key(KeyCode::Char('J'))),
-        Action::ResizeReverse(Direction::Down)
-    ));
-}
-
-#[test]
-fn resize_ctrl_n_exits() {
-    assert!(matches!(
-        handle_key(Mode::Resize, ctrl('n')),
-        Action::ExitToNormal
-    ));
-}
-
-// ── Shared Alt bindings across sub-modes ─────────────────────────────────────
+// ── Shared Alt bindings across sub-modes ────────────────────────────────────
 
 #[test]
 fn alt_overrides_in_submodes() {
-    for mode in [Mode::Pane, Mode::Tab, Mode::Workspace, Mode::Room, Mode::Resize] {
+    for mode in [Mode::Pane, Mode::Workspace, Mode::Room] {
         assert!(
-            matches!(handle_key(mode, alt('h')), Action::MoveFocus(Direction::Left)),
-            "Alt+h should move focus left in {:?}",
+            matches!(handle_key(mode, alt_arrow(KeyCode::Left)), Action::MoveFocus(Direction::Left)),
+            "Alt+Left should move focus left in {:?}",
             mode
         );
         assert!(
-            matches!(handle_key(mode, alt('l')), Action::MoveFocus(Direction::Right)),
-            "Alt+l should move focus right in {:?}",
+            matches!(handle_key(mode, alt_arrow(KeyCode::Right)), Action::MoveFocus(Direction::Right)),
+            "Alt+Right should move focus right in {:?}",
             mode
         );
         assert!(
-            matches!(handle_key(mode, alt('j')), Action::NavigateDown),
-            "Alt+j should navigate down in {:?}",
+            matches!(handle_key(mode, alt_arrow(KeyCode::Down)), Action::NavigateDown),
+            "Alt+Down should navigate down in {:?}",
             mode
         );
         assert!(
-            matches!(handle_key(mode, alt('k')), Action::NavigateUp),
-            "Alt+k should navigate up in {:?}",
+            matches!(handle_key(mode, alt_arrow(KeyCode::Up)), Action::NavigateUp),
+            "Alt+Up should navigate up in {:?}",
             mode
         );
     }
