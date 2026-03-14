@@ -913,7 +913,10 @@ impl App {
         match &self.popup {
             PopupState::None => {}
             PopupState::PresetSelector { presets, selected, .. } => {
-                frame.render_widget(PresetSelector::new(presets, *selected), area);
+                frame.render_widget(
+                    PresetSelector::new(presets, *selected, &self.palette, &self.ui_config),
+                    area,
+                );
             }
             PopupState::WorkspaceCreate {
                 fields,

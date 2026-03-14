@@ -1,16 +1,29 @@
+use crate::tui::theme::{Palette, UiConfig};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Block, Borders, Clear, Widget};
+use ratatui::style::{Modifier, Style};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Widget};
 
 pub struct PresetSelector<'a> {
     presets: &'a [String],
     selected: usize,
+    palette: &'a Palette,
+    ui_config: &'a UiConfig,
 }
 
 impl<'a> PresetSelector<'a> {
-    pub fn new(presets: &'a [String], selected: usize) -> Self {
-        Self { presets, selected }
+    pub fn new(
+        presets: &'a [String],
+        selected: usize,
+        palette: &'a Palette,
+        ui_config: &'a UiConfig,
+    ) -> Self {
+        Self {
+            presets,
+            selected,
+            palette,
+            ui_config,
+        }
     }
 }
 
@@ -23,10 +36,17 @@ impl Widget for PresetSelector<'_> {
         let popup = Rect::new(x, y, width, height);
 
         Clear.render(popup, buf);
+
+        let border_type = if self.ui_config.rounded_corners {
+            BorderType::Rounded
+        } else {
+            BorderType::Plain
+        };
         let block = Block::default()
             .title(" Select Preset ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan));
+            .border_style(Style::default().fg(self.palette.accent_blue))
+            .border_type(border_type);
         let inner = block.inner(popup);
         block.render(popup, buf);
 
@@ -36,14 +56,19 @@ impl Widget for PresetSelector<'_> {
             }
             let style = if i == self.selected {
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Cyan)
+                    .fg(self.palette.bg_primary)
+                    .bg(self.palette.accent_blue)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default()
+                Style::default().fg(self.palette.fg_primary)
             };
-            let prefix = if i == self.selected { " ▸ " } else { "   " };
-            buf.set_string(inner.x, inner.y + i as u16, format!("{prefix}{name}"), style);
+            let prefix = if i == self.selected { " \u{25b8} " } else { "   " };
+            buf.set_string(
+                inner.x,
+                inner.y + i as u16,
+                format!("{prefix}{name}"),
+                style,
+            );
         }
     }
 }
