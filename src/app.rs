@@ -2,7 +2,7 @@ use humu::config::{humu_dir, HumuConfig, HumuState, RoomLayout, SplitDirection a
 use humu::id::RoomId;
 use humu::git::room::RoomManager;
 use humu::git::workspace::WorkspaceManager;
-use humu::hook::http::{AgentState, HookEvent, HookServer};
+use humu::hook::http::{generate_hook_files, AgentState, HookEvent, HookServer};
 use humu::pty::pane::PtyPane;
 use humu::tui::completion::complete_path;
 use humu::tui::input::{handle_key, Action, Direction as NavDirection, Mode};
@@ -141,6 +141,10 @@ pub struct App {
 
 impl App {
     pub fn new() -> Result<Self> {
+        if let Err(e) = generate_hook_files(&humu_dir()) {
+            eprintln!("failed to generate hook files: {e}");
+        }
+
         let config_path = humu_dir().join("config.toml");
         let state_path = humu_dir().join("state.toml");
 

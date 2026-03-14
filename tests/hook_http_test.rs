@@ -1,4 +1,4 @@
-use humu::hook::http::{AgentState, HookServer};
+use humu::hook::http::{generate_hook_files, AgentState, HookServer};
 use humu::id::PaneId;
 
 #[tokio::test]
@@ -47,4 +47,30 @@ async fn missing_params_returns_400() {
     let url = format!("http://127.0.0.1:{port}/hook?paneId=1");
     let resp = reqwest::Client::new().post(&url).send().await.unwrap();
     assert_eq!(resp.status(), 400);
+}
+
+#[test]
+fn generate_hook_files_creates_expected_files() {
+    let dir = tempfile::tempdir().unwrap();
+    generate_hook_files(dir.path()).unwrap();
+
+    let notify = dir.path().join("hooks/notify.sh");
+    assert!(notify.exists());
+    let content = std::fs::read_to_string(&notify).unwrap();
+    assert!(content.contains("HUMU_PORT"));
+    assert!(content.contains("curl"));
+
+    let settings = dir.path().join("hooks/claude-settings.json");
+    assert!(settings.exists());
+    let json: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&settings).unwrap()
+    ).unwrap();
+    assert!(json["hooks"]["Stop"].is_array());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&notify).unwrap().permissions().mode();
+        assert!(mode & 0o111 != 0, "notify.sh should be executable");
+    }
 }
