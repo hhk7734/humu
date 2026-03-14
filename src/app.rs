@@ -1141,10 +1141,12 @@ impl App {
     fn handle_click(&mut self, x: u16, y: u16) {
         let pos = Position::new(x, y);
         if self.panel_rects.workspace.contains(pos) {
+            self.mode = Mode::Workspace;
             self.focus = FocusedPanel::Workspace;
             let row = y.saturating_sub(self.panel_rects.workspace.y + 1); // +1 for border
             self.workspace_selected = Some(row as usize);
         } else if self.panel_rects.room.contains(pos) {
+            self.mode = Mode::Room;
             self.focus = FocusedPanel::Room;
             let row = y.saturating_sub(self.panel_rects.room.y + 1);
             self.room_selected = Some(row as usize);
@@ -1152,6 +1154,7 @@ impl App {
             // Determine which tab or "+" was clicked.
             self.handle_tab_bar_click(x);
         } else if self.panel_rects.terminal.contains(pos) {
+            self.mode = Mode::Normal;
             self.focus = FocusedPanel::Terminal;
             let pane_area = {
                 let r = self.panel_rects.terminal;

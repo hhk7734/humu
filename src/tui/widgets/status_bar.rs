@@ -164,29 +164,31 @@ impl Widget for StatusBar<'_> {
             return;
         }
 
-        // "Ctrl +" segment + separator
-        let ctrl_label = " Ctrl + ";
-        let ctrl_width = ctrl_label.len() as u16;
-        for (i, ch) in ctrl_label.chars().enumerate() {
-            if x + i as u16 >= area.x + area.width {
-                break;
+        // "Ctrl +" segment only in Normal mode (hints are Ctrl+ shortcuts).
+        if self.mode == Mode::Normal {
+            let ctrl_label = " Ctrl + ";
+            let ctrl_width = ctrl_label.len() as u16;
+            for (i, ch) in ctrl_label.chars().enumerate() {
+                if x + i as u16 >= area.x + area.width {
+                    break;
+                }
+                buf[(x + i as u16, area.y)].set_char(ch).set_style(
+                    Style::default()
+                        .fg(self.palette.accent_orange)
+                        .bg(self.palette.bg_tertiary)
+                        .add_modifier(Modifier::BOLD),
+                );
             }
-            buf[(x + i as u16, area.y)].set_char(ch).set_style(
-                Style::default()
-                    .fg(self.palette.accent_orange)
-                    .bg(self.palette.bg_tertiary)
-                    .add_modifier(Modifier::BOLD),
-            );
-        }
-        x += ctrl_width;
+            x += ctrl_width;
 
-        if x < area.x + area.width {
-            buf[(x, area.y)].set_symbol(sep).set_style(
-                Style::default()
-                    .fg(self.palette.bg_tertiary)
-                    .bg(self.palette.bg_secondary),
-            );
-            x += 1;
+            if x < area.x + area.width {
+                buf[(x, area.y)].set_symbol(sep).set_style(
+                    Style::default()
+                        .fg(self.palette.bg_tertiary)
+                        .bg(self.palette.bg_secondary),
+                );
+                x += 1;
+            }
         }
 
         // Key hints
