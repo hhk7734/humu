@@ -1868,6 +1868,7 @@ impl App {
         self.focused_pane = None;
 
         let active_tab = layout.active_tab;
+        let cwd = self.current_room_path();
 
         for tab_layout in &layout.tabs {
             match Self::node_to_split_tree(
@@ -1876,6 +1877,7 @@ impl App {
                 &mut self.panes,
                 &mut self.pane_presets,
                 &mut self.next_pane_id,
+                cwd.as_ref(),
             ) {
                 Some(tree) => {
                     self.tabs.add_tab(tab_layout.name.clone(), tree);
@@ -1911,6 +1913,7 @@ impl App {
         panes: &mut HashMap<PaneId, PtyPane>,
         pane_presets: &mut HashMap<PaneId, String>,
         next_id: &mut PaneId,
+        cwd: Option<&PathBuf>,
     ) -> Option<SplitTree> {
         match node {
             SplitNode::Leaf { preset } => {
@@ -1927,7 +1930,7 @@ impl App {
                     .unwrap_or_default();
                 let arg_refs: Vec<&str> = shell_args.iter().map(String::as_str).collect();
                 let (cmd, args) = humu::preset::resolve_preset(&shell_cmd, &arg_refs);
-                let pane = PtyPane::spawn(&cmd, &args, None, 80, 24).ok()?;
+                let pane = PtyPane::spawn(&cmd, &args, cwd.map(|p| p.as_path()), 80, 24).ok()?;
                 let id = *next_id;
                 panes.insert(id, pane);
                 pane_presets.insert(id, preset.clone());
@@ -1949,6 +1952,7 @@ impl App {
                     panes,
                     pane_presets,
                     next_id,
+                    cwd,
                 )?;
                 let right = Self::node_to_split_tree(
                     &children[1],
@@ -1956,6 +1960,7 @@ impl App {
                     panes,
                     pane_presets,
                     next_id,
+                    cwd,
                 )?;
                 let dir = match direction {
                     CfgDir::Vertical => SplitDirection::Vertical,
