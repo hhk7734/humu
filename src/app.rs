@@ -1460,7 +1460,7 @@ impl App {
 
     /// Spawn a new pane from the named preset and register it.
     /// Returns the new `PaneId` on success.
-    fn spawn_pane(&mut self, preset_name: &str) -> Option<PaneId> {
+    fn spawn_pane(&mut self, preset_name: &str, session_id: Option<String>) -> Option<PaneId> {
         let shell_cmd = self
             .config
             .presets
@@ -1478,24 +1478,39 @@ impl App {
         let (cmd, args) = humu::preset::resolve_preset(&shell_cmd, &arg_refs);
 
         // Set HUMU_* env vars when spawning the "claude" preset.
+        let mut extra_args: Vec<String> = vec![];
         let envs: Vec<(String, String)> = if preset_name == "claude" {
+            let settings_path = humu_dir().join("hooks/claude-settings.json");
+            extra_args.push("--settings".to_string());
+            extra_args.push(settings_path.to_string_lossy().into_owned());
+
+            if let Some(sid) = session_id {
+                extra_args.push("--resume".to_string());
+                extra_args.push(sid);
+            }
+
             let mut envs = vec![];
             if let Some(port) = self.hook_port {
                 envs.push(("HUMU_PORT".to_string(), port.to_string()));
             }
-            if let Some(ws_name) = self.active_workspace_name() {
-                envs.push(("HUMU_WORKSPACE".to_string(), ws_name));
+            if let Some(ws_id) = self.state.active_workspace_id {
+                envs.push(("HUMU_WORKSPACE_ID".to_string(), ws_id.to_string()));
             }
-            if let Some(room_name) = self.active_room_name() {
-                envs.push(("HUMU_ROOM".to_string(), room_name));
+            if let Some(room_id) = self.state.active_room_id {
+                envs.push(("HUMU_ROOM_ID".to_string(), room_id.to_string()));
             }
+            envs.push(("HUMU_TAB_ID".to_string(), self.tabs.active_index().to_string()));
+            let id = self.next_pane_id;
+            envs.push(("HUMU_PANE_ID".to_string(), id.0.to_string()));
             envs
         } else {
             vec![]
         };
 
         let cwd = self.current_room_path();
-        let pane = PtyPane::spawn_with_envs(&cmd, &args, cwd.as_deref(), 80, 24, &envs).ok()?;
+        let mut all_args = args;
+        all_args.extend(extra_args);
+        let pane = PtyPane::spawn_with_envs(&cmd, &all_args, cwd.as_deref(), 80, 24, &envs).ok()?;
         let id = self.next_pane_id;
         self.panes.insert(id, pane);
         self.pane_presets.insert(id, preset_name.to_string());
@@ -1504,7 +1519,7 @@ impl App {
     }
 
     fn new_tab_with_preset(&mut self, preset_name: &str) {
-        if let Some(new_id) = self.spawn_pane(preset_name) {
+        if let Some(new_id) = self.spawn_pane(preset_name, None) {
             self.tabs.add_tab(preset_name.to_string(), SplitTree::leaf(new_id));
             let last = self.tabs.len() - 1;
             self.tabs.set_active(last);
@@ -1537,7 +1552,7 @@ impl App {
             Some(id) => id,
             None => return,
         };
-        let new_id = match self.spawn_pane(preset_name) {
+        let new_id = match self.spawn_pane(preset_name, None) {
             Some(id) => id,
             None => return,
         };
@@ -1857,7 +1872,7 @@ impl App {
                 // Temporarily obtain the tree via index by iterating — we use
                 // a helper that borrows self immutably.
                 let tree = self.tabs.tree_at(i)?;
-                let split = Self::split_tree_to_node(tree, &self.pane_presets)?;
+                let split = self.split_tree_to_node(tree)?;
                 Some(TabLayout {
                     name: name.to_string(),
                     split,
@@ -1876,22 +1891,20 @@ impl App {
     }
 
     /// Recursively convert a runtime `SplitTree` to the serializable `SplitNode`.
-    fn split_tree_to_node(
-        tree: &SplitTree,
-        pane_presets: &HashMap<PaneId, String>,
-    ) -> Option<SplitNode> {
+    fn split_tree_to_node(&self, tree: &SplitTree) -> Option<SplitNode> {
         match tree {
-            SplitTree::Leaf(id) => {
-                let preset = pane_presets.get(id)?.clone();
-                Some(SplitNode::Leaf { preset, session_id: None })
+            SplitTree::Leaf(pane_id) => {
+                let preset = self.pane_presets.get(pane_id)?.clone();
+                let session_id = self.agent_states.get(pane_id).and_then(|e| e.session_id.clone());
+                Some(SplitNode::Leaf { preset, session_id })
             }
             SplitTree::Split {
                 direction,
                 ratio,
                 children,
             } => {
-                let left = Self::split_tree_to_node(&children.0, pane_presets)?;
-                let right = Self::split_tree_to_node(&children.1, pane_presets)?;
+                let left = self.split_tree_to_node(&children.0)?;
+                let right = self.split_tree_to_node(&children.1)?;
                 let dir = match direction {
                     SplitDirection::Vertical => CfgDir::Vertical,
                     SplitDirection::Horizontal => CfgDir::Horizontal,
@@ -1933,23 +1946,16 @@ impl App {
         self.focused_pane = None;
 
         let active_tab = layout.active_tab;
-        let cwd = self.current_room_path();
 
-        for tab_layout in &layout.tabs {
-            match Self::node_to_split_tree(
-                &tab_layout.split,
-                &self.config,
-                &mut self.panes,
-                &mut self.pane_presets,
-                &mut self.next_pane_id,
-                cwd.as_ref(),
-            ) {
+        let tabs: Vec<TabLayout> = layout.tabs.clone();
+        for tab_layout in &tabs {
+            match self.node_to_split_tree(&tab_layout.split) {
                 Some(tree) => {
                     self.tabs.add_tab(tab_layout.name.clone(), tree);
                 }
                 None => {
                     // Fallback: spawn a plain shell tab if restore fails for this tab.
-                    if let Some(id) = self.spawn_pane("shell") {
+                    if let Some(id) = self.spawn_pane("shell", None) {
                         self.tabs
                             .add_tab(tab_layout.name.clone(), SplitTree::leaf(id));
                     }
@@ -1959,7 +1965,7 @@ impl App {
 
         // If nothing was restored, create a default shell tab.
         if self.tabs.is_empty()
-            && let Some(id) = self.spawn_pane("shell")
+            && let Some(id) = self.spawn_pane("shell", None)
         {
             self.tabs.add_tab("shell".into(), SplitTree::leaf(id));
         }
@@ -1972,34 +1978,10 @@ impl App {
 
     /// Recursively convert a `SplitNode` (config) into a runtime `SplitTree`,
     /// spawning PTY panes as needed.
-    fn node_to_split_tree(
-        node: &SplitNode,
-        config: &humu::config::HumuConfig,
-        panes: &mut HashMap<PaneId, PtyPane>,
-        pane_presets: &mut HashMap<PaneId, String>,
-        next_id: &mut PaneId,
-        cwd: Option<&PathBuf>,
-    ) -> Option<SplitTree> {
+    fn node_to_split_tree(&mut self, node: &SplitNode) -> Option<SplitTree> {
         match node {
-            SplitNode::Leaf { preset, .. } => {
-                let shell_cmd = config
-                    .presets
-                    .get(preset.as_str())
-                    .map(|p| p.command.as_str())
-                    .unwrap_or("sh")
-                    .to_string();
-                let shell_args: Vec<String> = config
-                    .presets
-                    .get(preset.as_str())
-                    .map(|p| p.args.clone())
-                    .unwrap_or_default();
-                let arg_refs: Vec<&str> = shell_args.iter().map(String::as_str).collect();
-                let (cmd, args) = humu::preset::resolve_preset(&shell_cmd, &arg_refs);
-                let pane = PtyPane::spawn(&cmd, &args, cwd.map(|p| p.as_path()), 80, 24).ok()?;
-                let id = *next_id;
-                panes.insert(id, pane);
-                pane_presets.insert(id, preset.clone());
-                *next_id = PaneId(next_id.0 + 1);
+            SplitNode::Leaf { preset, session_id } => {
+                let id = self.spawn_pane(preset, session_id.clone())?;
                 Some(SplitTree::Leaf(id))
             }
             SplitNode::Split {
@@ -2007,26 +1989,11 @@ impl App {
                 ratio,
                 children,
             } => {
-                // Config always stores exactly 2 children for a binary split.
                 if children.len() < 2 {
                     return None;
                 }
-                let left = Self::node_to_split_tree(
-                    &children[0],
-                    config,
-                    panes,
-                    pane_presets,
-                    next_id,
-                    cwd,
-                )?;
-                let right = Self::node_to_split_tree(
-                    &children[1],
-                    config,
-                    panes,
-                    pane_presets,
-                    next_id,
-                    cwd,
-                )?;
+                let left = self.node_to_split_tree(&children[0])?;
+                let right = self.node_to_split_tree(&children[1])?;
                 let dir = match direction {
                     CfgDir::Vertical => SplitDirection::Vertical,
                     CfgDir::Horizontal => SplitDirection::Horizontal,
@@ -2096,7 +2063,7 @@ impl App {
             self.pane_presets.clear();
             self.tabs = TabContainer::new();
             self.focused_pane = None;
-            if let Some(id) = self.spawn_pane("shell") {
+            if let Some(id) = self.spawn_pane("shell", None) {
                 self.tabs.add_tab("shell".into(), SplitTree::leaf(id));
                 self.focused_pane = Some(id);
             }
