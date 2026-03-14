@@ -95,11 +95,11 @@ impl WorkspaceManager {
             std::fs::remove_dir_all(&entry.path)?;
         }
 
-        // If the deleted workspace was active, clear the active workspace/room IDs
-        // (Task 5 will add proper name-to-ID lookup; for now just clear them)
-        let _ = name; // suppress unused warning until Task 5 wires name↔ID
-        state.active_workspace_id = None;
-        state.active_room_id = None;
+        // Only clear active IDs if the deleted workspace was the active one
+        if state.active_workspace_id == Some(entry.id) {
+            state.active_workspace_id = None;
+            state.active_room_id = None;
+        }
 
         Ok(())
     }
