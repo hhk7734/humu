@@ -31,7 +31,7 @@ src/
 │   └── server.rs    # Unix socket hook server for Claude Code events
 └── tui/
     ├── mod.rs
-    ├── input.rs       # Modal keybinding dispatch (Terminal/Locked/Pane/Workspace/Room)
+    ├── input.rs       # Modal keybinding dispatch (Terminal/Locked/Pane/Tab/Workspace/Room)
     ├── completion.rs  # Fuzzy path autocomplete with cross-segment matching
     ├── layout.rs      # SplitTree, TabContainer, PaneId
     ├── theme.rs       # Palette (GitHub Dark), UiConfig, BorderChars, TabChars

@@ -41,6 +41,7 @@ impl Palette {
             Mode::Terminal => self.accent_green,
             Mode::Locked => self.fg_secondary,
             Mode::Pane => self.accent_blue,
+            Mode::Tab => self.accent_orange,
             Mode::Workspace => self.accent_purple,
             Mode::Room => self.accent_magenta,
         }

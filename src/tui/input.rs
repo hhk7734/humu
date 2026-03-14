@@ -5,6 +5,7 @@ pub enum Mode {
     Terminal,
     Locked,
     Pane,
+    Tab,
     Workspace,
     Room,
 }
@@ -49,6 +50,7 @@ pub fn handle_key(mode: Mode, key: KeyEvent) -> Action {
         Mode::Terminal => handle_terminal(key),
         Mode::Locked => handle_locked(key),
         Mode::Pane => handle_pane(key),
+        Mode::Tab => handle_tab(key),
         Mode::Workspace => handle_workspace(key),
         Mode::Room => handle_room(key),
     }
@@ -59,6 +61,7 @@ fn handle_terminal(key: KeyEvent) -> Action {
         match key.code {
             KeyCode::Char('g') => Action::EnterMode(Mode::Locked),
             KeyCode::Char('p') => Action::EnterMode(Mode::Pane),
+            KeyCode::Char('t') => Action::EnterMode(Mode::Tab),
             KeyCode::Char('w') => Action::EnterMode(Mode::Workspace),
             KeyCode::Char('r') => Action::EnterMode(Mode::Room),
             KeyCode::Char('q') => Action::Quit,
@@ -111,10 +114,23 @@ fn handle_pane(key: KeyEvent) -> Action {
         KeyCode::Up => Action::MoveFocus(Direction::Up),
         KeyCode::Right => Action::MoveFocus(Direction::Right),
         KeyCode::Char('f') => Action::ToggleFullscreen,
-        KeyCode::Char('t') => Action::NewTab,
-        KeyCode::Char('c') => Action::CloseTab,
-        KeyCode::Char('[') => Action::PrevTab,
-        KeyCode::Char(']') => Action::NextTab,
+        KeyCode::Esc => Action::EnterMode(Mode::Terminal),
+        _ => Action::None,
+    }
+}
+
+fn handle_tab(key: KeyEvent) -> Action {
+    if let Some(action) = check_mode_switch(Mode::Tab, key) {
+        return action;
+    }
+    if let Some(action) = check_shared_alt(key) {
+        return action;
+    }
+    match key.code {
+        KeyCode::Char('n') => Action::NewTab,
+        KeyCode::Char('x') => Action::CloseTab,
+        KeyCode::Left => Action::PrevTab,
+        KeyCode::Right => Action::NextTab,
         KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
             Action::GoToTab((c as usize) - ('1' as usize))
         }

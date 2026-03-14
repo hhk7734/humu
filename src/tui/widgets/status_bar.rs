@@ -32,6 +32,7 @@ impl<'a> StatusBar<'a> {
             Mode::Terminal => "TERMINAL",
             Mode::Locked => "LOCKED",
             Mode::Pane => "PANE",
+            Mode::Tab => "TAB",
             Mode::Workspace => "WORKSPACE",
             Mode::Room => "ROOM",
         }
@@ -42,6 +43,7 @@ impl<'a> StatusBar<'a> {
             Mode::Terminal => vec![
                 ("g", "LOCK"),
                 ("p", "PANE"),
+                ("t", "TAB"),
                 ("w", "WORKSPACE"),
                 ("r", "ROOM"),
             ],
@@ -54,8 +56,13 @@ impl<'a> StatusBar<'a> {
                 ("←→↑↓", "Move"),
                 ("S+←→↑↓", "Resize"),
                 ("f", "Full"),
-                ("t", "Tab"),
-                ("c", "CloseTab"),
+                ("Esc", "Back"),
+            ],
+            Mode::Tab => vec![
+                ("n", "New"),
+                ("x", "Close"),
+                ("←→", "Prev/Next"),
+                ("1-9", "GoTo"),
                 ("Esc", "Back"),
             ],
             Mode::Workspace => vec![

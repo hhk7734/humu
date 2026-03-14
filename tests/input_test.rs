@@ -195,20 +195,49 @@ fn pane_f_toggles_fullscreen() {
     ));
 }
 
+// ── Tab mode ────────────────────────────────────────────────────────────────
+
 #[test]
-fn pane_tab_management() {
-    assert!(matches!(handle_key(Mode::Pane, key(KeyCode::Char('t'))), Action::NewTab));
-    assert!(matches!(handle_key(Mode::Pane, key(KeyCode::Char('c'))), Action::CloseTab));
-    assert!(matches!(handle_key(Mode::Pane, key(KeyCode::Char('['))), Action::PrevTab));
-    assert!(matches!(handle_key(Mode::Pane, key(KeyCode::Char(']'))), Action::NextTab));
+fn terminal_ctrl_t_enters_tab() {
     assert!(matches!(
-        handle_key(Mode::Pane, key(KeyCode::Char('1'))),
-        Action::GoToTab(0)
+        handle_key(Mode::Terminal, ctrl('t')),
+        Action::EnterMode(Mode::Tab)
     ));
+}
+
+#[test]
+fn tab_n_creates_new() {
+    assert!(matches!(handle_key(Mode::Tab, key(KeyCode::Char('n'))), Action::NewTab));
+}
+
+#[test]
+fn tab_x_closes() {
+    assert!(matches!(handle_key(Mode::Tab, key(KeyCode::Char('x'))), Action::CloseTab));
+}
+
+#[test]
+fn tab_arrows_prev_next() {
+    assert!(matches!(handle_key(Mode::Tab, key(KeyCode::Left)), Action::PrevTab));
+    assert!(matches!(handle_key(Mode::Tab, key(KeyCode::Right)), Action::NextTab));
+}
+
+#[test]
+fn tab_digits_goto() {
+    assert!(matches!(handle_key(Mode::Tab, key(KeyCode::Char('1'))), Action::GoToTab(0)));
+    assert!(matches!(handle_key(Mode::Tab, key(KeyCode::Char('3'))), Action::GoToTab(2)));
+}
+
+#[test]
+fn tab_esc_exits() {
     assert!(matches!(
-        handle_key(Mode::Pane, key(KeyCode::Char('3'))),
-        Action::GoToTab(2)
+        handle_key(Mode::Tab, key(KeyCode::Esc)),
+        Action::EnterMode(Mode::Terminal)
     ));
+}
+
+#[test]
+fn tab_ctrl_t_exits() {
+    assert!(matches!(handle_key(Mode::Tab, ctrl('t')), Action::EnterMode(Mode::Terminal)));
 }
 
 // ── Workspace mode ──────────────────────────────────────────────────────────
@@ -329,6 +358,11 @@ fn cross_mode_switching() {
     assert!(matches!(handle_key(Mode::Pane, ctrl('r')), Action::EnterMode(Mode::Room)));
     assert!(matches!(handle_key(Mode::Pane, ctrl('t')), Action::EnterMode(Mode::Terminal)));
 
+    // From Tab: Ctrl+w → Workspace, Ctrl+r → Room, Ctrl+p → Pane
+    assert!(matches!(handle_key(Mode::Tab, ctrl('w')), Action::EnterMode(Mode::Workspace)));
+    assert!(matches!(handle_key(Mode::Tab, ctrl('r')), Action::EnterMode(Mode::Room)));
+    assert!(matches!(handle_key(Mode::Tab, ctrl('p')), Action::EnterMode(Mode::Pane)));
+
     // From Workspace: Ctrl+r → Room, Ctrl+t → Terminal, Ctrl+p → Pane
     assert!(matches!(handle_key(Mode::Workspace, ctrl('r')), Action::EnterMode(Mode::Room)));
     assert!(matches!(handle_key(Mode::Workspace, ctrl('t')), Action::EnterMode(Mode::Terminal)));
@@ -344,7 +378,7 @@ fn cross_mode_switching() {
 
 #[test]
 fn alt_overrides_in_submodes() {
-    for mode in [Mode::Pane, Mode::Workspace, Mode::Room] {
+    for mode in [Mode::Pane, Mode::Tab, Mode::Workspace, Mode::Room] {
         assert!(
             matches!(handle_key(mode, alt_arrow(KeyCode::Left)), Action::MoveFocus(Direction::Left)),
             "Alt+Left should move focus left in {:?}",

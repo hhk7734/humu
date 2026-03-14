@@ -15,7 +15,7 @@
 │              ││           ││ │ $  ▋                                 │ │
 │              ││           ││ ╰──────────────────────────────────────╯ │
 ╰──────────────╯╰───────────╯╰──────────────────────────────────────────╯
- TERMINAL ▸ Ctrl+  g LOCK  p PANE  w WORKSPACE  r ROOM
+ TERMINAL ▸ Ctrl+  g LOCK  p PANE  t TAB  w WORKSPACE  r ROOM
 ```
 
 Three panels separated by draggable resize handles, plus a status bar.
@@ -51,7 +51,7 @@ From any sub-mode, `Ctrl+w/r/t/p` switches directly to that mode. Pressing the s
 | `Ctrl+p` | Pane |
 | `Ctrl+w` | Workspace |
 | `Ctrl+r` | Room |
-| `Ctrl+t` | Terminal |
+| `Ctrl+t` | Tab (from Terminal) / Terminal (from sub-modes) |
 | `Ctrl+q` | Quit (from Terminal only) |
 
 ### Locked Mode
@@ -60,7 +60,7 @@ From any sub-mode, `Ctrl+w/r/t/p` switches directly to that mode. Pressing the s
 
 ### Pane Mode
 
-Manages panes and tabs within the terminal area.
+Manages panes within the terminal area.
 
 | Key | Action |
 | --- | ------ |
@@ -71,11 +71,19 @@ Manages panes and tabs within the terminal area.
 | `←↓↑→` | Move focus between panes |
 | `Shift+←↓↑→` | Resize pane |
 | `f` | Toggle fullscreen |
-| `t` | New tab |
-| `c` | Close tab |
-| `[` / `]` | Previous / next tab |
-| `1-9` | Go to tab N |
 | `Esc` / `Ctrl+p` | Back to Terminal |
+
+### Tab Mode
+
+Manages tabs within the terminal area. Enter via `Ctrl+t` from Terminal mode.
+
+| Key | Action |
+| --- | ------ |
+| `n` | New tab (select preset) |
+| `x` | Close tab |
+| `←/→` | Previous / next tab |
+| `1-9` | Go to tab N |
+| `Esc` / `Ctrl+t` | Back to Terminal |
 
 ### Workspace Mode
 
@@ -117,5 +125,6 @@ Clicking a panel enters the corresponding mode: workspace panel → Workspace mo
 | TERMINAL | green (#3fb950) |
 | LOCKED | gray (#8b949e) |
 | PANE | blue (#58a6ff) |
+| TAB | orange (#d29922) |
 | WORKSPACE | purple (#bc8cff) |
 | ROOM | magenta (#f778ba) |
