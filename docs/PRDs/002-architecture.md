@@ -16,16 +16,19 @@ humu (single binary)
 │   └── Spawn shell/claude processes per pane
 ├── Terminal Emulation (vt100 crate)
 │   └── Parse PTY output → screen buffer → ratatui cells
-├── Hook Layer
-│   └── Unix socket server at ~/.humu/humu.sock
+├── Hook Layer (axum HTTP server)
+│   └── HTTP server at 127.0.0.1:<random port>
 ├── Theme Layer
 │   ├── Palette (GitHub Dark color scheme)
 │   └── UiConfig (simplified_ui, rounded_corners)
+├── ID Layer (src/id.rs)
+│   └── Typed IDs: WorkspaceId, RoomId, TabId, PaneId
 └── State Layer
     └── ~/.humu/
         ├── config.toml
         ├── state.toml
-        └── worktrees/
+        ├── port
+        └── hooks/
 ```
 
 ## Tech Stack
@@ -37,6 +40,23 @@ humu (single binary)
 | Terminal backend   | crossterm    |
 | PTY               | portable-pty |
 | Terminal emulation | vt100        |
+| HTTP server        | axum         |
+| ID generation      | uuid         |
+
+## Typed IDs
+
+All entities use explicit ID types via the newtype pattern in `src/id.rs`:
+
+| Entity | Type | Backing | Persistence |
+|---|---|---|---|
+| Workspace | `WorkspaceId(Uuid)` | UUID v4 | Permanent — stored in `state.toml` |
+| Room | `RoomId(Uuid)` | UUID v4 | Permanent — stored in `state.toml` per workspace |
+| Tab | `TabId(u64)` | Sequential counter | Session-scoped — reset on restart |
+| Pane | `PaneId(u64)` | Sequential counter | Session-scoped — reset on restart |
+
+All four types implement `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Hash`, `Serialize`, `Deserialize`, and `Display`. `PaneId` is a newtype struct — access the inner value via `.0`.
+
+`RoomId` is assigned lazily on first discovery and persisted. On startup, persisted rooms are compared against git worktrees — stale entries are pruned.
 
 ## Rendering Pipeline
 
@@ -90,16 +110,62 @@ args = []
 
 ## Layout Persistence
 
-Tab and pane layout is saved per room in `state.toml` and restored on room switch or restart. The layout is a tree structure: each tab contains a `SplitNode` that is either a `Leaf` (single pane with preset) or a `Split` (binary split with direction, ratio, and children).
+Tab and pane layout is saved per room in `state.toml` and restored on room switch or restart. The layout is a tree structure: each tab contains a `SplitNode` that is either a `Leaf` (single pane with preset and optional `session_id`) or a `Split` (binary split with direction, ratio, and children).
+
+Layout keys use UUID strings for workspace and room identification.
 
 ## Claude Hook Integration
 
-1. Humu runs a Unix socket server at `~/.humu/humu.sock`
-2. When launching a Claude preset, humu sets environment variables: `HUMU_SOCKET`, `HUMU_WORKSPACE`, `HUMU_ROOM`
-3. Claude Code hooks run a script that sends JSON events to the socket
-4. Humu receives events and drives spinner indicators (ON on `PreToolUse`, OFF on `Stop` or 10s timeout)
+### HTTP Hook Server
 
-Spinners appear on: room name in RoomPanel, workspace name in WorkspacePanel, tab label in TerminalArea.
+1. Humu starts an axum HTTP server bound to `127.0.0.1:0` (OS-assigned port)
+2. The allocated port is written to `~/.humu/port` for external discovery
+3. On clean exit (`Drop` impl), the port file is removed
+4. On crash, the stale port file is harmless — next startup overwrites it
+
+### Hook Auto-Configuration
+
+On startup, humu generates two files:
+
+- **`~/.humu/hooks/notify.sh`** — hook script using `curl` and `grep` (no `jq`/`socat`)
+- **`~/.humu/hooks/claude-settings.json`** — Claude Code settings with hook registration for: `UserPromptSubmit`, `Stop`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`
+
+### Claude Preset Spawning
+
+When spawning a claude preset, humu:
+
+1. Passes env vars: `HUMU_PORT`, `HUMU_WORKSPACE_ID`, `HUMU_ROOM_ID`, `HUMU_TAB_ID`, `HUMU_PANE_ID`
+2. Appends `--settings ~/.humu/hooks/claude-settings.json` to the command
+3. If restoring with `session_id`, appends `--resume SESSION_ID`
+
+### Event Processing
+
+Hook events are normalized to three canonical agent states:
+
+| Raw Event | Canonical State |
+|---|---|
+| `UserPromptSubmit` | Working |
+| `PostToolUse` | Working |
+| `PostToolUseFailure` | Working |
+| `PermissionRequest` | NeedsInput |
+| `Stop` | Idle |
+| Unknown | Ignored (forward compatible) |
+
+Per-pane agent state is tracked in `HashMap<PaneId, AgentStateEntry>`. State is cleared when the pane process exits or is closed.
+
+### Derived UI State
+
+Workspace/room panel spinners are derived from pane states:
+- Show animated spinner if any pane in that workspace/room is `Working`
+- Show `⚠` if any pane is `NeedsInput` and none are `Working`
+- Show nothing if all panes are `Idle` or no agent panes exist
+
+### Session Resumption
+
+1. Claude Code includes `session_id` in hook event payloads
+2. Humu stores `session_id` in `AgentStateEntry` keyed by `PaneId`
+3. `session_id` is persisted to `SplitNode::Leaf` on state save
+4. On restore, `--resume SESSION_ID` is passed to Claude Code
 
 ## Theme
 

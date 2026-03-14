@@ -18,7 +18,10 @@ TUI-based. Implemented in Rust.
 ~/.humu/
 ├── config.toml
 ├── state.toml
-├── humu.sock
+├── port                      # HTTP hook server port (auto-managed)
+├── hooks/
+│   ├── notify.sh             # Hook script (auto-generated)
+│   └── claude-settings.json  # Claude Code settings (auto-generated)
 └── worktrees/
     └── <workspaceName>/      # workspaceName = repo name
         └── <roomName>/       # roomName = branch name (git worktree)

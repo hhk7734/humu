@@ -80,22 +80,33 @@ rounded_corners = true
 ### `~/.humu/state.toml` (auto-managed)
 
 ```toml
-active_workspace = "humu"
-active_room = "feat/auth"
+active_workspace_id = "550e8400-e29b-41d4-a716-446655440000"
+active_room_id = "660e8400-e29b-41d4-a716-446655440001"
 
 [workspaces.humu]
+id = "550e8400-e29b-41d4-a716-446655440000"
 path = "/home/user/github/humu"
 
+[workspaces.humu.rooms.main]
+id = "660e8400-e29b-41d4-a716-446655440001"
+
+[workspaces.humu.rooms."feat/auth"]
+id = "770e8400-e29b-41d4-a716-446655440002"
+
 [workspaces.infra]
+id = "880e8400-e29b-41d4-a716-446655440003"
 path = "/home/user/github/infra"
 
-[layout."humu"."feat/auth"]
+[layout."550e8400-..."]["660e8400-..."]
 active_tab = 0
-tabs = [
-  { name = "claude", split = { direction = "vertical", ratio = 0.5, children = [
-    { preset = "claude" },
-    { preset = "shell" },
-  ]}},
-  { name = "shell", split = { preset = "shell" }},
-]
+
+[[layout."550e8400-..."]["660e8400-...".tabs]]
+name = "claude"
+tree = { preset = "claude", session_id = "abc123-def456" }
+
+[[layout."550e8400-..."]["660e8400-...".tabs]]
+name = "shell"
+tree = { preset = "shell" }
 ```
+
+Workspace and room IDs are UUIDs. Room IDs are assigned lazily on first discovery and persisted. On startup, stale room entries (worktrees that no longer exist) are pruned. Layout keys use UUID strings. Old-format `state.toml` (pre-UUID) is discarded on load with a log message.
