@@ -1533,6 +1533,7 @@ impl App {
             for id in tree.pane_ids() {
                 self.panes.remove(&id);
                 self.pane_presets.remove(&id);
+                self.agent_states.remove(&id);
             }
             self.fullscreen_pane = None;
             self.sync_focused_pane();
@@ -1604,6 +1605,7 @@ impl App {
         }
         self.panes.remove(&focused);
         self.pane_presets.remove(&focused);
+        self.agent_states.remove(&focused);
 
         // Pick a new focused pane from remaining panes in the active tree.
         self.focused_pane = self
