@@ -1496,14 +1496,13 @@ impl App {
     }
 
     fn close_tab(&mut self) {
-        if self.tabs.len() <= 1 {
-            return;
-        }
         let active = self.tabs.active_index();
         if let Some(tree) = self.tabs.remove_tab(active) {
             for id in tree.pane_ids() {
                 self.panes.remove(&id);
+                self.pane_presets.remove(&id);
             }
+            self.fullscreen_pane = None;
             self.sync_focused_pane();
         }
     }
@@ -1562,7 +1561,7 @@ impl App {
             .unwrap_or(false);
 
         if only_pane {
-            // Close the tab (unless it's the last one).
+            // Only pane in tab — close the whole tab.
             self.close_tab();
             return;
         }
@@ -1572,6 +1571,7 @@ impl App {
             tree.remove_pane(focused);
         }
         self.panes.remove(&focused);
+        self.pane_presets.remove(&focused);
 
         // Pick a new focused pane from remaining panes in the active tree.
         self.focused_pane = self

@@ -177,9 +177,9 @@ impl TabContainer {
     }
 
     pub fn remove_tab(&mut self, index: usize) -> Option<SplitTree> {
-        if index < self.tabs.len() && self.tabs.len() > 1 {
+        if index < self.tabs.len() {
             let entry = self.tabs.remove(index);
-            if self.active >= self.tabs.len() {
+            if !self.tabs.is_empty() && self.active >= self.tabs.len() {
                 self.active = self.tabs.len() - 1;
             }
             Some(entry.tree)
