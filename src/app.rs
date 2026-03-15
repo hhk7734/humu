@@ -2160,17 +2160,41 @@ impl App {
         }
     }
 
+    /// Collect pane IDs belonging to a workspace (live + suspended).
+    fn pane_ids_for_workspace(&self, ws_id: WorkspaceId) -> Vec<PaneId> {
+        let mut ids = Vec::new();
+        // Current room's panes if this is the active workspace.
+        if self.state.active_workspace_id == Some(ws_id) {
+            ids.extend(self.panes.keys());
+        }
+        // Suspended rooms for this workspace.
+        for ((wid, _), room_state) in &self.suspended_rooms {
+            if *wid == ws_id {
+                ids.extend(room_state.panes.keys());
+            }
+        }
+        ids
+    }
+
+    /// Check if any pane in the given set has an active agent state.
+    fn has_active_agent(&self, pane_ids: &[PaneId]) -> bool {
+        pane_ids.iter().any(|id| {
+            self.agent_states
+                .get(id)
+                .is_some_and(|e| matches!(e.state, AgentState::Working | AgentState::NeedsInput))
+        })
+    }
+
     fn workspace_items(&self) -> Vec<WorkspaceItem> {
-        let any_active = self.agent_states.values().any(|e| {
-            matches!(e.state, AgentState::Working | AgentState::NeedsInput)
-        });
-        let active_ws = self.active_workspace_name();
         let mut names: Vec<_> = self.state.workspaces.keys().cloned().collect();
         names.sort();
         names
             .into_iter()
             .map(|name| {
-                let active = any_active && active_ws.as_deref() == Some(&name);
+                let ws_id = self.state.workspaces.get(&name).map(|e| e.id);
+                let active = ws_id
+                    .map(|id| self.has_active_agent(&self.pane_ids_for_workspace(id)))
+                    .unwrap_or(false);
                 WorkspaceItem { name, active }
             })
             .collect()
@@ -2184,22 +2208,38 @@ impl App {
         self.room_items_for_workspace(&ws_name)
     }
 
+    /// Collect pane IDs belonging to a specific room (live + suspended).
+    fn pane_ids_for_room(&self, ws_id: WorkspaceId, room_id: RoomId) -> Vec<PaneId> {
+        let mut ids = Vec::new();
+        // Current room's panes if this is the active workspace+room.
+        if self.state.active_workspace_id == Some(ws_id)
+            && self.state.active_room_id == Some(room_id)
+        {
+            ids.extend(self.panes.keys());
+        }
+        // Suspended room.
+        if let Some(room_state) = self.suspended_rooms.get(&(ws_id, room_id)) {
+            ids.extend(room_state.panes.keys());
+        }
+        ids
+    }
+
     /// List rooms for a specific workspace by name, with agent activity flags.
     fn room_items_for_workspace(&self, ws_name: &str) -> Vec<RoomItem> {
         let ws = match self.state.workspaces.get(ws_name) {
             Some(ws) => ws,
             None => return vec![],
         };
-        let any_active = self.agent_states.values().any(|e| {
-            matches!(e.state, AgentState::Working | AgentState::NeedsInput)
-        });
-        let active_room = self.active_room_name();
+        let ws_id = ws.id;
         let mgr = RoomManager::new();
         match mgr.list(&ws.path) {
             Ok(rooms) => rooms
                 .into_iter()
                 .map(|r| {
-                    let active = any_active && active_room.as_deref() == Some(&r.branch);
+                    let room_id = ws.rooms.get(&r.branch).map(|e| e.id);
+                    let active = room_id
+                        .map(|rid| self.has_active_agent(&self.pane_ids_for_room(ws_id, rid)))
+                        .unwrap_or(false);
                     RoomItem {
                         name: r.branch,
                         is_default: r.is_default,
