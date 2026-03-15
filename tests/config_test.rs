@@ -72,6 +72,7 @@ fn state_round_trip() {
         active_room_id: Some(room_id),
         workspaces,
         layout,
+        panel_widths: None,
     };
 
     state.save(&path).expect("save failed");

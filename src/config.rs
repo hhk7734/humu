@@ -167,6 +167,9 @@ pub struct HumuState {
     /// layout[workspace_id][room_id] = RoomLayout
     #[serde(default)]
     pub layout: HashMap<String, HashMap<String, RoomLayout>>,
+    /// Panel widths: [workspace_panel, room_panel]. Persisted across restarts.
+    #[serde(default)]
+    pub panel_widths: Option<[u16; 2]>,
 }
 
 impl HumuState {

@@ -221,6 +221,8 @@ impl App {
             rounded_corners: config.ui.rounded_corners,
         };
 
+        let saved_panel_widths = state.panel_widths.unwrap_or([20, 18]);
+
         Ok(Self {
             config,
             state,
@@ -240,7 +242,7 @@ impl App {
             hook_rx: Some(hook_rx),
             hook_port,
             panel_rects: PanelRects::default(),
-            panel_widths: [20, 18],
+            panel_widths: saved_panel_widths,
             dragging: None,
             fullscreen_pane: None,
             palette: humu::tui::theme::Palette::GITHUB_DARK,
@@ -363,6 +365,7 @@ impl App {
             // room_state.panes dropped here, killing child processes.
         }
 
+        self.state.panel_widths = Some(self.panel_widths);
         let state_path = humu_dir().join("state.toml");
         self.state.save(&state_path)?;
 
