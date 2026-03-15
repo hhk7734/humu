@@ -165,9 +165,10 @@ pub fn extract_rows(
 
     for row_idx in 0..screen_rows {
         let mut text = String::new();
-        let mut col_offsets = Vec::new();
+        // Build column→byte mapping first, then invert to byte→column.
+        let mut col_byte_starts = Vec::with_capacity(screen_cols + 1);
         for col in 0..screen_cols {
-            col_offsets.push(text.len());
+            col_byte_starts.push(text.len());
             if let Some(cell) = screen.cell(row_idx as u16, col as u16) {
                 let contents = cell.contents();
                 if contents.is_empty() {
@@ -179,8 +180,20 @@ pub fn extract_rows(
                 text.push(' ');
             }
         }
-        col_offsets.push(text.len()); // sentinel
-        all_rows.push((text, col_offsets));
+        col_byte_starts.push(text.len()); // sentinel
+
+        // Build byte_to_col: for each byte offset, which column does it belong to?
+        let mut byte_to_col = vec![0usize; text.len() + 1];
+        for col in 0..screen_cols {
+            let byte_start = col_byte_starts[col];
+            let byte_end = col_byte_starts[col + 1];
+            for b in byte_start..byte_end {
+                byte_to_col[b] = col;
+            }
+        }
+        byte_to_col[text.len()] = screen_cols; // sentinel: one past last column
+
+        all_rows.push((text, byte_to_col));
     }
 
     all_rows

@@ -1337,6 +1337,9 @@ impl App {
                         pane.set_scrollback(current.saturating_add(1));
                     }
                 }
+                if self.search_state.is_some() {
+                    self.run_search();
+                }
             }
             Action::ScrollDown => {
                 if let Some(pane_id) = self.focused_pane {
@@ -1344,6 +1347,9 @@ impl App {
                         let current = pane.scrollback();
                         pane.set_scrollback(current.saturating_sub(1));
                     }
+                }
+                if self.search_state.is_some() {
+                    self.run_search();
                 }
             }
             Action::ScrollPageUp => {
@@ -1354,6 +1360,9 @@ impl App {
                         pane.set_scrollback(current.saturating_add(page));
                     }
                 }
+                if self.search_state.is_some() {
+                    self.run_search();
+                }
             }
             Action::ScrollPageDown => {
                 if let Some(pane_id) = self.focused_pane {
@@ -1362,6 +1371,9 @@ impl App {
                         let current = pane.scrollback();
                         pane.set_scrollback(current.saturating_sub(page));
                     }
+                }
+                if self.search_state.is_some() {
+                    self.run_search();
                 }
             }
 
@@ -1522,6 +1534,10 @@ impl App {
             } else {
                 pane.set_scrollback(current.saturating_sub(lines_per_tick));
             }
+        }
+        // Re-run search so highlights track the new viewport.
+        if self.search_state.is_some() {
+            self.run_search();
         }
     }
 
