@@ -109,8 +109,11 @@ impl PtyPane {
     }
 
     /// Set the scrollback offset (0 = live view, N = N rows back in history).
+    /// Clamped to viewport height to avoid vt100 visible_rows() underflow.
     pub fn set_scrollback(&self, offset: usize) {
-        self.parser.lock().unwrap().set_scrollback(offset);
+        let mut parser = self.parser.lock().unwrap();
+        let rows = parser.screen().size().0 as usize;
+        parser.set_scrollback(offset.min(rows));
     }
 
     /// Returns the current scrollback offset.

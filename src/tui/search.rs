@@ -141,71 +141,47 @@ impl SearchState {
     }
 }
 
-/// Extract all text from a vt100 parser, returning `(text, byte-to-col mapping)` per row.
-/// Row 0 = oldest scrollback line.
+/// Extract text from a vt100 parser's current viewport (including scrollback
+/// position), returning `(text, byte-to-col mapping)` per row.
+/// Row 0 = top of the current viewport. Searches the visible content at
+/// the current scrollback offset.
+///
+/// Note: vt100 0.15 limits scrollback viewing to one viewport height. The
+/// `set_scrollback(N)` API panics when N > viewport_height due to an
+/// unsigned subtraction in `visible_rows()`. Scrollback is clamped in
+/// `PtyPane::set_scrollback` to prevent this.
 pub fn extract_rows(
     parser: &std::sync::Arc<std::sync::Mutex<vt100::Parser>>,
 ) -> Vec<(String, Vec<usize>)> {
-    let mut guard = parser.lock().unwrap();
+    let guard = parser.lock().unwrap();
+    let screen = guard.screen().clone();
+    drop(guard);
 
-    // Probe scrollback depth.
-    let original_offset = guard.screen().scrollback();
-    guard.set_scrollback(usize::MAX);
-    let max_offset = guard.screen().scrollback();
-    guard.set_scrollback(original_offset);
-
-    let (screen_rows, screen_cols) = guard.screen().size();
+    let (screen_rows, screen_cols) = screen.size();
     let screen_rows = screen_rows as usize;
     let screen_cols = screen_cols as usize;
 
-    let mut all_rows: Vec<(String, Vec<usize>)> =
-        Vec::with_capacity(max_offset + screen_rows);
+    let mut all_rows: Vec<(String, Vec<usize>)> = Vec::with_capacity(screen_rows);
 
-    // Step from max_offset down to 0 in screen_rows-sized steps.
-    let mut offset = max_offset;
-    let mut prev_offset: Option<usize> = None;
-    loop {
-        guard.set_scrollback(offset);
-        let screen = guard.screen().clone();
-
-        // Determine which rows in the viewport are new (not seen in previous chunk).
-        let start_row = match prev_offset {
-            None => 0, // first chunk: read all rows
-            Some(prev) => {
-                let step = prev - offset;
-                screen_rows.saturating_sub(step)
-            }
-        };
-
-        for row_idx in start_row..screen_rows {
-            let mut text = String::new();
-            let mut col_offsets = Vec::new();
-            for col in 0..screen_cols {
-                col_offsets.push(text.len());
-                if let Some(cell) = screen.cell(row_idx as u16, col as u16) {
-                    let contents = cell.contents();
-                    if contents.is_empty() {
-                        text.push(' ');
-                    } else {
-                        text.push_str(&contents);
-                    }
-                } else {
+    for row_idx in 0..screen_rows {
+        let mut text = String::new();
+        let mut col_offsets = Vec::new();
+        for col in 0..screen_cols {
+            col_offsets.push(text.len());
+            if let Some(cell) = screen.cell(row_idx as u16, col as u16) {
+                let contents = cell.contents();
+                if contents.is_empty() {
                     text.push(' ');
+                } else {
+                    text.push_str(&contents);
                 }
+            } else {
+                text.push(' ');
             }
-            col_offsets.push(text.len()); // sentinel
-            all_rows.push((text, col_offsets));
         }
-
-        if offset == 0 {
-            break;
-        }
-        prev_offset = Some(offset);
-        offset = offset.saturating_sub(screen_rows);
+        col_offsets.push(text.len()); // sentinel
+        all_rows.push((text, col_offsets));
     }
-
-    // Restore original scrollback offset.
-    guard.set_scrollback(original_offset);
 
     all_rows
 }

@@ -1069,7 +1069,8 @@ impl App {
         let pane_area = self.terminal_pane_area();
 
         // Pre-compute search highlight data for the focused pane.
-        let search_base_row = self.scrollback_base_row();
+        // Search matches use viewport-relative rows (0 = top of visible area).
+        let search_base_row = 0;
         let (search_matches, search_active) = match &self.search_state {
             Some(state) if matches!(self.mode, Mode::EnterSearch | Mode::Search) => {
                 (state.matches.as_slice(), state.active_index)
@@ -2334,56 +2335,8 @@ impl App {
     }
 
     fn scroll_to_active_match(&mut self) {
-        let active_row = match self.search_state.as_ref().and_then(|s| s.active_match()) {
-            Some(m) => m.row,
-            None => return,
-        };
-        let pane_id = match self.focused_pane {
-            Some(id) => id,
-            None => return,
-        };
-        let pane = match self.panes.get(&pane_id) {
-            Some(p) => p,
-            None => return,
-        };
-        // Probe max_offset.
-        let parser = pane.parser_ref();
-        let mut guard = parser.lock().unwrap();
-        let original = guard.screen().scrollback();
-        guard.set_scrollback(usize::MAX);
-        let max_offset = guard.screen().scrollback();
-        guard.set_scrollback(original);
-        let screen_rows = guard.screen().size().0 as usize;
-        drop(guard);
-
-        // Center the match row in the viewport.
-        let target_offset = if active_row < max_offset {
-            (max_offset - active_row).saturating_sub(screen_rows / 2)
-        } else {
-            0
-        };
-        pane.set_scrollback(target_offset.min(max_offset));
-    }
-
-    /// Compute the absolute row number of the top of the current viewport.
-    /// Used to translate SearchMatch.row to viewport-relative coordinates.
-    fn scrollback_base_row(&self) -> usize {
-        let pane_id = match self.focused_pane {
-            Some(id) => id,
-            None => return 0,
-        };
-        let pane = match self.panes.get(&pane_id) {
-            Some(p) => p,
-            None => return 0,
-        };
-        let parser = pane.parser_ref();
-        let mut guard = parser.lock().unwrap();
-        let original = guard.screen().scrollback();
-        guard.set_scrollback(usize::MAX);
-        let max_offset = guard.screen().scrollback();
-        guard.set_scrollback(original);
-        drop(guard);
-        max_offset.saturating_sub(pane.scrollback())
+        // Search covers the current viewport, so matches are already visible.
+        // No scrollback adjustment needed.
     }
 
     /// Suspend the current room's live state (panes, tabs, etc.) into the
