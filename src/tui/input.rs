@@ -174,7 +174,7 @@ fn handle_workspace(key: KeyEvent) -> Action {
         KeyCode::Up => Action::NavigateUp,
         KeyCode::Enter => Action::Select,
         KeyCode::Char('n') => Action::Create,
-        KeyCode::Char('x') => Action::Delete,
+        KeyCode::Char('d') => Action::Delete,
         _ => Action::None,
     }
 }
@@ -198,7 +198,7 @@ fn handle_room(key: KeyEvent) -> Action {
         KeyCode::Up => Action::NavigateUp,
         KeyCode::Enter => Action::Select,
         KeyCode::Char('n') => Action::Create,
-        KeyCode::Char('x') => Action::Delete,
+        KeyCode::Char('d') => Action::Delete,
         _ => Action::None,
     }
 }

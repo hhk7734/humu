@@ -93,7 +93,7 @@ Manages tabs within the terminal area. Enter via `Ctrl+t` from Terminal mode.
 | `↑/↓` | Navigate list |
 | `Enter` | Select |
 | `n` | Create workspace or room (context-dependent) |
-| `x` | Delete workspace or room (context-dependent) |
+| `d` | Delete workspace or room (context-dependent) |
 | `Shift+←/→` | Resize workspace panel |
 
 ### Room Mode
@@ -103,7 +103,7 @@ Manages tabs within the terminal area. Enter via `Ctrl+t` from Terminal mode.
 | `↑/↓` | Navigate list |
 | `Enter` | Select room |
 | `n` | Create room |
-| `x` | Delete room |
+| `d` | Delete room |
 | `Shift+←/→` | Resize room panel |
 
 ### EnterSearch Mode

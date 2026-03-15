@@ -268,8 +268,8 @@ fn workspace_n_creates() {
 }
 
 #[test]
-fn workspace_x_deletes() {
-    assert!(matches!(handle_key(Mode::Workspace, key(KeyCode::Char('x'))), Action::Delete));
+fn workspace_d_deletes() {
+    assert!(matches!(handle_key(Mode::Workspace, key(KeyCode::Char('d'))), Action::Delete));
 }
 
 #[test]
@@ -320,8 +320,8 @@ fn room_n_creates() {
 }
 
 #[test]
-fn room_x_deletes() {
-    assert!(matches!(handle_key(Mode::Room, key(KeyCode::Char('x'))), Action::Delete));
+fn room_d_deletes() {
+    assert!(matches!(handle_key(Mode::Room, key(KeyCode::Char('d'))), Action::Delete));
 }
 
 #[test]
