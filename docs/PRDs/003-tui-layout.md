@@ -53,6 +53,7 @@ From any sub-mode, `Ctrl+w/r/t/p` switches directly to that mode. `Ctrl+w` and `
 | `Ctrl+r` | Room (idempotent) |
 | `Ctrl+t` | Terminal (always) |
 | `Ctrl+q` | Quit (from Terminal only) |
+| `Ctrl+f` | EnterSearch (from Terminal) |
 
 ### Locked Mode
 
