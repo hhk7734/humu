@@ -5,6 +5,7 @@ use humu::git::workspace::WorkspaceManager;
 use humu::hook::http::{generate_hook_files, AgentState, HookEvent, HookServer};
 use humu::pty::pane::PtyPane;
 use humu::tui::completion::complete_path;
+use humu::tui::search::SearchState;
 use humu::tui::input::{handle_key, Action, Direction as NavDirection, Mode};
 use humu::tui::layout::{PaneId, SplitDirection, SplitTree, TabContainer};
 use humu::tui::widgets::dialog::{Dialog, DialogField};
@@ -154,6 +155,8 @@ pub struct App {
     /// Suspended room states keyed by (workspace_id, room_id).
     /// Holds live PTY panes so they survive room/workspace switches.
     pub suspended_rooms: HashMap<(WorkspaceId, RoomId), RoomState>,
+    /// Active search state (None when not searching).
+    pub search_state: Option<SearchState>,
 }
 
 impl App {
@@ -244,6 +247,7 @@ impl App {
             ui_config,
             spin_tick: 0,
             suspended_rooms: HashMap::new(),
+            search_state: None,
         })
     }
 
@@ -1178,14 +1182,21 @@ impl App {
     fn handle_action(&mut self, action: Action) {
         match action {
             Action::EnterMode(mode) => {
+                // Clear search state when switching away from search modes.
+                if matches!(self.mode, Mode::EnterSearch | Mode::Search)
+                    && !matches!(mode, Mode::EnterSearch | Mode::Search)
+                {
+                    self.search_state = None;
+                }
+                // Initialize search state when entering EnterSearch.
+                if mode == Mode::EnterSearch && self.search_state.is_none() {
+                    self.search_state = Some(SearchState::new());
+                }
                 self.mode = mode;
                 match mode {
                     Mode::Workspace => self.focus = FocusedPanel::Workspace,
                     Mode::Room => self.focus = FocusedPanel::Room,
-                    Mode::Terminal | Mode::Pane | Mode::Tab | Mode::Locked
-                    | Mode::EnterSearch | Mode::Search => {
-                        self.focus = FocusedPanel::Terminal;
-                    }
+                    _ => self.focus = FocusedPanel::Terminal,
                 }
             }
             Action::Quit => self.running = false,
@@ -1237,6 +1248,96 @@ impl App {
 
             // Resize actions
             Action::Resize(dir) => self.handle_resize_action(dir),
+
+            // Search actions
+            Action::SearchInput(key) => {
+                if let Some(ref mut state) = self.search_state {
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            state.query.push(c);
+                            self.run_search();
+                        }
+                        KeyCode::Backspace => {
+                            state.query.pop();
+                            self.run_search();
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Action::SearchConfirm => {
+                if let Some(ref state) = self.search_state {
+                    if state.query.is_empty() {
+                        self.search_state = None;
+                        self.mode = Mode::Terminal;
+                    } else {
+                        self.mode = Mode::Search;
+                    }
+                }
+            }
+            Action::SearchCancel => {
+                self.search_state = None;
+                self.mode = Mode::Terminal;
+            }
+            Action::SearchNext => {
+                if let Some(ref mut state) = self.search_state {
+                    if state.next() {
+                        self.scroll_to_active_match();
+                    }
+                }
+            }
+            Action::SearchPrev => {
+                if let Some(ref mut state) = self.search_state {
+                    if state.prev() {
+                        self.scroll_to_active_match();
+                    }
+                }
+            }
+            Action::SearchToggleCase => {
+                if let Some(ref mut state) = self.search_state {
+                    state.case_sensitive = !state.case_sensitive;
+                    self.run_search();
+                }
+            }
+            Action::SearchToggleWrap => {
+                if let Some(ref mut state) = self.search_state {
+                    state.wrap = !state.wrap;
+                }
+            }
+            Action::ScrollUp => {
+                if let Some(pane_id) = self.focused_pane {
+                    if let Some(pane) = self.panes.get(&pane_id) {
+                        let current = pane.scrollback();
+                        pane.set_scrollback(current.saturating_add(1));
+                    }
+                }
+            }
+            Action::ScrollDown => {
+                if let Some(pane_id) = self.focused_pane {
+                    if let Some(pane) = self.panes.get(&pane_id) {
+                        let current = pane.scrollback();
+                        pane.set_scrollback(current.saturating_sub(1));
+                    }
+                }
+            }
+            Action::ScrollPageUp => {
+                if let Some(pane_id) = self.focused_pane {
+                    if let Some(pane) = self.panes.get(&pane_id) {
+                        let page = pane.rows() as usize;
+                        let current = pane.scrollback();
+                        pane.set_scrollback(current.saturating_add(page));
+                    }
+                }
+            }
+            Action::ScrollPageDown => {
+                if let Some(pane_id) = self.focused_pane {
+                    if let Some(pane) = self.panes.get(&pane_id) {
+                        let page = pane.rows() as usize;
+                        let current = pane.scrollback();
+                        pane.set_scrollback(current.saturating_sub(page));
+                    }
+                }
+            }
 
             _ => {}
         }
@@ -2189,6 +2290,77 @@ impl App {
         }
     }
 
+    // ── Search helpers ─────────────────────────────────────────────────────────
+
+    fn run_search(&mut self) {
+        let pane_id = match self.focused_pane {
+            Some(id) => id,
+            None => return,
+        };
+        let pane = match self.panes.get(&pane_id) {
+            Some(p) => p,
+            None => return,
+        };
+        let rows = humu::tui::search::extract_rows(pane.parser_ref());
+        if let Some(ref mut state) = self.search_state {
+            state.execute(&rows);
+            self.scroll_to_active_match();
+        }
+    }
+
+    fn scroll_to_active_match(&mut self) {
+        let active_row = match self.search_state.as_ref().and_then(|s| s.active_match()) {
+            Some(m) => m.row,
+            None => return,
+        };
+        let pane_id = match self.focused_pane {
+            Some(id) => id,
+            None => return,
+        };
+        let pane = match self.panes.get(&pane_id) {
+            Some(p) => p,
+            None => return,
+        };
+        // Probe max_offset.
+        let parser = pane.parser_ref();
+        let mut guard = parser.lock().unwrap();
+        let original = guard.screen().scrollback();
+        guard.set_scrollback(usize::MAX);
+        let max_offset = guard.screen().scrollback();
+        guard.set_scrollback(original);
+        let screen_rows = guard.screen().size().0 as usize;
+        drop(guard);
+
+        // Center the match row in the viewport.
+        let target_offset = if active_row < max_offset {
+            (max_offset - active_row).saturating_sub(screen_rows / 2)
+        } else {
+            0
+        };
+        pane.set_scrollback(target_offset.min(max_offset));
+    }
+
+    /// Compute the absolute row number of the top of the current viewport.
+    /// Used to translate SearchMatch.row to viewport-relative coordinates.
+    fn scrollback_base_row(&self) -> usize {
+        let pane_id = match self.focused_pane {
+            Some(id) => id,
+            None => return 0,
+        };
+        let pane = match self.panes.get(&pane_id) {
+            Some(p) => p,
+            None => return 0,
+        };
+        let parser = pane.parser_ref();
+        let mut guard = parser.lock().unwrap();
+        let original = guard.screen().scrollback();
+        guard.set_scrollback(usize::MAX);
+        let max_offset = guard.screen().scrollback();
+        guard.set_scrollback(original);
+        drop(guard);
+        max_offset.saturating_sub(pane.scrollback())
+    }
+
     /// Suspend the current room's live state (panes, tabs, etc.) into the
     /// `suspended_rooms` map without killing PTY processes.
     fn suspend_current_room(&mut self) {
@@ -2200,6 +2372,9 @@ impl App {
             Some(id) => id,
             None => return,
         };
+
+        // Clear search state — suspended panes may receive new output.
+        self.search_state = None;
 
         // Persist layout to state.toml so the room can also be cold-restored.
         self.persist_layout();
