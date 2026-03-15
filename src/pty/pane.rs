@@ -6,6 +6,8 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+const DEFAULT_SCROLLBACK_LEN: usize = 10_000;
+
 pub struct PtyPane {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn std::io::Write + Send>,
@@ -58,7 +60,7 @@ impl PtyPane {
 
         let writer = pair.master.take_writer()?;
         let mut reader = pair.master.try_clone_reader()?;
-        let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 0)));
+        let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, DEFAULT_SCROLLBACK_LEN)));
 
         // Read PTY output in a background thread to avoid blocking the event loop.
         let (output_tx, output_rx) = mpsc::channel();
@@ -90,12 +92,40 @@ impl PtyPane {
     }
 
     /// Drain any PTY output received from the background reader thread.
+    /// Auto-resets scrollback to bottom when new output arrives.
     pub fn process_output(&mut self) -> Result<()> {
+        let mut parser = self.parser.lock().unwrap();
+        let mut received = false;
         while let Ok(data) = self.output_rx.try_recv() {
-            self.parser.lock().unwrap().process(&data);
+            parser.process(&data);
+            received = true;
         }
+        if received && parser.screen().scrollback() > 0 {
+            parser.set_scrollback(0);
+        }
+        drop(parser);
         self.check_exit();
         Ok(())
+    }
+
+    /// Set the scrollback offset (0 = live view, N = N rows back in history).
+    pub fn set_scrollback(&self, offset: usize) {
+        self.parser.lock().unwrap().set_scrollback(offset);
+    }
+
+    /// Returns the current scrollback offset.
+    pub fn scrollback(&self) -> usize {
+        self.parser.lock().unwrap().screen().scrollback()
+    }
+
+    /// Returns the mouse protocol mode the child process has requested.
+    pub fn mouse_protocol_mode(&self) -> vt100::MouseProtocolMode {
+        self.parser.lock().unwrap().screen().mouse_protocol_mode()
+    }
+
+    /// Returns the mouse protocol encoding the child process has requested.
+    pub fn mouse_protocol_encoding(&self) -> vt100::MouseProtocolEncoding {
+        self.parser.lock().unwrap().screen().mouse_protocol_encoding()
     }
 
     /// Write input to the PTY (user keystrokes).

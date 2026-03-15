@@ -290,6 +290,12 @@ impl App {
                             MouseEventKind::Up(MouseButton::Left) => {
                                 self.dragging = None;
                             }
+                            MouseEventKind::ScrollUp => {
+                                self.handle_scroll(mouse.column, mouse.row, true);
+                            }
+                            MouseEventKind::ScrollDown => {
+                                self.handle_scroll(mouse.column, mouse.row, false);
+                            }
                             _ => {}
                         }
                     }
@@ -1046,11 +1052,7 @@ impl App {
 
         // Split into tab bar (1 row) and pane content area
         let tab_bar_area = Rect::new(area.x, area.y, area.width, 1);
-        let pane_area = if area.height > 1 {
-            Rect::new(area.x, area.y + 1, area.width, area.height - 1)
-        } else {
-            Rect::new(area.x, area.y, area.width, 0)
-        };
+        let pane_area = self.terminal_pane_area();
 
         // Render tab bar — a tab is active if any of its panes has a non-Idle
         // agent state in agent_states.
@@ -1107,7 +1109,7 @@ impl App {
                         .exited(fs_exit_code)
                         .pane_count(fs_pane_count);
                 frame.render_widget(widget, pane_area);
-                if fs_exit_code.is_none() && !screen.hide_cursor() {
+                if fs_exit_code.is_none() && !screen.hide_cursor() && screen.scrollback() == 0 {
                     let (crow, ccol) = screen.cursor_position();
                     let cx = pane_area.x + 1 + ccol;
                     let cy = pane_area.y + 1 + crow;
@@ -1160,7 +1162,7 @@ impl App {
                     .exited(exit_code)
                     .pane_count(pane_count);
                     frame.render_widget(widget, rect);
-                    if is_focused && exit_code.is_none() && !screen.hide_cursor() {
+                    if is_focused && exit_code.is_none() && !screen.hide_cursor() && screen.scrollback() == 0 {
                         let (crow, ccol) = screen.cursor_position();
                         let cx = rect.x + 1 + ccol;
                         let cy = rect.y + 1 + crow;
@@ -1272,22 +1274,8 @@ impl App {
         } else if self.panel_rects.terminal.contains(pos) {
             self.mode = Mode::Terminal;
             self.focus = FocusedPanel::Terminal;
-            let pane_area = {
-                let r = self.panel_rects.terminal;
-                if r.height > 1 {
-                    Rect::new(r.x, r.y + 1, r.width, r.height - 1)
-                } else {
-                    Rect::new(r.x, r.y, r.width, 0)
-                }
-            };
-            if let Some(tree) = self.tabs.active_tree() {
-                let rects = tree.compute_rects(pane_area);
-                for (pane_id, rect) in rects {
-                    if rect.contains(pos) {
-                        self.focused_pane = Some(pane_id);
-                        break;
-                    }
-                }
+            if let Some((pane_id, _)) = self.pane_at(pos) {
+                self.focused_pane = Some(pane_id);
             }
         } else {
             // Click on a panel border — detect which border and start dragging.
@@ -1328,6 +1316,83 @@ impl App {
                     self.dragging = Some(DragTarget::RoomTerminal);
                     self.handle_drag(x);
                 }
+            }
+        }
+    }
+
+    /// Returns the pane content area (terminal area minus the tab bar row).
+    fn terminal_pane_area(&self) -> Rect {
+        let r = self.panel_rects.terminal;
+        if r.height > 1 {
+            Rect::new(r.x, r.y + 1, r.width, r.height - 1)
+        } else {
+            Rect::new(r.x, r.y, r.width, 0)
+        }
+    }
+
+    /// Find the pane whose rendered rect contains the given position.
+    fn pane_at(&self, pos: Position) -> Option<(PaneId, Rect)> {
+        let pane_area = self.terminal_pane_area();
+        self.tabs
+            .active_tree()?
+            .compute_rects(pane_area)
+            .into_iter()
+            .find(|(_, rect)| rect.contains(pos))
+    }
+
+    /// Handle mouse scroll within the terminal area.
+    ///
+    /// If the child process has enabled mouse reporting, forward the scroll
+    /// as a proper mouse escape sequence. Otherwise, send arrow key sequences
+    /// (3 lines per scroll tick) for programs like plain shells.
+    fn handle_scroll(&mut self, x: u16, y: u16, up: bool) {
+        let pos = Position::new(x, y);
+        if !self.panel_rects.terminal.contains(pos) {
+            return;
+        }
+
+        let (pane_id, pane_rect) = match self.pane_at(pos) {
+            Some(v) => v,
+            None => return,
+        };
+
+        let pane = match self.panes.get_mut(&pane_id) {
+            Some(p) => p,
+            None => return,
+        };
+
+        // Read mouse protocol state via thin accessors (avoids cloning full Screen).
+        let mouse_mode = pane.mouse_protocol_mode();
+
+        if mouse_mode != vt100::MouseProtocolMode::None {
+            // Child process wants mouse events — send proper mouse escape sequences.
+            let encoding = pane.mouse_protocol_encoding();
+            // Translate terminal-absolute coordinates to pane-relative.
+            let col = x.saturating_sub(pane_rect.x + 1) as u32; // inside border
+            let row = y.saturating_sub(pane_rect.y + 1) as u32;
+            let button: u32 = if up { 64 } else { 65 }; // 64 = scroll up, 65 = scroll down
+
+            let seq = match encoding {
+                vt100::MouseProtocolEncoding::Sgr => {
+                    format!("\x1b[<{};{};{}M", button, col + 1, row + 1)
+                }
+                _ => {
+                    // Default/UTF-8 encoding: \x1b[M + (button+32) + (col+33) + (row+33)
+                    let b = (button + 32) as u8;
+                    let c = ((col + 33).min(255)) as u8;
+                    let r = ((row + 33).min(255)) as u8;
+                    format!("\x1b[M{}{}{}", b as char, c as char, r as char)
+                }
+            };
+            let _ = pane.write_input(seq.as_bytes());
+        } else {
+            // No mouse reporting — adjust scrollback offset.
+            let lines_per_tick: usize = 3;
+            let current = pane.scrollback();
+            if up {
+                pane.set_scrollback(current.saturating_add(lines_per_tick));
+            } else {
+                pane.set_scrollback(current.saturating_sub(lines_per_tick));
             }
         }
     }
@@ -1776,6 +1841,10 @@ impl App {
         }
 
         if let Some(pane) = self.panes.get_mut(&pane_id) {
+            // Reset scrollback to live view when the user types.
+            if pane.scrollback() > 0 {
+                pane.set_scrollback(0);
+            }
             let bytes = key_event_to_bytes(&key);
             if !bytes.is_empty() {
                 let _ = pane.write_input(&bytes);

@@ -65,7 +65,7 @@ PTY output → vt100 (parse ANSI/VT) → screen buffer → ratatui cells
 User keystrokes → ratatui → PTY input
 ```
 
-PTY reads run in a background thread with `mpsc::channel`, using `try_recv()` in the main event loop to avoid blocking. Resize events propagate to the PTY via `SIGWINCH`.
+PTY reads run in a background thread with `mpsc::channel`, using `try_recv()` in the main event loop to avoid blocking. Resize events propagate to the PTY via `SIGWINCH`. Each parser is created with 10,000 lines of scrollback (`vt100::Parser::new(rows, cols, 10_000)`), and `Parser::set_scrollback(offset)` shifts the viewport into history. Scrollback auto-resets to live view on new output or keypress.
 
 ## Workspace Management
 

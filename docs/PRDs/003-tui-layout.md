@@ -116,6 +116,10 @@ Manages tabs within the terminal area. Enter via `Ctrl+t` from Terminal mode.
 
 Clicking a panel enters the corresponding mode: workspace panel → Workspace mode, room panel → Room mode, terminal area → Terminal mode. Clicking tabs, `+` button, and dragging resize handles are also supported. All mouse interactions have keyboard equivalents.
 
+**Scroll wheel** on terminal panes:
+- **Programs with mouse reporting** (vim, less, tmux): scroll events are forwarded as proper mouse escape sequences (SGR or default encoding) with pane-relative coordinates.
+- **Plain shell / no mouse reporting**: scrolls through the vt100 scrollback buffer (10,000 lines). A yellow `↑N` indicator appears in the pane's bottom border showing lines scrolled back. Scrollback auto-resets to live view on new output or keypress.
+
 ## Status Bar Structure
 
 All segments use Powerline-style arrows (entry + exit) for clear visual separation.

@@ -148,6 +148,22 @@ impl Widget for TerminalWidget<'_> {
             .set_symbol(bc.bottom_right)
             .set_style(border_style);
 
+        // Scrollback indicator in bottom-right of border (e.g., "─ ↑42 ╯")
+        let scrollback = self.screen.scrollback();
+        if scrollback > 0 {
+            let label = format!(" \u{2191}{} ", scrollback);
+            // +2 accounts for the 3-byte UTF-8 arrow being 1 display column
+            let display_len = label.len() as u16 - 2;
+            let bot_y = area.y + area.height - 1;
+            let start_x = (area.x + area.width - 1).saturating_sub(display_len);
+            if start_x > area.x + 1 {
+                let indicator_style = Style::default()
+                    .fg(self.palette.accent_yellow)
+                    .add_modifier(Modifier::BOLD);
+                buf.set_string(start_x, bot_y, &label, indicator_style);
+            }
+        }
+
         // Inner content area
         let inner = Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2);
 
