@@ -75,13 +75,29 @@ impl Widget for RoomPanel<'_> {
             }
             let y = inner.y + i as u16;
             let is_selected = self.selected == Some(i);
+            let max_width = inner.width as usize;
 
-            let prefix = if is_selected { "▸ " } else { "  " };
-            let suffix = if room.active { format!(" {}", self.spinner_frame) } else { String::new() };
-            let text = format!("{prefix}{}{suffix}", room.name);
+            let prefix = if is_selected { "\u{25b8} " } else { "  " };
+            let suffix = if room.active {
+                format!(" {}", self.spinner_frame)
+            } else {
+                String::new()
+            };
+            let prefix_len = 2;
+            let suffix_len = if room.active { 2 } else { 0 };
+            let name_budget = max_width.saturating_sub(prefix_len + suffix_len);
+
+            let display_name = if room.name.len() > name_budget && name_budget >= 3 {
+                format!("{}...", &room.name[..name_budget - 3])
+            } else {
+                room.name.clone()
+            };
+            let text = format!("{prefix}{display_name}{suffix}");
 
             let style = if is_selected {
-                Style::default().fg(self.palette.accent_blue).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(self.palette.accent_blue)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(self.palette.fg_primary)
             };
