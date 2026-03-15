@@ -95,6 +95,7 @@ rounded_corners = true
 ```toml
 active_workspace_id = "550e8400-e29b-41d4-a716-446655440000"
 active_room_id = "660e8400-e29b-41d4-a716-446655440001"
+panel_widths = [20, 18]
 
 [workspaces.humu]
 id = "550e8400-e29b-41d4-a716-446655440000"
