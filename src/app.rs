@@ -811,6 +811,8 @@ impl App {
             Ok(name) => {
                 self.last_error = None;
                 // Auto-select the new workspace and its default room (main branch).
+                // Only set selection indices here — switch_to_selected_room handles
+                // suspending the old room and activating the new workspace/room IDs.
                 let names = {
                     let mut n: Vec<_> = self.state.workspaces.keys().cloned().collect();
                     n.sort();
@@ -818,13 +820,7 @@ impl App {
                 };
                 if let Some(idx) = names.iter().position(|n| *n == name) {
                     self.workspace_selected = Some(idx);
-                    self.set_active_workspace_by_name(&name);
-                }
-                // Select the first room (default branch).
-                let rooms = self.room_items();
-                if let Some(room) = rooms.first() {
                     self.room_selected = Some(0);
-                    self.set_active_room_by_name(&room.name.clone());
                     self.switch_to_selected_room();
                 }
             }
@@ -886,17 +882,53 @@ impl App {
             DialogField::Confirm { yes, .. } => *yes,
             _ => false,
         };
+
+        // Capture the workspace ID before deletion so we can clean up
+        // suspended rooms and detect if the active workspace is being deleted.
+        let ws_id = self
+            .state
+            .workspaces
+            .get(&workspace_name)
+            .map(|e| e.id);
+
+        let was_active = ws_id == self.state.active_workspace_id;
+
+        // If the active workspace is being deleted and its panes are live,
+        // clear them first (they'll be invalid after deletion).
+        if was_active {
+            self.panes.clear();
+            self.pane_presets.clear();
+            self.tabs = TabContainer::new();
+            self.focused_pane = None;
+            self.fullscreen_pane = None;
+        }
+
         let mgr = WorkspaceManager::new();
         match mgr.delete(&mut self.state, &workspace_name, remove_from_disk) {
             Ok(()) => {
+                // Remove all suspended rooms belonging to the deleted workspace.
+                if let Some(ws_id) = ws_id {
+                    self.suspended_rooms
+                        .retain(|(wid, _), _| *wid != ws_id);
+                }
+
                 // Adjust selection if needed.
                 let count = self.state.workspaces.len();
                 if count == 0 {
                     self.workspace_selected = None;
-                } else if let Some(sel) = self.workspace_selected
-                    && sel >= count
-                {
-                    self.workspace_selected = Some(count - 1);
+                    self.room_selected = None;
+                } else {
+                    if let Some(sel) = self.workspace_selected {
+                        if sel >= count {
+                            self.workspace_selected = Some(count - 1);
+                        }
+                    }
+                    // Switch to the selected workspace so the user isn't
+                    // left staring at a dead room.
+                    if was_active {
+                        self.room_selected = Some(0);
+                        self.switch_to_selected_room();
+                    }
                 }
                 self.last_error = None;
             }
@@ -2149,7 +2181,12 @@ impl App {
             Some(name) => name,
             None => return vec![],
         };
-        let ws = match self.state.workspaces.get(&ws_name) {
+        self.room_items_for_workspace(&ws_name)
+    }
+
+    /// List rooms for a specific workspace by name, with agent activity flags.
+    fn room_items_for_workspace(&self, ws_name: &str) -> Vec<RoomItem> {
+        let ws = match self.state.workspaces.get(ws_name) {
             Some(ws) => ws,
             None => return vec![],
         };
@@ -2465,9 +2502,12 @@ impl App {
             None => return,
         };
 
-        // Resolve room name from the room_selected index.
+        // Resolve room name from the room_selected index using the TARGET
+        // workspace, not the currently active one.  This is critical when
+        // creating a new workspace: active_workspace_id still points at
+        // the old workspace at this point.
         let room_name = {
-            let rooms = self.room_items();
+            let rooms = self.room_items_for_workspace(&ws_name);
             match self.room_selected {
                 Some(i) => rooms.into_iter().nth(i).map(|r| r.name),
                 None => None,
@@ -2482,6 +2522,8 @@ impl App {
         };
 
         // Suspend current room (preserves live PTY panes).
+        // Must happen BEFORE changing active IDs so the old room's panes
+        // are stored under the correct (old) workspace/room key.
         self.suspend_current_room();
 
         // Update active workspace/room in state.

@@ -28,6 +28,8 @@ On creation, humu auto-selects the new workspace and its default room (main bran
 
 - Removes the workspace from humu. Prompts user: "Also delete the repo on disk?" If yes, removes the directory.
 - Cascade: All associated rooms (worktrees) under `~/.humu/worktrees/<workspaceName>/` are removed either way.
+- Cleanup: Any suspended room states for the deleted workspace are discarded.
+- If the deleted workspace was active, its live panes are cleared and humu auto-switches to the next available workspace.
 
 ---
 

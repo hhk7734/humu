@@ -118,7 +118,9 @@ Layout keys use UUID strings for workspace and room identification.
 
 ### Room Suspension (Hot Restore)
 
-When switching rooms or workspaces, live PTY panes are **suspended** rather than killed. The runtime state (`RoomState`: panes, tabs, pane_presets, focused_pane, fullscreen_pane) is moved into `suspended_rooms: HashMap<(WorkspaceId, RoomId), RoomState>`. When switching back:
+When switching rooms or workspaces, live PTY panes are **suspended** rather than killed. The switch sequence is: (1) resolve the target workspace/room from selection indices, (2) suspend the current room under the **current** active IDs, (3) update active IDs to the target, (4) restore the target room. The room list for the target workspace is resolved independently of `active_workspace_id` to avoid miskeying suspended state during workspace creation.
+
+The runtime state (`RoomState`: panes, tabs, pane_presets, focused_pane, fullscreen_pane) is moved into `suspended_rooms: HashMap<(WorkspaceId, RoomId), RoomState>`. When switching back:
 
 1. **Hot restore**: If the room has suspended state, swap it back in — PTY processes resume instantly with full terminal history intact.
 2. **Cold restore**: If no suspended state exists (e.g., after restart), rebuild from the persisted layout in `state.toml`, spawning new PTY processes.
@@ -127,6 +129,8 @@ When switching rooms or workspaces, live PTY panes are **suspended** rather than
 Suspended panes continue running in the background — their reader threads accumulate output in unbounded `mpsc` channels, which is drained on restore. `PaneId` remains globally unique (monotonically increasing `next_pane_id` is never saved/restored per room). `agent_states` is global since hook events can arrive for any pane.
 
 On graceful shutdown, all suspended rooms have their layouts persisted to `state.toml` before PTY processes are dropped.
+
+When a workspace is deleted, all its entries in `suspended_rooms` are discarded. If the deleted workspace was active, live panes are cleared and humu auto-switches to the next available workspace.
 
 ## Claude Hook Integration
 
