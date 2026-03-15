@@ -394,3 +394,81 @@ fn alt_overrides_in_submodes() {
         );
     }
 }
+
+// ── EnterSearch mode ─────────────────────────────────────────────────────────
+
+#[test]
+fn terminal_ctrl_f_enters_search() {
+    let action = handle_key(Mode::Terminal, ctrl('f'));
+    assert!(matches!(action, Action::EnterMode(Mode::EnterSearch)));
+}
+
+#[test]
+fn enter_search_enter_confirms() {
+    let action = handle_key(Mode::EnterSearch, key(KeyCode::Enter));
+    assert!(matches!(action, Action::SearchConfirm));
+}
+
+#[test]
+fn enter_search_esc_cancels() {
+    let action = handle_key(Mode::EnterSearch, key(KeyCode::Esc));
+    assert!(matches!(action, Action::SearchCancel));
+}
+
+#[test]
+fn enter_search_char_is_input() {
+    let action = handle_key(Mode::EnterSearch, key(KeyCode::Char('a')));
+    assert!(matches!(action, Action::SearchInput(_)));
+}
+
+#[test]
+fn enter_search_ctrl_w_switches_mode() {
+    let action = handle_key(Mode::EnterSearch, ctrl('w'));
+    assert!(matches!(action, Action::EnterMode(Mode::Workspace)));
+}
+
+// ── Search mode ──────────────────────────────────────────────────────────────
+
+#[test]
+fn search_n_goes_next() {
+    let action = handle_key(Mode::Search, key(KeyCode::Char('n')));
+    assert!(matches!(action, Action::SearchNext));
+}
+
+#[test]
+fn search_shift_n_goes_prev() {
+    let k = KeyEvent {
+        code: KeyCode::Char('N'),
+        modifiers: KeyModifiers::SHIFT,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    };
+    let action = handle_key(Mode::Search, k);
+    assert!(matches!(action, Action::SearchPrev));
+}
+
+#[test]
+fn search_c_toggles_case() {
+    let action = handle_key(Mode::Search, key(KeyCode::Char('c')));
+    assert!(matches!(action, Action::SearchToggleCase));
+}
+
+#[test]
+fn search_w_toggles_wrap() {
+    let action = handle_key(Mode::Search, key(KeyCode::Char('w')));
+    assert!(matches!(action, Action::SearchToggleWrap));
+}
+
+#[test]
+fn search_esc_cancels() {
+    let action = handle_key(Mode::Search, key(KeyCode::Esc));
+    assert!(matches!(action, Action::SearchCancel));
+}
+
+#[test]
+fn search_arrows_scroll() {
+    assert!(matches!(handle_key(Mode::Search, key(KeyCode::Up)), Action::ScrollUp));
+    assert!(matches!(handle_key(Mode::Search, key(KeyCode::Down)), Action::ScrollDown));
+    assert!(matches!(handle_key(Mode::Search, key(KeyCode::PageUp)), Action::ScrollPageUp));
+    assert!(matches!(handle_key(Mode::Search, key(KeyCode::PageDown)), Action::ScrollPageDown));
+}

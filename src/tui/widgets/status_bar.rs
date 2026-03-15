@@ -35,6 +35,7 @@ impl<'a> StatusBar<'a> {
             Mode::Tab => "TAB",
             Mode::Workspace => "WORKSPACE",
             Mode::Room => "ROOM",
+            Mode::EnterSearch | Mode::Search => "SEARCH",
         }
     }
 
@@ -79,6 +80,7 @@ impl<'a> StatusBar<'a> {
                 ("x", "Delete"),
                 ("S+←→", "Resize"),
             ],
+            Mode::EnterSearch | Mode::Search => vec![],
         }
     }
 }

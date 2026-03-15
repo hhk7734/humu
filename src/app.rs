@@ -1182,7 +1182,8 @@ impl App {
                 match mode {
                     Mode::Workspace => self.focus = FocusedPanel::Workspace,
                     Mode::Room => self.focus = FocusedPanel::Room,
-                    Mode::Terminal | Mode::Pane | Mode::Tab | Mode::Locked => {
+                    Mode::Terminal | Mode::Pane | Mode::Tab | Mode::Locked
+                    | Mode::EnterSearch | Mode::Search => {
                         self.focus = FocusedPanel::Terminal;
                     }
                 }
@@ -1841,6 +1842,21 @@ impl App {
         }
 
         if let Some(pane) = self.panes.get_mut(&pane_id) {
+            // Page Up/Down: scroll scrollback buffer when no mouse reporting,
+            // otherwise forward to PTY.
+            if matches!(key.code, KeyCode::PageUp | KeyCode::PageDown)
+                && pane.mouse_protocol_mode() == vt100::MouseProtocolMode::None
+            {
+                let page = pane.rows() as usize;
+                let current = pane.scrollback();
+                if key.code == KeyCode::PageUp {
+                    pane.set_scrollback(current.saturating_add(page));
+                } else {
+                    pane.set_scrollback(current.saturating_sub(page));
+                }
+                return;
+            }
+
             // Reset scrollback to live view when the user types.
             if pane.scrollback() > 0 {
                 pane.set_scrollback(0);

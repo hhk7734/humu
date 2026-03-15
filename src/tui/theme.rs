@@ -17,6 +17,7 @@ pub struct Palette {
     pub accent_purple: Color,
     pub accent_yellow: Color,
     pub accent_magenta: Color,
+    pub accent_cyan: Color,
 }
 
 impl Palette {
@@ -34,6 +35,7 @@ impl Palette {
         accent_purple: Color::Rgb(188, 140, 255),
         accent_yellow: Color::Rgb(227, 179, 65),
         accent_magenta: Color::Rgb(247, 120, 186),
+        accent_cyan: Color::Rgb(86, 212, 221),
     };
 
     pub fn mode_color(&self, mode: &Mode) -> Color {
@@ -44,6 +46,7 @@ impl Palette {
             Mode::Tab => self.accent_orange,
             Mode::Workspace => self.accent_purple,
             Mode::Room => self.accent_magenta,
+            Mode::EnterSearch | Mode::Search => self.accent_cyan,
         }
     }
 }

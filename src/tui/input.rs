@@ -8,6 +8,8 @@ pub enum Mode {
     Tab,
     Workspace,
     Room,
+    EnterSearch,
+    Search,
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +37,17 @@ pub enum Action {
     PassThrough(KeyEvent),
     Quit,
     None,
+    SearchInput(KeyEvent),
+    SearchConfirm,
+    SearchCancel,
+    SearchNext,
+    SearchPrev,
+    SearchToggleCase,
+    SearchToggleWrap,
+    ScrollUp,
+    ScrollDown,
+    ScrollPageUp,
+    ScrollPageDown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +66,8 @@ pub fn handle_key(mode: Mode, key: KeyEvent) -> Action {
         Mode::Tab => handle_tab(key),
         Mode::Workspace => handle_workspace(key),
         Mode::Room => handle_room(key),
+        Mode::EnterSearch => handle_enter_search(key),
+        Mode::Search => handle_search(key),
     }
 }
 
@@ -64,6 +79,7 @@ fn handle_terminal(key: KeyEvent) -> Action {
             KeyCode::Char('t') => Action::EnterMode(Mode::Tab),
             KeyCode::Char('w') => Action::EnterMode(Mode::Workspace),
             KeyCode::Char('r') => Action::EnterMode(Mode::Room),
+            KeyCode::Char('f') => Action::EnterMode(Mode::EnterSearch),
             KeyCode::Char('q') => Action::Quit,
             _ => Action::PassThrough(key),
         }
@@ -183,6 +199,35 @@ fn handle_room(key: KeyEvent) -> Action {
         KeyCode::Enter => Action::Select,
         KeyCode::Char('n') => Action::Create,
         KeyCode::Char('x') => Action::Delete,
+        _ => Action::None,
+    }
+}
+
+fn handle_enter_search(key: KeyEvent) -> Action {
+    if let Some(action) = check_mode_switch(Mode::EnterSearch, key) {
+        return action;
+    }
+    match key.code {
+        KeyCode::Enter => Action::SearchConfirm,
+        KeyCode::Esc => Action::SearchCancel,
+        _ => Action::SearchInput(key),
+    }
+}
+
+fn handle_search(key: KeyEvent) -> Action {
+    if let Some(action) = check_mode_switch(Mode::Search, key) {
+        return action;
+    }
+    match key.code {
+        KeyCode::Char('n') => Action::SearchNext,
+        KeyCode::Char('N') => Action::SearchPrev,
+        KeyCode::Char('c') => Action::SearchToggleCase,
+        KeyCode::Char('w') => Action::SearchToggleWrap,
+        KeyCode::Up => Action::ScrollUp,
+        KeyCode::Down => Action::ScrollDown,
+        KeyCode::PageUp => Action::ScrollPageUp,
+        KeyCode::PageDown => Action::ScrollPageDown,
+        KeyCode::Esc => Action::SearchCancel,
         _ => Action::None,
     }
 }
