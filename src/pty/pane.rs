@@ -154,6 +154,11 @@ impl PtyPane {
         self.parser.lock().unwrap().screen().clone()
     }
 
+    /// Returns a reference to the parser Arc for search operations.
+    pub fn parser_ref(&self) -> &std::sync::Arc<std::sync::Mutex<vt100::Parser>> {
+        &self.parser
+    }
+
     /// Get exit status if the process has exited.
     pub fn exit_status(&mut self) -> Option<i32> {
         self.check_exit();
