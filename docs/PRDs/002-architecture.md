@@ -24,7 +24,7 @@ humu (single binary)
 ├── ID Layer (src/id.rs)
 │   └── Typed IDs: WorkspaceId, RoomId, TabId, PaneId
 └── State Layer
-    └── ~/.humu/
+    └── $HUMU_DIR (default: ~/.humu/)
         ├── config.toml
         ├── state.toml
         ├── port

@@ -61,9 +61,18 @@ A working context within a workspace.
 
 ---
 
+## Data Directory
+
+The humu data directory defaults to `~/.humu/`. Override with the `HUMU_DIR` environment variable:
+
+```bash
+HUMU_DIR=/tmp/humu-test humu        # run with isolated data dir
+HUMU_DIR=/tmp/humu-test cargo test  # tests against a throwaway directory
+```
+
 ## Configuration
 
-### `~/.humu/config.toml` (user-edited)
+### `<HUMU_DIR>/config.toml` (user-edited)
 
 ```toml
 [presets.claude]
@@ -79,7 +88,7 @@ simplified_ui = false
 rounded_corners = true
 ```
 
-### `~/.humu/state.toml` (auto-managed)
+### `<HUMU_DIR>/state.toml` (auto-managed)
 
 ```toml
 active_workspace_id = "550e8400-e29b-41d4-a716-446655440000"

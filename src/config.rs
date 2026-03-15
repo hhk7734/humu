@@ -7,12 +7,19 @@ use crate::id::{WorkspaceId, RoomId};
 
 // ── Directory helper ──────────────────────────────────────────────────────────
 
-/// Returns `~/.humu/`, creating it if it does not exist.
+/// Returns the humu data directory, creating it if it does not exist.
+///
+/// Resolution order:
+/// 1. `HUMU_DIR` environment variable (useful for testing)
+/// 2. `~/.humu/` (default)
 pub fn humu_dir() -> PathBuf {
-    let dir = dirs::home_dir()
-        .expect("cannot determine home directory")
-        .join(".humu");
-    std::fs::create_dir_all(&dir).expect("cannot create ~/.humu");
+    let dir = match std::env::var("HUMU_DIR") {
+        Ok(val) if !val.is_empty() => PathBuf::from(val),
+        _ => dirs::home_dir()
+            .expect("cannot determine home directory")
+            .join(".humu"),
+    };
+    std::fs::create_dir_all(&dir).expect("cannot create humu directory");
     dir
 }
 
