@@ -32,7 +32,7 @@ pub fn generate_hook_files(base_dir: &Path) -> anyhow::Result<()> {
 command -v curl &>/dev/null || exit 0
 INPUT=$(cat)
 EVENT=$(echo "$INPUT" | grep -oE '"hook_event_name"\s*:\s*"[^"]*"' | grep -oE '"[^"]*"$' | tr -d '"')
-SESSION=$(echo "$INPUT" | grep -oE '"session_id"\s*:\s*"[^"]*"' | grep -oE '"[^"]*"$' | tr -d '"')
+SESSION=$(echo "$INPUT" | grep -oE '"session_id"\s*:\s*"[^"]*"' | head -1 | grep -oE '"[^"]*"$' | tr -d '"')
 [ -z "$HUMU_PORT" ] && exit 0
 curl -s --connect-timeout 1 --max-time 2 -X POST \
   "http://127.0.0.1:${HUMU_PORT}/hook?workspaceId=${HUMU_WORKSPACE_ID}&roomId=${HUMU_ROOM_ID}&tabId=${HUMU_TAB_ID}&paneId=${HUMU_PANE_ID}&eventType=${EVENT}&sessionId=${SESSION}" \
