@@ -1,3 +1,4 @@
+use crate::tui::search::SearchMatch;
 use crate::tui::theme::{Palette, UiConfig};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -13,6 +14,9 @@ pub struct TerminalWidget<'a> {
     title: &'a str,
     palette: &'a Palette,
     ui_config: &'a UiConfig,
+    search_matches: &'a [SearchMatch],
+    active_match_index: Option<usize>,
+    scrollback_base_row: usize,
 }
 
 impl<'a> TerminalWidget<'a> {
@@ -30,7 +34,22 @@ impl<'a> TerminalWidget<'a> {
             title,
             palette,
             ui_config,
+            search_matches: &[],
+            active_match_index: None,
+            scrollback_base_row: 0,
         }
+    }
+
+    pub fn search(
+        mut self,
+        matches: &'a [SearchMatch],
+        active: Option<usize>,
+        base_row: usize,
+    ) -> Self {
+        self.search_matches = matches;
+        self.active_match_index = active;
+        self.scrollback_base_row = base_row;
+        self
     }
 
     pub fn focus(mut self, focused: bool) -> Self {
@@ -195,6 +214,42 @@ impl Widget for TerminalWidget<'_> {
                         let ch = cell.contents();
                         let display_char = if ch.is_empty() { " " } else { &ch };
                         buf.set_string(x, y, display_char, style);
+                    }
+                }
+            }
+        }
+
+        // Search match highlighting
+        for (match_idx, sm) in self.search_matches.iter().enumerate() {
+            if sm.row < self.scrollback_base_row {
+                continue;
+            }
+            let vp_row = sm.row - self.scrollback_base_row;
+            if vp_row >= rows as usize {
+                continue;
+            }
+            let is_active = self.active_match_index == Some(match_idx);
+            let hl_bg = if is_active {
+                self.palette.accent_yellow
+            } else {
+                Color::Rgb(113, 89, 32)
+            };
+            for col in sm.col_start..sm.col_end {
+                if col >= cols as usize {
+                    break;
+                }
+                let sx = inner.x + col as u16;
+                let sy = inner.y + vp_row as u16;
+                if sx < inner.right() && sy < inner.bottom() {
+                    let cell = &mut buf[(sx, sy)];
+                    if is_active {
+                        cell.set_style(
+                            Style::default()
+                                .fg(Color::Rgb(13, 17, 23))
+                                .bg(hl_bg),
+                        );
+                    } else {
+                        cell.set_style(cell.style().bg(hl_bg));
                     }
                 }
             }

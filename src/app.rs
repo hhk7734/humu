@@ -993,8 +993,18 @@ impl App {
         self.render_terminal_area(frame, panel_chunks[2]);
 
         // Status bar
-        let status = StatusBar::new(self.mode, &self.palette, &self.ui_config)
+        let mut status = StatusBar::new(self.mode, &self.palette, &self.ui_config)
             .error(self.last_error.as_deref());
+        if let Some(ref state) = self.search_state {
+            status = status
+                .search_query(Some(&state.query))
+                .search_valid(state.is_valid_regex());
+            if self.mode == Mode::Search {
+                let active = state.active_index.map(|i| i + 1).unwrap_or(0);
+                let total = state.matches.len();
+                status = status.search_info(Some((active, total, state.case_sensitive, state.wrap)));
+            }
+        }
         frame.render_widget(status, main_chunks[1]);
 
         // Render popup on top of everything when active.
@@ -1058,6 +1068,15 @@ impl App {
         let tab_bar_area = Rect::new(area.x, area.y, area.width, 1);
         let pane_area = self.terminal_pane_area();
 
+        // Pre-compute search highlight data for the focused pane.
+        let search_base_row = self.scrollback_base_row();
+        let (search_matches, search_active) = match &self.search_state {
+            Some(state) if matches!(self.mode, Mode::EnterSearch | Mode::Search) => {
+                (state.matches.as_slice(), state.active_index)
+            }
+            _ => ([].as_slice(), None),
+        };
+
         // Render tab bar — a tab is active if any of its panes has a non-Idle
         // agent state in agent_states.
         let tab_names: Vec<&str> = self.tabs.tab_names();
@@ -1111,7 +1130,8 @@ impl App {
                     TerminalWidget::new(&screen, preset_name, &self.palette, &self.ui_config)
                         .focus(true)
                         .exited(fs_exit_code)
-                        .pane_count(fs_pane_count);
+                        .pane_count(fs_pane_count)
+                        .search(search_matches, search_active, search_base_row);
                 frame.render_widget(widget, pane_area);
                 if fs_exit_code.is_none() && !screen.hide_cursor() && screen.scrollback() == 0 {
                     let (crow, ccol) = screen.cursor_position();
@@ -1164,7 +1184,12 @@ impl App {
                     )
                     .focus(is_focused)
                     .exited(exit_code)
-                    .pane_count(pane_count);
+                    .pane_count(pane_count)
+                    .search(
+                        if is_focused { search_matches } else { &[] },
+                        if is_focused { search_active } else { None },
+                        search_base_row,
+                    );
                     frame.render_widget(widget, rect);
                     if is_focused && exit_code.is_none() && !screen.hide_cursor() && screen.scrollback() == 0 {
                         let (crow, ccol) = screen.cursor_position();
