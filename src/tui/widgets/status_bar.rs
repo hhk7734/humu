@@ -107,18 +107,21 @@ impl<'a> StatusBar<'a> {
         }
     }
 
-    /// Render Powerline hint segments starting at `x`. Returns the new x position.
-    fn render_hints(
+    /// Render Powerline hint segments starting at `x`.
+    /// Each hint is `(key, label, active)`. Active segments get a distinct
+    /// background (accent_cyan) and bold label for better visibility.
+    fn render_hint_segments(
         &self,
-        hints: &[(&str, &str)],
+        hints: &[(&str, &str, bool)],
         x: &mut u16,
         area: Rect,
         buf: &mut Buffer,
     ) {
         let sep = self.ui_config.tab_chars().separator;
-        let hint_bg = Color::Rgb(139, 148, 158);
+        let normal_bg = Color::Rgb(139, 148, 158);
         let outer_bg = self.palette.bg_secondary;
-        for (key, label) in hints {
+        for &(key, label, active) in hints {
+            let bg = if active { self.palette.accent_cyan } else { normal_bg };
             let seg_width = 1 + key.len() as u16 + 1 + label.len() as u16 + 1 + 1;
             if *x + seg_width > area.x + area.width {
                 break;
@@ -126,43 +129,49 @@ impl<'a> StatusBar<'a> {
             // Entry arrow
             if *x < area.x + area.width {
                 buf[(*x, area.y)].set_symbol(sep).set_style(
-                    Style::default().fg(outer_bg).bg(hint_bg),
+                    Style::default().fg(outer_bg).bg(bg),
                 );
                 *x += 1;
             }
             // Key
-            buf[(*x, area.y)].set_char(' ').set_style(Style::default().bg(hint_bg));
+            buf[(*x, area.y)].set_char(' ').set_style(Style::default().bg(bg));
             *x += 1;
             for ch in key.chars() {
                 if *x >= area.x + area.width { break; }
                 buf[(*x, area.y)].set_char(ch).set_style(
                     Style::default()
                         .fg(Color::Rgb(180, 40, 40))
-                        .bg(hint_bg)
+                        .bg(bg)
                         .add_modifier(Modifier::BOLD),
                 );
                 *x += 1;
             }
             // Label
             if *x < area.x + area.width {
-                buf[(*x, area.y)].set_char(' ').set_style(Style::default().bg(hint_bg));
+                buf[(*x, area.y)].set_char(' ').set_style(Style::default().bg(bg));
                 *x += 1;
             }
+            let label_style = if active {
+                Style::default()
+                    .fg(Color::Rgb(13, 17, 23))
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Rgb(13, 17, 23)).bg(bg)
+            };
             for ch in label.chars() {
                 if *x >= area.x + area.width { break; }
-                buf[(*x, area.y)].set_char(ch).set_style(
-                    Style::default().fg(Color::Rgb(13, 17, 23)).bg(hint_bg),
-                );
+                buf[(*x, area.y)].set_char(ch).set_style(label_style);
                 *x += 1;
             }
             if *x < area.x + area.width {
-                buf[(*x, area.y)].set_char(' ').set_style(Style::default().bg(hint_bg));
+                buf[(*x, area.y)].set_char(' ').set_style(Style::default().bg(bg));
                 *x += 1;
             }
             // Exit arrow
             if *x < area.x + area.width {
                 buf[(*x, area.y)].set_symbol(sep).set_style(
-                    Style::default().fg(hint_bg).bg(outer_bg),
+                    Style::default().fg(bg).bg(outer_bg),
                 );
                 *x += 1;
             }
@@ -277,13 +286,13 @@ impl Widget for StatusBar<'_> {
             if let Some((active, total, case_sensitive, wrap)) = self.search_info {
                 let case_label = if case_sensitive { "CASE" } else { "case" };
                 let wrap_label = if wrap { "WRAP" } else { "wrap" };
-                let hints: Vec<(&str, &str)> = vec![
-                    ("n", "NEXT"),
-                    ("N", "PREV"),
-                    ("c", case_label),
-                    ("w", wrap_label),
+                let hints: Vec<(&str, &str, bool)> = vec![
+                    ("n", "NEXT", false),
+                    ("N", "PREV", false),
+                    ("c", case_label, case_sensitive),
+                    ("w", wrap_label, wrap),
                 ];
-                self.render_hints(&hints, &mut x, area, buf);
+                self.render_hint_segments(&hints, &mut x, area, buf);
 
                 // Match counter
                 let counter = format!(" {}/{} ", active, total);
@@ -347,9 +356,9 @@ impl Widget for StatusBar<'_> {
             }
         }
 
-        // Key hints
+        // Key hints (none are toggles, so all inactive)
         let hints = self.mode_hints();
-        let hint_refs: Vec<(&str, &str)> = hints.iter().map(|&(k, l)| (k, l)).collect();
-        self.render_hints(&hint_refs, &mut x, area, buf);
+        let hint_refs: Vec<(&str, &str, bool)> = hints.iter().map(|&(k, l)| (k, l, false)).collect();
+        self.render_hint_segments(&hint_refs, &mut x, area, buf);
     }
 }
