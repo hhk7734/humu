@@ -32,7 +32,8 @@ src/
 │   └── http.rs      # HTTP hook server (axum) for Claude Code events
 └── tui/
     ├── mod.rs
-    ├── input.rs       # Modal keybinding dispatch (Terminal/Locked/Pane/Tab/Workspace/Room)
+    ├── input.rs       # Modal keybinding dispatch (Terminal/Locked/Pane/Tab/Workspace/Room/Search)
+    ├── search.rs      # SearchState, SearchMatch, regex engine, scrollback text extraction
     ├── completion.rs  # Fuzzy path autocomplete with cross-segment matching
     ├── layout.rs      # SplitTree, TabContainer, PaneId
     ├── theme.rs       # Palette (GitHub Dark), UiConfig, BorderChars, TabChars

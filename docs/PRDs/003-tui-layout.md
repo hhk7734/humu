@@ -106,6 +106,31 @@ Manages tabs within the terminal area. Enter via `Ctrl+t` from Terminal mode.
 | `x` | Delete room |
 | `Shift+←/→` | Resize room panel |
 
+### EnterSearch Mode
+
+`Ctrl+f` from Terminal mode enters search. Type a regex query with live highlighting.
+
+| Key | Action |
+| --- | ------ |
+| Any char | Append to query |
+| `Backspace` | Delete last char |
+| `Enter` | Confirm (enter Search mode) |
+| `Esc` | Cancel search |
+
+### Search Mode
+
+Navigate search results in the focused pane.
+
+| Key | Action |
+| --- | ------ |
+| `n` | Next match |
+| `N` | Previous match |
+| `c` | Toggle case sensitivity |
+| `w` | Toggle wrap-around |
+| `↑/↓` | Scroll up/down |
+| `PageUp/PageDown` | Page scroll |
+| `Esc` | Exit search |
+
 ### Shared (all modes except Locked)
 
 | Key | Action |
@@ -145,3 +170,4 @@ All segments use Powerline-style arrows (entry + exit) for clear visual separati
 | TAB | orange (#d29922) |
 | WORKSPACE | purple (#bc8cff) |
 | ROOM | magenta (#f778ba) |
+| SEARCH | cyan (#56d4dd) |
