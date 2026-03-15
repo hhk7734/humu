@@ -1588,6 +1588,7 @@ impl App {
             let last = self.tabs.len() - 1;
             self.tabs.set_active(last);
             self.focused_pane = Some(new_id);
+            self.persist_layout();
         }
     }
 
@@ -1601,6 +1602,7 @@ impl App {
             }
             self.fullscreen_pane = None;
             self.sync_focused_pane();
+            self.persist_layout();
         }
     }
 
@@ -1628,6 +1630,7 @@ impl App {
                 tree.split_vertical(focused, new_id);
             }
             self.focused_pane = Some(new_id);
+            self.persist_layout();
         } else {
             // No active tree — clean up the pane we just spawned.
             self.panes.remove(&new_id);
@@ -1676,6 +1679,7 @@ impl App {
             .tabs
             .active_tree()
             .and_then(|t| t.pane_ids().into_iter().next());
+        self.persist_layout();
     }
 
     fn move_focus(&mut self, dir: NavDirection) {
@@ -2016,9 +2020,17 @@ impl App {
         if let Some(layout) = self.save_layout() {
             self.state
                 .layout
-                .entry(ws)
+                .entry(ws.clone())
                 .or_default()
                 .insert(room, layout);
+        } else {
+            // No tabs left — remove the stale layout entry.
+            if let Some(rooms) = self.state.layout.get_mut(&ws) {
+                rooms.remove(&room);
+                if rooms.is_empty() {
+                    self.state.layout.remove(&ws);
+                }
+            }
         }
     }
 

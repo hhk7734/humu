@@ -112,6 +112,8 @@ args = []
 
 Tab and pane layout is saved per room in `state.toml` and restored on room switch or restart. The layout is a tree structure: each tab contains a `SplitNode` that is either a `Leaf` (single pane with preset and optional `session_id`) or a `Split` (binary split with direction, ratio, and children).
 
+Layout is persisted via **event-driven persistence** — `persist_layout()` is called on every structural mutation (tab add/remove, pane split/close), not on a timer or only at shutdown. This ensures crash safety: if humu is killed unexpectedly, the layout reflects the last structural change. When all tabs are closed, the layout entry is removed from `state.toml` so that a restart creates a fresh default shell instead of restoring stale panes.
+
 Layout keys use UUID strings for workspace and room identification.
 
 ### Room Suspension (Hot Restore)
