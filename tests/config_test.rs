@@ -253,3 +253,49 @@ fn prune_removes_stale_rooms() {
     assert!(ws.room_by_name("main").is_some());
     assert!(ws.room_by_name("deleted-branch").is_none());
 }
+
+// ── Notifications Config ─────────────────────────────────────────────────────
+
+#[test]
+fn default_config_has_notifications_enabled() {
+    let config = HumuConfig::default();
+    assert!(config.notifications.os.enabled);
+    assert!(config.notifications.os.sound);
+    assert!(!config.notifications.telegram.enabled);
+    assert!(config.notifications.telegram.bot_token_encrypted.is_empty());
+}
+
+#[test]
+fn parse_config_without_notifications_uses_defaults() {
+    let yaml = r#"
+presets:
+  shell:
+    command: /bin/sh
+"#;
+    let config: HumuConfig = serde_yaml::from_str(yaml).unwrap();
+    assert!(config.notifications.os.enabled);
+    assert!(config.notifications.os.sound);
+    assert!(!config.notifications.telegram.enabled);
+}
+
+#[test]
+fn parse_config_with_notifications() {
+    let yaml = r#"
+presets:
+  shell:
+    command: /bin/sh
+notifications:
+  os:
+    enabled: false
+    sound: false
+  telegram:
+    enabled: true
+    bot_token_encrypted: "abc123"
+    chat_id_encrypted: "def456"
+"#;
+    let config: HumuConfig = serde_yaml::from_str(yaml).unwrap();
+    assert!(!config.notifications.os.enabled);
+    assert!(!config.notifications.os.sound);
+    assert!(config.notifications.telegram.enabled);
+    assert_eq!(config.notifications.telegram.bot_token_encrypted, "abc123");
+}

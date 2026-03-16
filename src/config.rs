@@ -55,6 +55,44 @@ impl Default for UiSection {
     }
 }
 
+// ── Notification config ──────────────────────────────────────────────────────
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OsNotificationConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub sound: bool,
+}
+
+impl Default for OsNotificationConfig {
+    fn default() -> Self {
+        Self { enabled: true, sound: true }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TelegramNotificationConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub bot_token_encrypted: String,
+    #[serde(default)]
+    pub chat_id_encrypted: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NotificationsConfig {
+    #[serde(default)]
+    pub os: OsNotificationConfig,
+    #[serde(default)]
+    pub telegram: TelegramNotificationConfig,
+}
+
 // ── HumuConfig ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,6 +101,8 @@ pub struct HumuConfig {
     pub presets: HashMap<String, Preset>,
     #[serde(default)]
     pub ui: UiSection,
+    #[serde(default)]
+    pub notifications: NotificationsConfig,
 }
 
 impl Default for HumuConfig {
@@ -85,6 +125,7 @@ impl Default for HumuConfig {
         Self {
             presets,
             ui: UiSection::default(),
+            notifications: NotificationsConfig::default(),
         }
     }
 }
