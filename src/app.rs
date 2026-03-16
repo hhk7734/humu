@@ -126,6 +126,19 @@ pub enum PopupState {
         focused_field: usize,
         branch: String,
     },
+    NotificationSettings {
+        selected: usize,
+    },
+    NotificationTokenInput {
+        field: NotificationField,
+        value: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum NotificationField {
+    BotToken,
+    ChatId,
 }
 
 #[allow(dead_code)]
@@ -441,6 +454,14 @@ impl App {
                 self.handle_dialog_key(key);
                 true
             }
+            PopupState::NotificationSettings { .. } => {
+                self.handle_notification_settings_key(key);
+                true
+            }
+            PopupState::NotificationTokenInput { .. } => {
+                self.handle_notification_token_input_key(key);
+                true
+            }
         }
     }
 
@@ -479,7 +500,7 @@ impl App {
         }
     }
 
-    const SETTINGS_ITEMS: &'static [&'static str] = &["View Logs"];
+    const SETTINGS_ITEMS: &'static [&'static str] = &["Notifications", "View Logs"];
 
     fn handle_settings_key(&mut self, key: KeyEvent) {
         let PopupState::Settings { selected } = &self.popup else {
@@ -499,9 +520,14 @@ impl App {
                 self.popup = PopupState::Settings { selected };
             }
             KeyCode::Enter => {
-                self.popup = PopupState::None;
                 match selected {
-                    0 => self.open_log_viewer(),
+                    0 => {
+                        self.popup = PopupState::NotificationSettings { selected: 0 };
+                    }
+                    1 => {
+                        self.popup = PopupState::None;
+                        self.open_log_viewer();
+                    }
                     _ => {}
                 }
             }
@@ -509,6 +535,142 @@ impl App {
                 self.popup = PopupState::None;
             }
             _ => {}
+        }
+    }
+
+    fn notification_settings_items(&self) -> Vec<String> {
+        let cfg = &self.config.notifications;
+        vec![
+            format!(
+                "OS Notifications: {}",
+                if cfg.os.enabled { "ON" } else { "OFF" }
+            ),
+            format!("OS Sound: {}", if cfg.os.sound { "ON" } else { "OFF" }),
+            format!(
+                "Telegram: {}",
+                if cfg.telegram.enabled { "ON" } else { "OFF" }
+            ),
+            format!(
+                "Telegram Bot Token: {}",
+                if cfg.telegram.bot_token_encrypted.is_empty() {
+                    "(not set)"
+                } else {
+                    "****"
+                }
+            ),
+            format!(
+                "Telegram Chat ID: {}",
+                if cfg.telegram.chat_id_encrypted.is_empty() {
+                    "(not set)"
+                } else {
+                    "****"
+                }
+            ),
+        ]
+    }
+
+    fn handle_notification_settings_key(&mut self, key: KeyEvent) {
+        let PopupState::NotificationSettings { selected } = &self.popup else {
+            return;
+        };
+        let mut selected = *selected;
+        let item_count = 5;
+
+        match key.code {
+            KeyCode::Down => {
+                if selected + 1 < item_count {
+                    selected += 1;
+                }
+                self.popup = PopupState::NotificationSettings { selected };
+            }
+            KeyCode::Up => {
+                selected = selected.saturating_sub(1);
+                self.popup = PopupState::NotificationSettings { selected };
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => match selected {
+                0 => {
+                    self.config.notifications.os.enabled =
+                        !self.config.notifications.os.enabled;
+                    self.rebuild_notification_manager();
+                }
+                1 => {
+                    self.config.notifications.os.sound =
+                        !self.config.notifications.os.sound;
+                    self.rebuild_notification_manager();
+                }
+                2 => {
+                    self.config.notifications.telegram.enabled =
+                        !self.config.notifications.telegram.enabled;
+                    self.rebuild_notification_manager();
+                }
+                3 => {
+                    self.popup = PopupState::NotificationTokenInput {
+                        field: NotificationField::BotToken,
+                        value: String::new(),
+                    };
+                    return;
+                }
+                4 => {
+                    self.popup = PopupState::NotificationTokenInput {
+                        field: NotificationField::ChatId,
+                        value: String::new(),
+                    };
+                    return;
+                }
+                _ => {}
+            },
+            KeyCode::Esc => {
+                self.popup = PopupState::Settings { selected: 0 };
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_notification_token_input_key(&mut self, key: KeyEvent) {
+        let PopupState::NotificationTokenInput { field, value } = &self.popup else {
+            return;
+        };
+        let field = *field;
+        let mut value = value.clone();
+
+        match key.code {
+            KeyCode::Enter => {
+                let encrypted =
+                    humu::notification::crypto::encrypt(&value).unwrap_or_default();
+                match field {
+                    NotificationField::BotToken => {
+                        self.config.notifications.telegram.bot_token_encrypted =
+                            encrypted;
+                    }
+                    NotificationField::ChatId => {
+                        self.config.notifications.telegram.chat_id_encrypted =
+                            encrypted;
+                    }
+                }
+                self.rebuild_notification_manager();
+                self.popup = PopupState::NotificationSettings { selected: 0 };
+                return;
+            }
+            KeyCode::Esc => {
+                self.popup = PopupState::NotificationSettings { selected: 0 };
+                return;
+            }
+            KeyCode::Backspace => {
+                value.pop();
+            }
+            KeyCode::Char(c) => {
+                value.push(c);
+            }
+            _ => {}
+        }
+        self.popup = PopupState::NotificationTokenInput { field, value };
+    }
+
+    fn rebuild_notification_manager(&mut self) {
+        self.notification_manager =
+            humu::notification::NotificationManager::from_config(&self.config.notifications);
+        if let Err(e) = self.config.save(&self.config_path) {
+            humu::humu_log!("failed to save config: {e}");
         }
     }
 
@@ -1355,6 +1517,26 @@ impl App {
                     Dialog::new("Delete Room", fields, *focused_field, &self.palette, &self.ui_config),
                     area,
                 );
+            }
+            PopupState::NotificationSettings { selected } => {
+                let items = self.notification_settings_items();
+                let selector =
+                    PresetSelector::new(&items, *selected, &self.palette, &self.ui_config)
+                        .title(" Notifications ");
+                frame.render_widget(selector, area);
+            }
+            PopupState::NotificationTokenInput { field, value } => {
+                let title = match field {
+                    NotificationField::BotToken => " Bot Token ",
+                    NotificationField::ChatId => " Chat ID ",
+                };
+                let fields = vec![DialogField::TextInput {
+                    label: title.trim().to_string(),
+                    value: value.clone(),
+                }];
+                let dialog =
+                    Dialog::new(title.trim(), &fields, 0, &self.palette, &self.ui_config);
+                frame.render_widget(dialog, area);
             }
         }
     }
