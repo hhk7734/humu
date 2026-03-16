@@ -17,6 +17,8 @@ pub enum AgentState {
 
 #[derive(Debug, Clone)]
 pub struct HookEvent {
+    pub workspace_id: Option<String>,
+    pub room_id: Option<String>,
     pub pane_id: PaneId,
     pub event_type: AgentState,
     pub session_id: Option<String>,
@@ -114,6 +116,8 @@ impl HookServer {
                     };
 
                     let event = HookEvent {
+                        workspace_id: params.workspace_id.filter(|s| !s.is_empty()),
+                        room_id: params.room_id.filter(|s| !s.is_empty()),
                         pane_id,
                         event_type: state,
                         session_id: params.session_id.filter(|s| !s.is_empty()),

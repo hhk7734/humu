@@ -18,6 +18,7 @@ TUI-based. Implemented in Rust.
 ~/.humu/
 ├── config.yaml
 ├── state.yaml
+├── humu.log                  # Application log (auto-managed, 1MB max)
 ├── port                      # HTTP hook server port (auto-managed)
 ├── hooks/
 │   ├── notify.sh             # Hook script (auto-generated)

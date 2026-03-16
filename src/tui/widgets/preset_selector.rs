@@ -9,6 +9,7 @@ pub struct PresetSelector<'a> {
     selected: usize,
     palette: &'a Palette,
     ui_config: &'a UiConfig,
+    title: &'a str,
 }
 
 impl<'a> PresetSelector<'a> {
@@ -23,7 +24,13 @@ impl<'a> PresetSelector<'a> {
             selected,
             palette,
             ui_config,
+            title: " Select Preset ",
         }
+    }
+
+    pub fn title(mut self, title: &'a str) -> Self {
+        self.title = title;
+        self
     }
 }
 
@@ -43,7 +50,7 @@ impl Widget for PresetSelector<'_> {
             BorderType::Plain
         };
         let block = Block::default()
-            .title(" Select Preset ")
+            .title(self.title)
             .borders(Borders::ALL)
             .border_style(Style::default().fg(self.palette.accent_blue))
             .border_type(border_type);

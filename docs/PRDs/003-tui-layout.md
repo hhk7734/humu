@@ -54,6 +54,7 @@ From any sub-mode, `Ctrl+w/r/t/p` switches directly to that mode. `Ctrl+w` and `
 | `Ctrl+t` | Terminal (always) |
 | `Ctrl+q` | Quit (from Terminal only) |
 | `Ctrl+f` | EnterSearch (from Terminal) |
+| `Ctrl+,` | Settings popup (from Terminal) |
 
 ### Locked Mode
 

@@ -26,6 +26,7 @@ pub fn mode_hints(mode: Mode) -> Vec<(&'static str, &'static str)> {
             ("t", "TAB"),
             ("w", "WORKSPACE"),
             ("r", "ROOM"),
+            (",", "SET"),
         ],
         Mode::Locked => vec![("Ctrl+g", "UNLOCK")],
         Mode::Pane => vec![

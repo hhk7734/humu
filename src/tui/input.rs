@@ -28,6 +28,7 @@ pub enum Action {
     GoToTab(usize),
     FocusWorkspacePanel,
     FocusRoomPanel,
+    OpenSettings,
     NavigateUp,
     NavigateDown,
     Select,
@@ -81,6 +82,7 @@ fn handle_terminal(key: KeyEvent) -> Action {
             KeyCode::Char('r') => Action::EnterMode(Mode::Room),
             KeyCode::Char('f') => Action::EnterMode(Mode::EnterSearch),
             KeyCode::Char('q') => Action::Quit,
+            KeyCode::Char(',') => Action::OpenSettings,
             _ => Action::PassThrough(key),
         }
     } else if key.modifiers.contains(KeyModifiers::ALT) {
@@ -262,6 +264,7 @@ pub fn hint_click_action(mode: Mode, hint_index: usize) -> Option<Action> {
             3 => Some(Action::EnterMode(Mode::Tab)),         // t TAB
             4 => Some(Action::EnterMode(Mode::Workspace)),   // w WORKSPACE
             5 => Some(Action::EnterMode(Mode::Room)),        // r ROOM
+            6 => Some(Action::OpenSettings),                  // , SET
             _ => None,
         },
         Mode::Pane => match hint_index {

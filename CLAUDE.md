@@ -19,7 +19,8 @@ cargo test           # Run all tests
 src/
 ├── app.rs           # Main App struct, event loop, all action handling
 ├── main.rs          # Entry point
-├── config.rs        # HumuConfig, HumuState, RoomLayout, SplitNode
+├── config.rs        # HumuConfig, HumuState, WorkspaceEntry, RoomEntry, SplitNode
+├── log.rs           # File-based logger (~/.humu/humu.log, 1MB rotation)
 ├── preset.rs        # Preset resolution and env var expansion
 ├── lib.rs           # Public module exports
 ├── git/

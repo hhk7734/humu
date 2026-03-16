@@ -85,6 +85,15 @@ pub struct AgentStateEntry {
 
 pub enum PopupState {
     None,
+    Settings {
+        selected: usize,
+    },
+    LogViewer {
+        lines: Vec<String>,
+        scroll: usize,
+        h_scroll: usize,
+        file_len: u64,
+    },
     PresetSelector {
         presets: Vec<String>,
         selected: usize,
@@ -162,8 +171,10 @@ pub struct App {
 
 impl App {
     pub fn new() -> Result<Self> {
+        humu::log::init();
+
         if let Err(e) = generate_hook_files(&humu_dir()) {
-            eprintln!("failed to generate hook files: {e}");
+            humu::humu_log!("failed to generate hook files: {e}");
         }
 
         let config_path = humu_dir().join("config.yaml");
@@ -175,7 +186,7 @@ impl App {
         } else if config_toml_path.exists() {
             let cfg = HumuConfig::load_toml(&config_toml_path)?;
             cfg.save(&config_path)?;
-            eprintln!("Migrated config.toml → config.yaml");
+            humu::humu_log!("Migrated config.toml → config.yaml");
             cfg
         } else {
             HumuConfig::default()
@@ -211,7 +222,7 @@ impl App {
                             }
                         }
                     }
-                    Err(e) => eprintln!("hook server error: {e}"),
+                    Err(e) => humu::humu_log!("hook server error: {e}"),
                 }
             });
         });
@@ -338,6 +349,9 @@ impl App {
             // Process hook events each tick.
             self.process_hook_events();
 
+            // Refresh log viewer if open.
+            self.refresh_log_viewer();
+
             // Process PTY output each tick
             for pane in self.panes.values_mut() {
                 let _ = pane.process_output();
@@ -396,6 +410,14 @@ impl App {
         match &self.popup {
             PopupState::None => false,
 
+            PopupState::Settings { .. } => {
+                self.handle_settings_key(key);
+                true
+            }
+            PopupState::LogViewer { .. } => {
+                self.handle_log_viewer_key(key);
+                true
+            }
             PopupState::PresetSelector { .. } => {
                 self.handle_preset_selector_key(key);
                 true
@@ -442,6 +464,110 @@ impl App {
                 self.popup = PopupState::None;
             }
             _ => {}
+        }
+    }
+
+    const SETTINGS_ITEMS: &'static [&'static str] = &["View Logs"];
+
+    fn handle_settings_key(&mut self, key: KeyEvent) {
+        let PopupState::Settings { selected } = &self.popup else {
+            return;
+        };
+        let mut selected = *selected;
+
+        match key.code {
+            KeyCode::Down => {
+                if selected + 1 < Self::SETTINGS_ITEMS.len() {
+                    selected += 1;
+                }
+                self.popup = PopupState::Settings { selected };
+            }
+            KeyCode::Up => {
+                selected = selected.saturating_sub(1);
+                self.popup = PopupState::Settings { selected };
+            }
+            KeyCode::Enter => {
+                self.popup = PopupState::None;
+                match selected {
+                    0 => self.open_log_viewer(),
+                    _ => {}
+                }
+            }
+            KeyCode::Esc => {
+                self.popup = PopupState::None;
+            }
+            _ => {}
+        }
+    }
+
+    fn read_log_lines() -> (Vec<String>, u64) {
+        let path = humu::log::log_path();
+        let file_len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let lines = match std::fs::read_to_string(&path) {
+            Ok(content) => content.lines().map(String::from).collect(),
+            Err(_) => vec![],
+        };
+        (lines, file_len)
+    }
+
+    fn refresh_log_viewer(&mut self) {
+        if let PopupState::LogViewer { lines, scroll, file_len, .. } = &mut self.popup {
+            let current_len = std::fs::metadata(humu::log::log_path())
+                .map(|m| m.len())
+                .unwrap_or(0);
+            if current_len == *file_len {
+                return;
+            }
+            let was_at_end = *scroll + 1 >= lines.len();
+            let (new_lines, new_len) = Self::read_log_lines();
+            *lines = new_lines;
+            *file_len = new_len;
+            if was_at_end {
+                *scroll = lines.len().saturating_sub(1);
+            }
+        }
+    }
+
+    fn open_log_viewer(&mut self) {
+        let (lines, file_len) = Self::read_log_lines();
+        let scroll = lines.len().saturating_sub(1);
+        self.popup = PopupState::LogViewer { lines, scroll, h_scroll: 0, file_len };
+    }
+
+    fn handle_log_viewer_key(&mut self, key: KeyEvent) {
+        let PopupState::LogViewer { lines, scroll, h_scroll, .. } = &self.popup else {
+            return;
+        };
+        let total = lines.len();
+        let mut scroll = *scroll;
+        let mut h_scroll = *h_scroll;
+
+        match key.code {
+            KeyCode::Esc => {
+                self.popup = PopupState::None;
+                return;
+            }
+            KeyCode::Up => scroll = scroll.saturating_sub(1),
+            KeyCode::Down => {
+                if scroll + 1 < total {
+                    scroll += 1;
+                }
+            }
+            KeyCode::Left => h_scroll = h_scroll.saturating_sub(10),
+            KeyCode::Right => h_scroll += 10,
+            KeyCode::PageUp => scroll = scroll.saturating_sub(20),
+            KeyCode::PageDown => scroll = (scroll + 20).min(total.saturating_sub(1)),
+            KeyCode::Home => {
+                scroll = 0;
+                h_scroll = 0;
+            }
+            KeyCode::End => scroll = total.saturating_sub(1),
+            _ => {}
+        }
+
+        if let PopupState::LogViewer { scroll: ref mut s, h_scroll: ref mut hs, .. } = self.popup {
+            *s = scroll;
+            *hs = h_scroll;
         }
     }
 
@@ -1060,9 +1186,91 @@ impl App {
         self.render_popup(frame, size);
     }
 
+    fn render_log_viewer(
+        &self,
+        frame: &mut ratatui::Frame,
+        area: Rect,
+        lines: &[String],
+        scroll: usize,
+        h_scroll: usize,
+    ) {
+        use ratatui::style::{Modifier, Style};
+        use ratatui::widgets::{Block, BorderType, Borders, Clear, Widget};
+
+        let width = (area.width - 4).min(100);
+        let height = (area.height - 2).min(40);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let popup = Rect::new(x, y, width, height);
+
+        Clear.render(popup, frame.buffer_mut());
+
+        let border_type = if self.ui_config.rounded_corners {
+            BorderType::Rounded
+        } else {
+            BorderType::Plain
+        };
+        let title = format!(" Logs ({}/{}) ", scroll + 1, lines.len().max(1));
+        let block = Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(self.palette.accent_blue))
+            .border_type(border_type);
+        let inner = block.inner(popup);
+        block.render(popup, frame.buffer_mut());
+
+        let visible_height = inner.height as usize;
+        let max_width = inner.width as usize;
+        let start = scroll.saturating_sub(visible_height.saturating_sub(1));
+        let text_style = Style::default().fg(self.palette.fg_primary);
+        let muted_style = Style::default().fg(self.palette.fg_muted);
+        let ellipsis_style = Style::default().fg(self.palette.fg_muted);
+
+        for (i, line_idx) in (start..lines.len()).enumerate() {
+            if i >= visible_height {
+                break;
+            }
+            let line = &lines[line_idx];
+            let style = if line_idx == scroll {
+                text_style.add_modifier(Modifier::BOLD)
+            } else {
+                muted_style
+            };
+
+            let chars: Vec<char> = line.chars().collect();
+            let total_chars = chars.len();
+            let visible: String = chars.iter().skip(h_scroll).take(max_width).collect();
+            let truncated_left = h_scroll > 0;
+            let truncated_right = h_scroll + max_width < total_chars;
+
+            if truncated_left && max_width > 3 {
+                frame.buffer_mut().set_string(inner.x, inner.y + i as u16, "...", ellipsis_style);
+                let rest: String = chars.iter().skip(h_scroll + 3).take(max_width - 3).collect();
+                frame.buffer_mut().set_string(inner.x + 3, inner.y + i as u16, &rest, style);
+            } else {
+                frame.buffer_mut().set_string(inner.x, inner.y + i as u16, &visible, style);
+            }
+            if truncated_right && max_width > 3 {
+                let col = inner.x + max_width as u16 - 3;
+                frame.buffer_mut().set_string(col, inner.y + i as u16, "...", ellipsis_style);
+            }
+        }
+    }
+
     fn render_popup(&self, frame: &mut ratatui::Frame, area: Rect) {
         match &self.popup {
             PopupState::None => {}
+            PopupState::Settings { selected } => {
+                let items: Vec<String> = Self::SETTINGS_ITEMS.iter().map(|s| s.to_string()).collect();
+                frame.render_widget(
+                    PresetSelector::new(&items, *selected, &self.palette, &self.ui_config)
+                        .title(" Settings "),
+                    area,
+                );
+            }
+            PopupState::LogViewer { lines, scroll, h_scroll, .. } => {
+                self.render_log_viewer(frame, area, lines, *scroll, *h_scroll);
+            }
             PopupState::PresetSelector { presets, selected, .. } => {
                 frame.render_widget(
                     PresetSelector::new(presets, *selected, &self.palette, &self.ui_config),
@@ -1320,6 +1528,11 @@ impl App {
             // Workspace/room actions
             Action::Create => self.show_create_dialog(),
             Action::Delete => self.show_delete_dialog(),
+
+            // Settings
+            Action::OpenSettings => {
+                self.popup = PopupState::Settings { selected: 0 };
+            }
 
             // Resize actions
             Action::Resize(dir) => self.handle_resize_action(dir),
@@ -2256,6 +2469,14 @@ impl App {
     fn process_hook_events(&mut self) {
         if let Some(rx) = &self.hook_rx {
             while let Ok(event) = rx.try_recv() {
+                humu::humu_log!(
+                    "hook: ws={:?} room={:?} pane={} state={:?} session={:?}",
+                    event.workspace_id,
+                    event.room_id,
+                    event.pane_id,
+                    event.event_type,
+                    event.session_id,
+                );
                 let pane_id = event.pane_id;
                 let new_session_id = event.session_id.clone();
                 let existing_session_id = self
