@@ -52,6 +52,17 @@ pub struct PanelRects {
 }
 
 
+/// Active text selection state for mouse drag in terminal panes.
+#[derive(Debug, Clone)]
+pub struct TextSelection {
+    pub pane_id: PaneId,
+    pub pane_rect: Rect,
+    /// Start position in vt100 screen coordinates (row, col).
+    pub start: (u16, u16),
+    /// Current end position in vt100 screen coordinates (row, col).
+    pub end: (u16, u16),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresetAction {
     NewTab,
@@ -148,6 +159,8 @@ pub struct App {
     pub panel_widths: [u16; 2],
     /// True when a mouse-down was forwarded to the focused PTY (not humu UI).
     pub pty_mouse_active: bool,
+    /// Active text selection in a terminal pane (when child has no mouse tracking).
+    pub selection: Option<TextSelection>,
     /// When Some(id), only that pane is rendered filling the full terminal area.
     pub fullscreen_pane: Option<PaneId>,
     pub palette: humu::tui::theme::Palette,
@@ -253,6 +266,7 @@ impl App {
             panel_rects: PanelRects::default(),
             panel_widths: saved_panel_widths,
             pty_mouse_active: false,
+            selection: None,
             fullscreen_pane: None,
             palette: humu::tui::theme::Palette::GITHUB_DARK,
             ui_config,
@@ -1397,12 +1411,14 @@ impl App {
                     .get(&fs_id)
                     .map(|s| s.as_str())
                     .unwrap_or("shell");
+                let sel = self.selection_for_pane(fs_id);
                 let widget =
                     TerminalWidget::new(&screen, preset_name, &self.palette, &self.ui_config)
                         .focus(true)
                         .exited(fs_exit_code)
                         .pane_count(fs_pane_count)
-                        .search(search_matches, search_active, search_base_row);
+                        .search(search_matches, search_active, search_base_row)
+                        .selection(sel);
                 frame.render_widget(widget, pane_area);
                 if fs_exit_code.is_none() && screen.scrollback() == 0 {
                     let (crow, ccol) = screen.cursor_position();
@@ -1447,6 +1463,7 @@ impl App {
                         .map(|s| s.as_str())
                         .unwrap_or("shell");
                     let exit_code = exit_codes.get(&pane_id).copied().flatten();
+                    let sel = self.selection_for_pane(pane_id);
                     let widget = TerminalWidget::new(
                         &screen,
                         preset_name,
@@ -1460,7 +1477,8 @@ impl App {
                         if is_focused { search_matches } else { &[] },
                         if is_focused { search_active } else { None },
                         search_base_row,
-                    );
+                    )
+                    .selection(sel);
                     frame.render_widget(widget, rect);
                     if is_focused && exit_code.is_none() && !screen.hide_cursor() && screen.scrollback() == 0 {
                         let (crow, ccol) = screen.cursor_position();
@@ -1662,20 +1680,46 @@ impl App {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.pty_mouse_active = false;
+                self.selection = None;
                 self.handle_click(mouse.column, mouse.row);
                 if self.try_forward_mouse(&mouse) {
                     self.pty_mouse_active = true;
+                } else {
+                    // Start text selection if click is on a terminal pane.
+                    let pos = Position::new(mouse.column, mouse.row);
+                    if self.panel_rects.terminal.contains(pos) {
+                        if let Some((pane_id, pane_rect)) = self.pane_at(pos) {
+                            let col = mouse.column.saturating_sub(pane_rect.x + 1);
+                            let row = mouse.row.saturating_sub(pane_rect.y + 1);
+                            self.selection = Some(TextSelection {
+                                pane_id,
+                                pane_rect,
+                                start: (row, col),
+                                end: (row, col),
+                            });
+                        }
+                    }
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 if self.pty_mouse_active {
                     self.try_forward_mouse(&mouse);
+                } else if let Some(ref mut sel) = self.selection {
+                    let col = mouse.column.saturating_sub(sel.pane_rect.x + 1);
+                    let row = mouse.row.saturating_sub(sel.pane_rect.y + 1);
+                    sel.end = (row, col);
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
                 if self.pty_mouse_active {
                     self.try_forward_mouse(&mouse);
                     self.pty_mouse_active = false;
+                } else if let Some(ref sel) = self.selection {
+                    // Copy selected text to clipboard via OSC 52.
+                    if sel.start != sel.end {
+                        self.copy_selection_to_clipboard();
+                    }
+                    self.selection = None;
                 }
             }
             MouseEventKind::Down(_) | MouseEventKind::Up(_) => {
@@ -1698,6 +1742,70 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn selection_for_pane(&self, pane_id: PaneId) -> Option<(u16, u16, u16, u16)> {
+        let sel = self.selection.as_ref()?;
+        if sel.pane_id != pane_id {
+            return None;
+        }
+        let (sr, sc, er, ec) = if sel.start <= sel.end {
+            (sel.start.0, sel.start.1, sel.end.0, sel.end.1)
+        } else {
+            (sel.end.0, sel.end.1, sel.start.0, sel.start.1)
+        };
+        Some((sr, sc, er, ec))
+    }
+
+    fn copy_selection_to_clipboard(&self) {
+        let sel = match &self.selection {
+            Some(s) => s,
+            None => return,
+        };
+        let pane = match self.panes.get(&sel.pane_id) {
+            Some(p) => p,
+            None => return,
+        };
+        let screen = pane.screen();
+        let (start_row, start_col, end_row, end_col) = if sel.start <= sel.end {
+            (sel.start.0, sel.start.1, sel.end.0, sel.end.1)
+        } else {
+            (sel.end.0, sel.end.1, sel.start.0, sel.start.1)
+        };
+
+        let mut text = String::new();
+        let cols = screen.size().1;
+        for row in start_row..=end_row {
+            let from = if row == start_row { start_col } else { 0 };
+            let to = if row == end_row { end_col } else { cols.saturating_sub(1) };
+            for col in from..=to {
+                if let Some(cell) = screen.cell(row, col) {
+                    let contents = cell.contents();
+                    if contents.is_empty() {
+                        text.push(' ');
+                    } else {
+                        text.push_str(&contents);
+                    }
+                }
+            }
+            if row < end_row {
+                // Trim trailing spaces from each line.
+                let trimmed = text.trim_end_matches(' ');
+                text.truncate(trimmed.len());
+                text.push('\n');
+            }
+        }
+        let trimmed = text.trim_end();
+        if trimmed.is_empty() {
+            return;
+        }
+
+        // OSC 52 clipboard: \x1b]52;c;{base64}\x07
+        use std::io::Write;
+        let encoded = base64_encode(trimmed.as_bytes());
+        let osc = format!("\x1b]52;c;{}\x07", encoded);
+        let _ = stdout().write_all(osc.as_bytes());
+        let _ = stdout().flush();
     }
 
     /// Handle a left-button mouse click at terminal coordinates (x, y).
@@ -3065,4 +3173,29 @@ fn key_event_to_bytes(key: &KeyEvent) -> Vec<u8> {
         },
         _ => vec![],
     }
+}
+
+
+fn base64_encode(data: &[u8]) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        result.push(CHARS[(n >> 18 & 63) as usize] as char);
+        result.push(CHARS[(n >> 12 & 63) as usize] as char);
+        if chunk.len() > 1 {
+            result.push(CHARS[(n >> 6 & 63) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(CHARS[(n & 63) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+    result
 }

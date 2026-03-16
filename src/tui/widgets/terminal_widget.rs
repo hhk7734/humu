@@ -17,6 +17,8 @@ pub struct TerminalWidget<'a> {
     search_matches: &'a [SearchMatch],
     active_match_index: Option<usize>,
     scrollback_base_row: usize,
+    /// Text selection range in screen coords: (start_row, start_col, end_row, end_col).
+    selection: Option<(u16, u16, u16, u16)>,
 }
 
 impl<'a> TerminalWidget<'a> {
@@ -37,6 +39,7 @@ impl<'a> TerminalWidget<'a> {
             search_matches: &[],
             active_match_index: None,
             scrollback_base_row: 0,
+            selection: None,
         }
     }
 
@@ -64,6 +67,11 @@ impl<'a> TerminalWidget<'a> {
 
     pub fn pane_count(mut self, count: usize) -> Self {
         self.pane_count = count;
+        self
+    }
+
+    pub fn selection(mut self, sel: Option<(u16, u16, u16, u16)>) -> Self {
+        self.selection = sel;
         self
     }
 }
@@ -252,6 +260,33 @@ impl Widget for TerminalWidget<'_> {
                         );
                     } else {
                         cell.set_style(cell.style().bg(hl_bg));
+                    }
+                }
+            }
+        }
+
+        // Selection highlighting
+        if let Some((sr, sc, er, ec)) = self.selection {
+            let sel_bg = self.palette.accent_blue;
+            for row in sr..=er {
+                if row >= rows {
+                    break;
+                }
+                let from = if row == sr { sc } else { 0 };
+                let to = if row == er { ec } else { cols.saturating_sub(1) };
+                for col in from..=to {
+                    if col >= cols {
+                        break;
+                    }
+                    let sx = inner.x + col;
+                    let sy = inner.y + row;
+                    if sx < inner.right() && sy < inner.bottom() {
+                        let cell = &mut buf[(sx, sy)];
+                        cell.set_style(
+                            Style::default()
+                                .fg(self.palette.bg_primary)
+                                .bg(sel_bg),
+                        );
                     }
                 }
             }
