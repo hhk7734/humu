@@ -352,7 +352,7 @@ impl App {
                         }
                     }
                     Event::Mouse(mouse) => self.handle_mouse(mouse),
-                    Event::Paste(text) => self.handle_paste(&text),
+                    Event::Paste(text) => self.handle_paste_event(&text),
                     Event::Resize(_, _) => {}
                     _ => {}
                 }
@@ -368,7 +368,7 @@ impl App {
                         }
                     }
                     Event::Mouse(mouse) => self.handle_mouse(mouse),
-                    Event::Paste(text) => self.handle_paste(&text),
+                    Event::Paste(text) => self.handle_paste_event(&text),
                     Event::Resize(_, _) => {}
                     _ => {}
                 }
@@ -2754,6 +2754,18 @@ impl App {
                 let _ = pane.write_input(&bytes);
             }
         }
+    }
+
+    /// Route paste events: token input popup gets priority, otherwise forward to PTY.
+    fn handle_paste_event(&mut self, text: &str) {
+        if let PopupState::NotificationTokenInput { field, value } = &self.popup {
+            let field = *field;
+            let mut value = value.clone();
+            value.push_str(text);
+            self.popup = PopupState::NotificationTokenInput { field, value };
+            return;
+        }
+        self.handle_paste(text);
     }
 
     /// Forward pasted text to the focused PTY pane.
