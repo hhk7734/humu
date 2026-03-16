@@ -15,10 +15,10 @@ fn test_register_existing_repo() {
     let mgr = WorkspaceManager::new();
     let name = mgr.register(&mut state, dir.path()).unwrap();
 
-    assert!(state.workspaces.contains_key(&name));
+    assert!(state.ws_by_name(&name).is_some());
     // register canonicalizes the path, so compare against the canonical form
     let canonical = std::fs::canonicalize(dir.path()).unwrap();
-    assert_eq!(state.workspaces[&name].path, canonical);
+    assert_eq!(state.ws_by_name(&name).unwrap().path, canonical);
 }
 
 #[test]
@@ -41,7 +41,7 @@ fn test_init_new_project() {
 
     assert_eq!(name, "my-project");
     assert!(project_path.join(".git").exists());
-    assert!(state.workspaces.contains_key("my-project"));
+    assert!(state.ws_by_name("my-project").is_some());
 }
 
 #[test]
@@ -68,7 +68,7 @@ fn test_delete_workspace_keeps_repo() {
 
     mgr.delete(&mut state, &name, false).unwrap();
 
-    assert!(!state.workspaces.contains_key(&name));
+    assert!(state.ws_by_name(&name).is_none());
     assert!(dir.path().join("proj").exists());
 }
 
@@ -82,7 +82,7 @@ fn test_delete_workspace_removes_repo() {
 
     mgr.delete(&mut state, &name, true).unwrap();
 
-    assert!(!state.workspaces.contains_key(&name));
+    assert!(state.ws_by_name(&name).is_none());
     assert!(!project_path.exists());
 }
 

@@ -98,32 +98,27 @@ active_room_id: 660e8400-e29b-41d4-a716-446655440001
 panel_widths:
   - 20
   - 18
-
 workspaces:
-  humu:
+  - name: humu
     id: 550e8400-e29b-41d4-a716-446655440000
     path: /home/user/github/humu
     rooms:
-      main:
+      - name: main
         id: 660e8400-e29b-41d4-a716-446655440001
-      feat/auth:
+        active_tab: 0
+        tabs:
+          - name: claude
+            split:
+              preset: claude
+              session_id: abc123-def456
+          - name: shell
+            split:
+              preset: shell
+      - name: feat/auth
         id: 770e8400-e29b-41d4-a716-446655440002
-  infra:
+  - name: infra
     id: 880e8400-e29b-41d4-a716-446655440003
     path: /home/user/github/infra
-
-layout:
-  550e8400-...:
-    660e8400-...:
-      active_tab: 0
-      tabs:
-        - name: claude
-          split:
-            preset: claude
-            session_id: abc123-def456
-        - name: shell
-          split:
-            preset: shell
 ```
 
-Workspace and room IDs are UUIDs. Room IDs are assigned lazily on first discovery and persisted. On startup, stale room entries (worktrees that no longer exist) are pruned. Layout keys use UUID strings. On startup, humu auto-migrates old `config.toml` / `state.toml` files to YAML format.
+Workspaces and rooms are lists with `name` and `id` fields. Room layout (tabs, panes) is stored directly in the room entry. IDs are UUIDs assigned lazily on first discovery. On startup, stale room entries (worktrees that no longer exist) are pruned.

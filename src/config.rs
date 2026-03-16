@@ -142,25 +142,45 @@ pub struct TabLayout {
     pub split: SplitNode,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RoomLayout {
-    pub active_tab: usize,
-    pub tabs: Vec<TabLayout>,
-}
-
-// ── WorkspaceEntry / RoomEntry ────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct WorkspaceEntry {
-    pub id: WorkspaceId,
-    pub path: PathBuf,
-    #[serde(default)]
-    pub rooms: HashMap<String, RoomEntry>,
-}
+// ── RoomEntry ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RoomEntry {
+    pub name: String,
     pub id: RoomId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_tab: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tabs: Vec<TabLayout>,
+}
+
+// ── WorkspaceEntry ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceEntry {
+    pub name: String,
+    pub id: WorkspaceId,
+    pub path: PathBuf,
+    #[serde(default)]
+    pub rooms: Vec<RoomEntry>,
+}
+
+impl WorkspaceEntry {
+    pub fn room_by_name(&self, name: &str) -> Option<&RoomEntry> {
+        self.rooms.iter().find(|r| r.name == name)
+    }
+
+    pub fn room_by_name_mut(&mut self, name: &str) -> Option<&mut RoomEntry> {
+        self.rooms.iter_mut().find(|r| r.name == name)
+    }
+
+    pub fn room_by_id(&self, id: RoomId) -> Option<&RoomEntry> {
+        self.rooms.iter().find(|r| r.id == id)
+    }
+
+    pub fn room_by_id_mut(&mut self, id: RoomId) -> Option<&mut RoomEntry> {
+        self.rooms.iter_mut().find(|r| r.id == id)
+    }
 }
 
 // ── HumuState ─────────────────────────────────────────────────────────────────
@@ -170,42 +190,39 @@ pub struct HumuState {
     pub active_workspace_id: Option<WorkspaceId>,
     pub active_room_id: Option<RoomId>,
     #[serde(default)]
-    pub workspaces: HashMap<String, WorkspaceEntry>,
-    /// layout[workspace_id][room_id] = RoomLayout
-    #[serde(default)]
-    pub layout: HashMap<String, HashMap<String, RoomLayout>>,
+    pub workspaces: Vec<WorkspaceEntry>,
     /// Panel widths: [workspace_panel, room_panel]. Persisted across restarts.
     #[serde(default)]
     pub panel_widths: Option<[u16; 2]>,
 }
 
 impl HumuState {
-    pub fn load(path: &Path) -> Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        let mut state: Self = serde_yaml::from_str(&content)?;
-        if state.workspaces.is_empty() && !state.layout.is_empty() {
-            eprintln!("Clearing stale layout data from old format");
-            state.layout.clear();
-        }
-        Ok(state)
+    pub fn ws_by_name(&self, name: &str) -> Option<&WorkspaceEntry> {
+        self.workspaces.iter().find(|w| w.name == name)
     }
 
-    /// Load from TOML format (migration from old state.toml).
-    pub fn load_toml(path: &Path) -> Result<Self> {
+    pub fn ws_by_name_mut(&mut self, name: &str) -> Option<&mut WorkspaceEntry> {
+        self.workspaces.iter_mut().find(|w| w.name == name)
+    }
+
+    pub fn ws_by_id(&self, id: WorkspaceId) -> Option<&WorkspaceEntry> {
+        self.workspaces.iter().find(|w| w.id == id)
+    }
+
+    pub fn ws_by_id_mut(&mut self, id: WorkspaceId) -> Option<&mut WorkspaceEntry> {
+        self.workspaces.iter_mut().find(|w| w.id == id)
+    }
+
+    pub fn ws_names_sorted(&self) -> Vec<String> {
+        let mut names: Vec<_> = self.workspaces.iter().map(|w| w.name.clone()).collect();
+        names.sort();
+        names
+    }
+
+    pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
-        match toml::from_str::<Self>(&content) {
-            Ok(mut state) => {
-                if state.workspaces.is_empty() && !state.layout.is_empty() {
-                    eprintln!("Clearing stale layout data from old format");
-                    state.layout.clear();
-                }
-                Ok(state)
-            }
-            Err(_) => {
-                eprintln!("Old state.toml format not compatible, starting fresh");
-                Ok(Self::default())
-            }
-        }
+        let state: Self = serde_yaml::from_str(&content)?;
+        Ok(state)
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -226,12 +243,17 @@ pub fn ensure_room_id_for_workspace(
     workspace_name: &str,
     room_name: &str,
 ) -> Option<RoomId> {
-    let ws = state.workspaces.get_mut(workspace_name)?;
-    if let Some(entry) = ws.rooms.get(room_name) {
+    let ws = state.ws_by_name_mut(workspace_name)?;
+    if let Some(entry) = ws.room_by_name(room_name) {
         Some(entry.id)
     } else {
         let id = RoomId::new();
-        ws.rooms.insert(room_name.to_string(), RoomEntry { id });
+        ws.rooms.push(RoomEntry {
+            name: room_name.to_string(),
+            id,
+            active_tab: None,
+            tabs: vec![],
+        });
         Some(id)
     }
 }
@@ -244,7 +266,7 @@ pub fn prune_stale_rooms_for_workspace(
     workspace_name: &str,
     discovered_rooms: &HashSet<String>,
 ) {
-    if let Some(ws) = state.workspaces.get_mut(workspace_name) {
-        ws.rooms.retain(|name, _| discovered_rooms.contains(name));
+    if let Some(ws) = state.ws_by_name_mut(workspace_name) {
+        ws.rooms.retain(|r| discovered_rooms.contains(&r.name));
     }
 }

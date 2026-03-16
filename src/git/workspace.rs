@@ -19,10 +19,12 @@ impl WorkspaceManager {
             bail!("not a git repository: {}", path.display());
         }
         let name = self.unique_name(state, &path);
-        state.workspaces.insert(
-            name.clone(),
-            WorkspaceEntry { id: WorkspaceId::new(), path, rooms: Default::default() },
-        );
+        state.workspaces.push(WorkspaceEntry {
+            name: name.clone(),
+            id: WorkspaceId::new(),
+            path,
+            rooms: vec![],
+        });
         Ok(name)
     }
 
@@ -73,23 +75,19 @@ impl WorkspaceManager {
         name: &str,
         remove_from_disk: bool,
     ) -> Result<()> {
-        let entry = state
+        let idx = state
             .workspaces
-            .remove(name)
+            .iter()
+            .position(|w| w.name == name)
             .ok_or_else(|| anyhow::anyhow!("workspace not found: {name}"))?;
+        let entry = state.workspaces.remove(idx);
 
-        // TODO: coordinate with Room manager (Task 5) to properly clean up git worktree
-        // metadata — this should run `git worktree remove` / `git worktree prune` before
-        // removing the worktrees directory, to keep git's internal worktree state consistent.
         let worktrees_dir = crate::config::humu_dir()
             .join("worktrees")
             .join(name);
         if worktrees_dir.exists() {
             std::fs::remove_dir_all(&worktrees_dir)?;
         }
-
-        // Remove layout state
-        state.layout.remove(name);
 
         if remove_from_disk && entry.path.exists() {
             std::fs::remove_dir_all(&entry.path)?;
@@ -106,9 +104,7 @@ impl WorkspaceManager {
 
     /// List all workspace names.
     pub fn list(&self, state: &HumuState) -> Vec<String> {
-        let mut names: Vec<_> = state.workspaces.keys().cloned().collect();
-        names.sort();
-        names
+        state.ws_names_sorted()
     }
 
     /// Derive a unique workspace name from the directory name.
@@ -119,14 +115,14 @@ impl WorkspaceManager {
             .to_string_lossy()
             .to_string();
 
-        if !state.workspaces.contains_key(&base) {
+        if state.ws_by_name(&base).is_none() {
             return base;
         }
 
         let mut suffix = 2;
         loop {
             let candidate = format!("{base}-{suffix}");
-            if !state.workspaces.contains_key(&candidate) {
+            if state.ws_by_name(&candidate).is_none() {
                 return candidate;
             }
             suffix += 1;

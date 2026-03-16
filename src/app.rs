@@ -1,4 +1,4 @@
-use humu::config::{humu_dir, HumuConfig, HumuState, RoomLayout, SplitDirection as CfgDir, SplitNode, TabLayout};
+use humu::config::{humu_dir, HumuConfig, HumuState, SplitDirection as CfgDir, SplitNode, TabLayout};
 use humu::id::{RoomId, WorkspaceId};
 use humu::git::room::RoomManager;
 use humu::git::workspace::WorkspaceManager;
@@ -169,7 +169,6 @@ impl App {
         let config_path = humu_dir().join("config.yaml");
         let config_toml_path = humu_dir().join("config.toml");
         let state_path = humu_dir().join("state.yaml");
-        let state_toml_path = humu_dir().join("state.toml");
 
         let config = if config_path.exists() {
             HumuConfig::load(&config_path)?
@@ -184,11 +183,6 @@ impl App {
 
         let state = if state_path.exists() {
             HumuState::load(&state_path)?
-        } else if state_toml_path.exists() {
-            let st = HumuState::load_toml(&state_toml_path)?;
-            st.save(&state_path)?;
-            eprintln!("Migrated state.toml → state.yaml");
-            st
         } else {
             HumuState::default()
         };
@@ -370,34 +364,22 @@ impl App {
         let suspended: Vec<_> = self.suspended_rooms.drain().collect();
         for ((ws_id, room_id), room_state) in suspended {
             // Temporarily swap in the suspended state to reuse persist helpers.
-            let ws_name = self
-                .state
-                .workspaces
-                .iter()
-                .find(|(_, e)| e.id == ws_id)
-                .map(|(name, _)| name.clone());
-            let room_name = ws_name.as_ref().and_then(|ws| {
-                self.state.workspaces.get(ws).and_then(|entry| {
-                    entry
-                        .rooms
-                        .iter()
-                        .find(|(_, e)| e.id == room_id)
-                        .map(|(name, _)| name.clone())
-                })
-            });
-            if let (Some(ws), Some(room)) = (ws_name, room_name) {
-                self.panes = room_state.panes;
-                self.tabs = room_state.tabs;
-                self.pane_presets = room_state.pane_presets;
-                if let Some(layout) = self.save_layout() {
-                    self.state
-                        .layout
-                        .entry(ws)
-                        .or_default()
-                        .insert(room, layout);
+            self.panes = room_state.panes;
+            self.tabs = room_state.tabs;
+            self.pane_presets = room_state.pane_presets;
+            let layout = self.save_layout();
+            if let Some(ws) = self.state.ws_by_id_mut(ws_id) {
+                if let Some(room) = ws.room_by_id_mut(room_id) {
+                    if let Some((active_tab, tabs)) = layout {
+                        room.active_tab = Some(active_tab);
+                        room.tabs = tabs;
+                    } else {
+                        room.active_tab = None;
+                        room.tabs.clear();
+                    }
                 }
-                self.panes.clear();
             }
+            self.panes.clear();
             // room_state.panes dropped here, killing child processes.
         }
 
@@ -852,11 +834,7 @@ impl App {
                 // Auto-select the new workspace and its default room (main branch).
                 // Only set selection indices here — switch_to_selected_room handles
                 // suspending the old room and activating the new workspace/room IDs.
-                let names = {
-                    let mut n: Vec<_> = self.state.workspaces.keys().cloned().collect();
-                    n.sort();
-                    n
-                };
+                let names = self.state.ws_names_sorted();
                 if let Some(idx) = names.iter().position(|n| *n == name) {
                     self.workspace_selected = Some(idx);
                     self.room_selected = Some(0);
@@ -892,7 +870,7 @@ impl App {
                 return;
             }
         };
-        let ws_path = match self.state.workspaces.get(&ws_name) {
+        let ws_path = match self.state.ws_by_name(&ws_name) {
             Some(e) => e.path.clone(),
             None => {
                 self.last_error = Some("Workspace not found".to_string());
@@ -926,8 +904,7 @@ impl App {
         // suspended rooms and detect if the active workspace is being deleted.
         let ws_id = self
             .state
-            .workspaces
-            .get(&workspace_name)
+            .ws_by_name(&workspace_name)
             .map(|e| e.id);
 
         let was_active = ws_id == self.state.active_workspace_id;
@@ -992,7 +969,7 @@ impl App {
                 return;
             }
         };
-        let ws_path = match self.state.workspaces.get(&ws_name) {
+        let ws_path = match self.state.ws_by_name(&ws_name) {
             Some(e) => e.path.clone(),
             None => {
                 self.last_error = Some("Workspace not found".to_string());
@@ -1800,8 +1777,7 @@ impl App {
         match self.focus {
             FocusedPanel::Workspace => {
                 let ws_name = {
-                    let mut names: Vec<_> = self.state.workspaces.keys().cloned().collect();
-                    names.sort();
+                    let names = self.state.ws_names_sorted();
                     match self.workspace_selected {
                         Some(i) => names.into_iter().nth(i),
                         None => None,
@@ -1848,7 +1824,7 @@ impl App {
     /// map to `~/.humu/worktrees/<workspace>/<room>`.
     fn current_room_path(&self) -> Option<PathBuf> {
         let ws_name = self.active_workspace_name()?;
-        let ws_entry = self.state.workspaces.get(&ws_name)?;
+        let ws_entry = self.state.ws_by_name(&ws_name)?;
         let room = self.active_room_name()?;
 
         let worktree_path = humu_dir()
@@ -2223,27 +2199,28 @@ impl App {
         // Prune stale room entries for every workspace before restoring selection.
         // Discover actual rooms from git and remove any persisted entries that no
         // longer correspond to a live worktree.
-        let ws_names: Vec<String> = self.state.workspaces.keys().cloned().collect();
-        for ws_name in ws_names {
-            if let Some(ws_path) = self.state.workspaces.get(&ws_name).map(|w| w.path.clone()) {
-                let mgr = RoomManager::new();
-                if let Ok(rooms) = mgr.list(&ws_path) {
-                    let discovered: std::collections::HashSet<String> =
-                        rooms.into_iter().map(|r| r.branch).collect();
-                    humu::config::prune_stale_rooms_for_workspace(
-                        &mut self.state,
-                        &ws_name,
-                        &discovered,
-                    );
-                }
+        let ws_info: Vec<(String, PathBuf)> = self
+            .state
+            .workspaces
+            .iter()
+            .map(|w| (w.name.clone(), w.path.clone()))
+            .collect();
+        for (ws_name, ws_path) in ws_info {
+            let mgr = RoomManager::new();
+            if let Ok(rooms) = mgr.list(&ws_path) {
+                let discovered: std::collections::HashSet<String> =
+                    rooms.into_iter().map(|r| r.branch).collect();
+                humu::config::prune_stale_rooms_for_workspace(
+                    &mut self.state,
+                    &ws_name,
+                    &discovered,
+                );
             }
         }
 
         if let Some(ws_name) = self.active_workspace_name() {
             let names: Vec<_> = {
-                let mut n: Vec<_> = self.state.workspaces.keys().cloned().collect();
-                n.sort();
-                n
+                self.state.ws_names_sorted()
             };
             if let Some(idx) = names.iter().position(|n| *n == ws_name) {
                 self.workspace_selected = Some(idx);
@@ -2263,14 +2240,14 @@ impl App {
             self.active_workspace_name(),
             self.active_room_name(),
         ) {
-            if let Some(layout) = self
-                .state
-                .layout
-                .get(&ws)
-                .and_then(|m| m.get(&room))
-                .cloned()
-            {
-                self.restore_layout(&layout);
+            if let Some(ws_entry) = self.state.ws_by_name(&ws) {
+                if let Some(room_entry) = ws_entry.room_by_name(&room) {
+                    if !room_entry.tabs.is_empty() {
+                        let active_tab = room_entry.active_tab.unwrap_or(0);
+                        let tabs = room_entry.tabs.clone();
+                        self.restore_layout(active_tab, tabs);
+                    }
+                }
             }
         }
     }
@@ -2324,18 +2301,17 @@ impl App {
     }
 
     fn workspace_items(&self) -> Vec<WorkspaceItem> {
-        let mut names: Vec<_> = self.state.workspaces.keys().cloned().collect();
-        names.sort();
-        names
-            .into_iter()
-            .map(|name| {
-                let ws_id = self.state.workspaces.get(&name).map(|e| e.id);
-                let active = ws_id
-                    .map(|id| self.has_active_agent(&self.pane_ids_for_workspace(id)))
-                    .unwrap_or(false);
-                WorkspaceItem { name, active }
+        let mut items: Vec<_> = self
+            .state
+            .workspaces
+            .iter()
+            .map(|ws| {
+                let active = self.has_active_agent(&self.pane_ids_for_workspace(ws.id));
+                WorkspaceItem { name: ws.name.clone(), active }
             })
-            .collect()
+            .collect();
+        items.sort_by(|a, b| a.name.cmp(&b.name));
+        items
     }
 
     fn room_items(&self) -> Vec<RoomItem> {
@@ -2364,7 +2340,7 @@ impl App {
 
     /// List rooms for a specific workspace by name, with agent activity flags.
     fn room_items_for_workspace(&self, ws_name: &str) -> Vec<RoomItem> {
-        let ws = match self.state.workspaces.get(ws_name) {
+        let ws = match self.state.ws_by_name(ws_name) {
             Some(ws) => ws,
             None => return vec![],
         };
@@ -2374,7 +2350,7 @@ impl App {
             Ok(rooms) => rooms
                 .into_iter()
                 .map(|r| {
-                    let room_id = ws.rooms.get(&r.branch).map(|e| e.id);
+                    let room_id = ws.room_by_name(&r.branch).map(|e| e.id);
                     let active = room_id
                         .map(|rid| self.has_active_agent(&self.pane_ids_for_room(ws_id, rid)))
                         .unwrap_or(false);
@@ -2389,9 +2365,9 @@ impl App {
         }
     }
 
-    /// Convert the current runtime TabContainer into a `RoomLayout` for persistence.
+    /// Convert the current runtime TabContainer into layout data for persistence.
     /// Returns `None` if there are no tabs.
-    fn save_layout(&self) -> Option<RoomLayout> {
+    fn save_layout(&self) -> Option<(usize, Vec<TabLayout>)> {
         if self.tabs.is_empty() {
             return None;
         }
@@ -2401,8 +2377,6 @@ impl App {
             .into_iter()
             .enumerate()
             .filter_map(|(i, name)| {
-                // Temporarily obtain the tree via index by iterating — we use
-                // a helper that borrows self immutably.
                 let tree = self.tabs.tree_at(i)?;
                 let split = self.split_tree_to_node(tree)?;
                 Some(TabLayout {
@@ -2416,10 +2390,7 @@ impl App {
             return None;
         }
 
-        Some(RoomLayout {
-            active_tab: self.tabs.active_index(),
-            tabs,
-        })
+        Some((self.tabs.active_index(), tabs))
     }
 
     /// Recursively convert a runtime `SplitTree` to the serializable `SplitNode`.
@@ -2460,34 +2431,31 @@ impl App {
             Some(r) => r,
             None => return,
         };
-        if let Some(layout) = self.save_layout() {
-            self.state
-                .layout
-                .entry(ws.clone())
-                .or_default()
-                .insert(room, layout);
+        if let Some((active_tab, tabs)) = self.save_layout() {
+            if let Some(ws_entry) = self.state.ws_by_name_mut(&ws) {
+                if let Some(room_entry) = ws_entry.room_by_name_mut(&room) {
+                    room_entry.active_tab = Some(active_tab);
+                    room_entry.tabs = tabs;
+                }
+            }
         } else {
-            // No tabs left — remove the stale layout entry.
-            if let Some(rooms) = self.state.layout.get_mut(&ws) {
-                rooms.remove(&room);
-                if rooms.is_empty() {
-                    self.state.layout.remove(&ws);
+            // No tabs left — clear the layout from the room entry.
+            if let Some(ws_entry) = self.state.ws_by_name_mut(&ws) {
+                if let Some(room_entry) = ws_entry.room_by_name_mut(&room) {
+                    room_entry.active_tab = None;
+                    room_entry.tabs.clear();
                 }
             }
         }
     }
 
-    /// Close all existing panes and rebuild the TabContainer from a saved `RoomLayout`.
-    fn restore_layout(&mut self, layout: &RoomLayout) {
+    /// Close all existing panes and rebuild the TabContainer from a saved room's layout.
+    fn restore_layout(&mut self, active_tab: usize, tabs: Vec<TabLayout>) {
         // Drop all existing panes.
         self.panes.clear();
         self.pane_presets.clear();
         self.tabs = TabContainer::new();
         self.focused_pane = None;
-
-        let active_tab = layout.active_tab;
-
-        let tabs: Vec<TabLayout> = layout.tabs.clone();
         for tab_layout in &tabs {
             match self.node_to_split_tree(&tab_layout.split) {
                 Some(tree) => {
@@ -2618,36 +2586,15 @@ impl App {
             }
         } else {
             // Cold restore from persisted layout, or create default.
-            let ws_name = self
+            let room_layout = self
                 .state
-                .workspaces
-                .iter()
-                .find(|(_, e)| e.id == ws_id)
-                .map(|(name, _)| name.clone());
+                .ws_by_id(ws_id)
+                .and_then(|ws| ws.room_by_id(room_id))
+                .filter(|r| !r.tabs.is_empty())
+                .map(|r| (r.active_tab.unwrap_or(0), r.tabs.clone()));
 
-            let room_name = ws_name.as_ref().and_then(|ws| {
-                self.state.workspaces.get(ws).and_then(|entry| {
-                    entry
-                        .rooms
-                        .iter()
-                        .find(|(_, e)| e.id == room_id)
-                        .map(|(name, _)| name.clone())
-                })
-            });
-
-            let layout = ws_name
-                .as_ref()
-                .zip(room_name.as_ref())
-                .and_then(|(ws, room)| {
-                    self.state
-                        .layout
-                        .get(ws)
-                        .and_then(|rooms| rooms.get(room))
-                        .cloned()
-                });
-
-            if let Some(layout) = layout {
-                self.restore_layout(&layout);
+            if let Some((active_tab, tabs)) = room_layout {
+                self.restore_layout(active_tab, tabs);
             } else {
                 // No saved layout — create a default shell tab.
                 self.panes.clear();
@@ -2668,8 +2615,7 @@ impl App {
     fn switch_to_selected_room(&mut self) {
         // Resolve workspace name from index.
         let ws_name = {
-            let mut names: Vec<_> = self.state.workspaces.keys().cloned().collect();
-            names.sort();
+            let names = self.state.ws_names_sorted();
             match self.workspace_selected {
                 Some(i) => names.into_iter().nth(i),
                 None => None,
@@ -2721,28 +2667,20 @@ impl App {
     /// Return the name of the active workspace, looked up by ID.
     fn active_workspace_name(&self) -> Option<String> {
         let id = self.state.active_workspace_id?;
-        self.state
-            .workspaces
-            .iter()
-            .find(|(_, e)| e.id == id)
-            .map(|(name, _)| name.clone())
+        self.state.ws_by_id(id).map(|w| w.name.clone())
     }
 
     /// Return the name of the active room, looked up by ID.
     fn active_room_name(&self) -> Option<String> {
         let id = self.state.active_room_id?;
-        // Look in the active workspace's rooms map.
-        let ws_name = self.active_workspace_name()?;
-        let ws = self.state.workspaces.get(&ws_name)?;
-        ws.rooms
-            .iter()
-            .find(|(_, e)| e.id == id)
-            .map(|(name, _)| name.clone())
+        let ws_id = self.state.active_workspace_id?;
+        let ws = self.state.ws_by_id(ws_id)?;
+        ws.room_by_id(id).map(|r| r.name.clone())
     }
 
     /// Set active workspace by name, creating the ID mapping if needed.
     fn set_active_workspace_by_name(&mut self, name: &str) {
-        if let Some(entry) = self.state.workspaces.get(name) {
+        if let Some(entry) = self.state.ws_by_name(name) {
             self.state.active_workspace_id = Some(entry.id);
         }
     }
