@@ -139,9 +139,13 @@ Navigate search results in the focused pane.
 
 ### Mouse Support
 
-Clicking a panel enters the corresponding mode: workspace panel → Workspace mode, room panel → Room mode, terminal area → Terminal mode. Clicking tabs, `+` button, and dragging resize handles are also supported. All mouse interactions have keyboard equivalents.
+Clicking a panel enters the corresponding mode: workspace panel → Workspace mode, room panel → Room mode, terminal area → Terminal mode. Clicking tabs, `+` button are also supported. Panel resizing is keyboard-only (`Shift+←→`). All mouse interactions have keyboard equivalents.
 
 **Status bar hint clicks**: Clicking a key hint segment in the status bar triggers the corresponding action (e.g., clicking the "PANE" hint in Terminal mode enters Pane mode). Multi-key hints like arrow navigation are not clickable. Works across all modes including Search mode hints (NEXT, PREV, CASE, WRAP).
+
+**Mouse forwarding**: When a child process enables mouse tracking (e.g., vim, htop), all mouse events (click, drag, release, scroll) are forwarded as SGR escape sequences with pane-relative coordinates. Humu's own click handling (panel selection, tab switching) still runs on Down events to maintain focus.
+
+**Text selection**: When the child process has no mouse tracking (e.g., plain shell, Claude Code), mouse drag selects text from the vt100 screen with a dark blue highlight. On mouse release, selected text is copied to the system clipboard via OSC 52 escape sequence.
 
 **Bracketed paste**: Multi-line paste from the system clipboard is forwarded as a single block. If the child process has requested bracketed paste mode, the text is wrapped in `\x1b[200~`...`\x1b[201~` sequences. In EnterSearch mode, pasted text is appended to the search query.
 

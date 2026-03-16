@@ -267,7 +267,7 @@ impl Widget for TerminalWidget<'_> {
 
         // Selection highlighting
         if let Some((sr, sc, er, ec)) = self.selection {
-            let sel_bg = self.palette.accent_blue;
+            let sel_bg = Color::Rgb(24, 50, 78); // dark blue for dark theme
             for row in sr..=er {
                 if row >= rows {
                     break;
@@ -282,11 +282,7 @@ impl Widget for TerminalWidget<'_> {
                     let sy = inner.y + row;
                     if sx < inner.right() && sy < inner.bottom() {
                         let cell = &mut buf[(sx, sy)];
-                        cell.set_style(
-                            Style::default()
-                                .fg(self.palette.bg_primary)
-                                .bg(sel_bg),
-                        );
+                        cell.set_style(cell.style().bg(sel_bg));
                     }
                 }
             }
