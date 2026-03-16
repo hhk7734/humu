@@ -28,7 +28,7 @@ use std::io::stdout;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::runtime::Runtime;
 
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -83,7 +83,6 @@ pub struct RoomState {
 pub struct AgentStateEntry {
     pub state: AgentState,
     pub session_id: Option<String>,
-    pub updated_at: Instant,
 }
 
 pub enum PopupState {
@@ -174,6 +173,10 @@ pub struct App {
     pub search_state: Option<SearchState>,
     /// Cached path to state.yaml.
     state_path: std::path::PathBuf,
+    /// Notification manager for OS/Telegram alerts.
+    notification_manager: humu::notification::NotificationManager,
+    /// Path to config.yaml for persisting changes.
+    config_path: std::path::PathBuf,
 }
 
 impl App {
@@ -198,6 +201,9 @@ impl App {
         } else {
             HumuConfig::default()
         };
+
+        let notification_manager =
+            humu::notification::NotificationManager::from_config(&config.notifications);
 
         let state = if state_path.exists() {
             HumuState::load(&state_path)?
@@ -276,6 +282,8 @@ impl App {
             suspended_rooms: HashMap::new(),
             search_state: None,
             state_path: humu_dir().join("state.yaml"),
+            notification_manager,
+            config_path,
         })
     }
 
@@ -2344,7 +2352,7 @@ impl App {
                 AgentStateEntry {
                     state: AgentState::Idle,
                     session_id: restored_session_id,
-                    updated_at: Instant::now(),
+
                 },
             );
         }
@@ -2710,7 +2718,7 @@ impl App {
                     AgentStateEntry {
                         state: event.event_type.clone(),
                         session_id,
-                        updated_at: Instant::now(),
+    
                     },
                 );
             }
