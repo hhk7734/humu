@@ -172,6 +172,8 @@ pub struct App {
     pub suspended_rooms: HashMap<(WorkspaceId, RoomId), RoomState>,
     /// Active search state (None when not searching).
     pub search_state: Option<SearchState>,
+    /// Cached path to state.yaml.
+    state_path: std::path::PathBuf,
 }
 
 impl App {
@@ -273,6 +275,7 @@ impl App {
             spin_tick: 0,
             suspended_rooms: HashMap::new(),
             search_state: None,
+            state_path: humu_dir().join("state.yaml"),
         })
     }
 
@@ -369,12 +372,12 @@ impl App {
         stdout().execute(LeaveAlternateScreen)?;
         disable_raw_mode()?;
 
-        // Graceful shutdown: persist layout for current room and all suspended rooms,
-        // then drop all PTY children.
-        self.persist_layout();
+        // Graceful shutdown: sync layout for current room and all suspended rooms,
+        // then write once to disk.
+        self.sync_layout();
         self.panes.clear();
 
-        // Persist and drop suspended rooms.
+        // Sync suspended rooms into state.
         let suspended: Vec<_> = self.suspended_rooms.drain().collect();
         for ((ws_id, room_id), room_state) in suspended {
             // Temporarily swap in the suspended state to reuse persist helpers.
@@ -394,12 +397,9 @@ impl App {
                 }
             }
             self.panes.clear();
-            // room_state.panes dropped here, killing child processes.
         }
 
-        self.state.panel_widths = Some(self.panel_widths);
-        let state_path = humu_dir().join("state.yaml");
-        self.state.save(&state_path)?;
+        self.save_state();
 
         Ok(())
     }
@@ -983,6 +983,8 @@ impl App {
                     self.workspace_selected = Some(ws.id);
                     self.room_selected = None;
                     self.switch_to_selected_room();
+                } else {
+                    self.save_state();
                 }
             }
             Err(e) => {
@@ -1076,6 +1078,7 @@ impl App {
                 if self.state.workspaces.is_empty() {
                     self.workspace_selected = None;
                     self.room_selected = None;
+                    self.save_state();
                 } else if was_active {
                     // Select first available workspace.
                     let items = self.workspace_items();
@@ -1084,6 +1087,8 @@ impl App {
                     }
                     self.room_selected = None;
                     self.switch_to_selected_room();
+                } else {
+                    self.save_state();
                 }
                 self.last_error = None;
             }
@@ -2858,8 +2863,9 @@ impl App {
         }
     }
 
-    /// Persist the current layout for the active workspace/room into `self.state`.
-    fn persist_layout(&mut self) {
+    /// Sync the current layout for the active workspace/room into `self.state`
+    /// (memory only, no disk write).
+    fn sync_layout(&mut self) {
         let ws_id = match self.state.active_workspace_id {
             Some(id) => id,
             None => return,
@@ -2879,6 +2885,21 @@ impl App {
                     room_entry.tabs.clear();
                 }
             }
+        }
+    }
+
+    /// Sync layout to state and flush to disk.
+    fn persist_layout(&mut self) {
+        self.sync_layout();
+        self.save_state();
+    }
+
+    /// Flush `self.state` to disk (`~/.humu/state.yaml`).
+    /// Also syncs `panel_widths` so it's never stale on disk.
+    fn save_state(&mut self) {
+        self.state.panel_widths = Some(self.panel_widths);
+        if let Err(e) = self.state.save(&self.state_path) {
+            humu::humu_log!("failed to save state: {e}");
         }
     }
 
@@ -2986,8 +3007,8 @@ impl App {
         // Clear search state — suspended panes may receive new output.
         self.search_state = None;
 
-        // Persist layout to state.yaml so the room can also be cold-restored.
-        self.persist_layout();
+        // Sync layout into state so the room can be cold-restored.
+        self.sync_layout();
 
         // Move live state out of self into suspended storage.
         // PaneId uses UUID, so uniqueness is guaranteed across rooms.
@@ -3108,6 +3129,8 @@ impl App {
 
         // Restore target room (hot if suspended, cold otherwise).
         self.restore_room(target_ws_id, target_room_id);
+
+        self.save_state();
     }
 
     // ── ID ↔ Name bridge helpers (Task 3 shims; superseded by Task 5) ─────────
