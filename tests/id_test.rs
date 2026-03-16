@@ -15,18 +15,16 @@ fn room_id_new_is_unique() {
 }
 
 #[test]
-fn tab_id_sequential() {
-    let a = TabId(0);
-    let b = TabId(1);
+fn tab_id_new_is_unique() {
+    let a = TabId::new();
+    let b = TabId::new();
     assert_ne!(a, b);
-    assert_eq!(a.0, 0);
-    assert_eq!(b.0, 1);
 }
 
 #[test]
-fn pane_id_sequential() {
-    let a = PaneId(0);
-    let b = PaneId(1);
+fn pane_id_new_is_unique() {
+    let a = PaneId::new();
+    let b = PaneId::new();
     assert_ne!(a, b);
 }
 
@@ -48,14 +46,14 @@ fn room_id_serde_round_trip() {
 
 #[test]
 fn pane_id_display() {
-    let id = PaneId(42);
-    assert_eq!(format!("{id}"), "42");
+    let id = PaneId::new();
+    let s = format!("{id}");
+    assert_eq!(s.len(), 36); // UUID format
 }
 
 #[test]
 fn workspace_id_display() {
     let id = WorkspaceId::new();
     let s = format!("{id}");
-    // UUID format: 8-4-4-4-12
     assert_eq!(s.len(), 36);
 }

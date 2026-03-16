@@ -1,5 +1,5 @@
 use humu::config::{humu_dir, HumuConfig, HumuState, SplitDirection as CfgDir, SplitNode, TabLayout};
-use humu::id::{RoomId, WorkspaceId};
+use humu::id::{RoomId, TabId, WorkspaceId};
 use humu::git::room::RoomManager;
 use humu::git::workspace::WorkspaceManager;
 use humu::hook::http::{generate_hook_files, AgentState, HookEvent, HookServer};
@@ -139,7 +139,6 @@ pub struct App {
     pub running: bool,
     pub panes: HashMap<PaneId, PtyPane>,
     pub tabs: TabContainer,
-    pub next_pane_id: PaneId,
     pub focused_pane: Option<PaneId>,
     /// Tracks which preset name was used to spawn each pane.
     pub pane_presets: HashMap<PaneId, String>,
@@ -254,7 +253,6 @@ impl App {
             running: true,
             panes,
             tabs,
-            next_pane_id: PaneId(0),
             focused_pane: None,
             pane_presets,
             popup: PopupState::None,
@@ -2131,6 +2129,7 @@ impl App {
 
         // Set HUMU_* env vars when spawning the "claude" preset.
         let mut extra_args: Vec<String> = vec![];
+        let id = PaneId::new();
         let envs: Vec<(String, String)> = if preset_name == "claude" {
             let settings_path = humu_dir().join("hooks/claude-settings.json");
             extra_args.push("--settings".to_string());
@@ -2151,9 +2150,8 @@ impl App {
             if let Some(room_id) = self.state.active_room_id {
                 envs.push(("HUMU_ROOM_ID".to_string(), room_id.to_string()));
             }
-            envs.push(("HUMU_TAB_ID".to_string(), self.tabs.active_index().to_string()));
-            let id = self.next_pane_id;
-            envs.push(("HUMU_PANE_ID".to_string(), id.0.to_string()));
+            envs.push(("HUMU_TAB_ID".to_string(), TabId::new().to_string()));
+            envs.push(("HUMU_PANE_ID".to_string(), id.to_string()));
             envs
         } else {
             vec![]
@@ -2163,7 +2161,6 @@ impl App {
         let mut all_args = args;
         all_args.extend(extra_args);
         let pane = PtyPane::spawn_with_envs(&cmd, &all_args, cwd.as_deref(), 80, 24, &envs).ok()?;
-        let id = self.next_pane_id;
         self.panes.insert(id, pane);
         self.pane_presets.insert(id, preset_name.to_string());
         // Seed agent_states so session_id survives restart even if no hook
@@ -2178,7 +2175,6 @@ impl App {
                 },
             );
         }
-        self.next_pane_id = PaneId(self.next_pane_id.0 + 1);
         Some(id)
     }
 
@@ -2539,9 +2535,10 @@ impl App {
         if let Some(rx) = &self.hook_rx {
             while let Ok(event) = rx.try_recv() {
                 humu::humu_log!(
-                    "hook: ws={:?} room={:?} pane={} state={:?} session={:?}",
+                    "hook: ws={:?} room={:?} tab={:?} pane={} state={:?} session={:?}",
                     event.workspace_id,
                     event.room_id,
+                    event.tab_id,
                     event.pane_id,
                     event.event_type,
                     event.session_id,
@@ -2847,7 +2844,7 @@ impl App {
         self.persist_layout();
 
         // Move live state out of self into suspended storage.
-        // next_pane_id is kept global (monotonically increasing) for unique IDs.
+        // PaneId uses UUID, so uniqueness is guaranteed across rooms.
         let room_state = RoomState {
             panes: std::mem::take(&mut self.panes),
             tabs: std::mem::replace(&mut self.tabs, TabContainer::new()),

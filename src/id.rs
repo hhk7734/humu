@@ -33,7 +33,13 @@ impl fmt::Display for RoomId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct TabId(pub u64);
+pub struct TabId(pub Uuid);
+
+impl TabId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
 
 impl fmt::Display for TabId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -42,7 +48,13 @@ impl fmt::Display for TabId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct PaneId(pub u64);
+pub struct PaneId(pub Uuid);
+
+impl PaneId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
 
 impl fmt::Display for PaneId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

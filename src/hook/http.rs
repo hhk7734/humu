@@ -19,6 +19,7 @@ pub enum AgentState {
 pub struct HookEvent {
     pub workspace_id: Option<String>,
     pub room_id: Option<String>,
+    pub tab_id: Option<String>,
     pub pane_id: PaneId,
     pub event_type: AgentState,
     pub session_id: Option<String>,
@@ -76,7 +77,7 @@ struct HookParams {
     workspace_id: Option<String>,
     room_id: Option<String>,
     tab_id: Option<String>,
-    pane_id: Option<u64>,
+    pane_id: Option<String>,
     event_type: Option<String>,
     session_id: Option<String>,
 }
@@ -100,9 +101,14 @@ impl HookServer {
             post(move |Query(params): Query<HookParams>| {
                 let tx = tx_clone.clone();
                 async move {
-                    let pane_id = match params.pane_id {
-                        Some(id) => PaneId(id),
-                        None => return StatusCode::BAD_REQUEST,
+                    let pane_id = match params.pane_id.as_deref() {
+                        Some(s) if !s.is_empty() => {
+                            match uuid::Uuid::parse_str(s) {
+                                Ok(u) => PaneId(u),
+                                Err(_) => return StatusCode::BAD_REQUEST,
+                            }
+                        }
+                        _ => return StatusCode::BAD_REQUEST,
                     };
                     let event_type_str = match &params.event_type {
                         Some(s) => s.as_str(),
@@ -118,6 +124,7 @@ impl HookServer {
                     let event = HookEvent {
                         workspace_id: params.workspace_id.filter(|s| !s.is_empty()),
                         room_id: params.room_id.filter(|s| !s.is_empty()),
+                        tab_id: params.tab_id.filter(|s| !s.is_empty()),
                         pane_id,
                         event_type: state,
                         session_id: params.session_id.filter(|s| !s.is_empty()),

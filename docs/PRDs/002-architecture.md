@@ -51,10 +51,10 @@ All entities use explicit ID types via the newtype pattern in `src/id.rs`:
 |---|---|---|---|
 | Workspace | `WorkspaceId(Uuid)` | UUID v4 | Permanent — stored in `state.yaml` |
 | Room | `RoomId(Uuid)` | UUID v4 | Permanent — stored in `state.yaml` per workspace |
-| Tab | `TabId(u64)` | Sequential counter | Session-scoped — reset on restart |
-| Pane | `PaneId(u64)` | Sequential counter | Session-scoped — reset on restart |
+| Tab | `TabId(Uuid)` | UUID v4 | Session-scoped — generated on creation |
+| Pane | `PaneId(Uuid)` | UUID v4 | Session-scoped — generated on creation |
 
-All four types implement `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Hash`, `Serialize`, `Deserialize`, and `Display`. `PaneId` is a newtype struct — access the inner value via `.0`.
+All four types implement `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Hash`, `Serialize`, `Deserialize`, and `Display`.
 
 `RoomId` is assigned lazily on first discovery and persisted. On startup, persisted rooms are compared against git worktrees — stale entries are pruned.
 
