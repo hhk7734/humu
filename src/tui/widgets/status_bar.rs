@@ -62,6 +62,18 @@ pub fn mode_hints(mode: Mode) -> Vec<(&'static str, &'static str)> {
     }
 }
 
+pub fn mode_hints_right(mode: Mode) -> Vec<(&'static str, &'static str)> {
+    match mode {
+        Mode::Terminal => vec![("n", "NEW")],
+        _ => vec![],
+    }
+}
+
+/// Width of a single Powerline hint segment: arrow + space + key + space + label + space + arrow.
+pub fn hint_segment_width(key: &str, label: &str) -> u16 {
+    1 + 1 + key.chars().count() as u16 + 1 + label.chars().count() as u16 + 1 + 1
+}
+
 pub struct StatusBar<'a> {
     mode: Mode,
     error: Option<&'a str>,
@@ -109,26 +121,32 @@ impl<'a> StatusBar<'a> {
     /// Render Powerline hint segments starting at `x`.
     /// Each hint is `(key, label, active)`. Active segments get a distinct
     /// background (accent_cyan) and bold label for better visibility.
+    /// When `left_pointing` is true, uses left-pointing arrows with swapped fg/bg.
     fn render_hint_segments(
         &self,
         hints: &[(&str, &str, bool)],
         x: &mut u16,
         area: Rect,
         buf: &mut Buffer,
+        left_pointing: bool,
     ) {
-        let sep = self.ui_config.tab_chars().separator;
+        let tab_chars = self.ui_config.tab_chars();
+        let sep = if left_pointing { tab_chars.separator_left } else { tab_chars.separator };
         let normal_bg = Color::Rgb(139, 148, 158);
         let outer_bg = self.palette.bg_secondary;
         for &(key, label, active) in hints {
             let bg = if active { self.palette.accent_cyan } else { normal_bg };
-            let seg_width = 1 + key.len() as u16 + 1 + label.len() as u16 + 1 + 1;
-            if *x + seg_width > area.x + area.width {
+            let w = hint_segment_width(key, label);
+            if *x + w > area.x + area.width {
                 break;
             }
+            // Arrow fg/bg: left-pointing swaps the colors vs right-pointing
+            let (entry_fg, entry_bg) = if left_pointing { (bg, outer_bg) } else { (outer_bg, bg) };
+            let (exit_fg, exit_bg) = if left_pointing { (outer_bg, bg) } else { (bg, outer_bg) };
             // Entry arrow
             if *x < area.x + area.width {
                 buf[(*x, area.y)].set_symbol(sep).set_style(
-                    Style::default().fg(outer_bg).bg(bg),
+                    Style::default().fg(entry_fg).bg(entry_bg),
                 );
                 *x += 1;
             }
@@ -170,7 +188,7 @@ impl<'a> StatusBar<'a> {
             // Exit arrow
             if *x < area.x + area.width {
                 buf[(*x, area.y)].set_symbol(sep).set_style(
-                    Style::default().fg(bg).bg(outer_bg),
+                    Style::default().fg(exit_fg).bg(exit_bg),
                 );
                 *x += 1;
             }
@@ -291,7 +309,7 @@ impl Widget for StatusBar<'_> {
                     ("c", case_label, case_sensitive),
                     ("w", wrap_label, wrap),
                 ];
-                self.render_hint_segments(&hints, &mut x, area, buf);
+                self.render_hint_segments(&hints, &mut x, area, buf, false);
 
                 // Match counter
                 let counter = format!(" {}/{} ", active, total);
@@ -358,6 +376,52 @@ impl Widget for StatusBar<'_> {
         // Key hints (none are toggles, so all inactive)
         let hints = mode_hints(self.mode);
         let hint_refs: Vec<(&str, &str, bool)> = hints.iter().map(|&(k, l)| (k, l, false)).collect();
-        self.render_hint_segments(&hint_refs, &mut x, area, buf);
+        self.render_hint_segments(&hint_refs, &mut x, area, buf, false);
+
+        // Right-aligned hints (e.g. Alt+n in Terminal mode)
+        let right_hints = mode_hints_right(self.mode);
+        if !right_hints.is_empty() {
+            let sep_left = self.ui_config.tab_chars().separator_left;
+            let alt_prefix = " Alt + ";
+            let alt_prefix_width = 1 + alt_prefix.len() as u16 + 1; // sep + text + sep
+            let hints_width: u16 = right_hints.iter().map(|&(k, l)| {
+                hint_segment_width(k, l)
+            }).sum();
+            let total_right = alt_prefix_width + hints_width;
+            let right_start = area.x + area.width.saturating_sub(total_right);
+
+            if right_start > x {
+                let mut rx = right_start;
+                let alt_bg = self.palette.bg_tertiary;
+
+                // Hint segments first (left-pointing arrows)
+                let right_hint_refs: Vec<(&str, &str, bool)> =
+                    right_hints.iter().map(|&(k, l)| (k, l, false)).collect();
+                self.render_hint_segments(&right_hint_refs, &mut rx, area, buf, true);
+
+                // "Alt +" label (left-pointing arrows)
+                if rx < area.x + area.width {
+                    buf[(rx, area.y)].set_symbol(sep_left).set_style(
+                        Style::default().fg(alt_bg).bg(self.palette.bg_secondary),
+                    );
+                    rx += 1;
+                }
+                for (i, ch) in alt_prefix.chars().enumerate() {
+                    if rx + i as u16 >= area.x + area.width { break; }
+                    buf[(rx + i as u16, area.y)].set_char(ch).set_style(
+                        Style::default()
+                            .fg(self.palette.accent_orange)
+                            .bg(alt_bg)
+                            .add_modifier(Modifier::BOLD),
+                    );
+                }
+                rx += alt_prefix.len() as u16;
+                if rx < area.x + area.width {
+                    buf[(rx, area.y)].set_symbol(sep_left).set_style(
+                        Style::default().fg(self.palette.bg_secondary).bg(alt_bg),
+                    );
+                }
+            }
+        }
     }
 }

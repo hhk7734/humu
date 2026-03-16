@@ -95,11 +95,12 @@ impl BorderChars {
 
 pub struct TabChars {
     pub separator: &'static str,
+    pub separator_left: &'static str,
 }
 
 impl TabChars {
-    pub const POWERLINE: Self = Self { separator: "\u{e0b0}" };
-    pub const PLAIN: Self = Self { separator: "│" };
+    pub const POWERLINE: Self = Self { separator: "\u{e0b0}", separator_left: "\u{e0b2}" };
+    pub const PLAIN: Self = Self { separator: "│", separator_left: "│" };
 }
 
 impl UiConfig {

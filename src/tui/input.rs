@@ -87,6 +87,7 @@ fn handle_terminal(key: KeyEvent) -> Action {
         }
     } else if key.modifiers.contains(KeyModifiers::ALT) {
         match key.code {
+            KeyCode::Char('n') => Action::NewPane,
             KeyCode::Left => Action::MoveFocus(Direction::Left),
             KeyCode::Right => Action::MoveFocus(Direction::Right),
             KeyCode::Down => Action::NavigateDown,
@@ -303,6 +304,17 @@ pub fn hint_click_action(mode: Mode, hint_index: usize) -> Option<Action> {
             1 => Some(Action::SearchPrev),                    // N PREV
             2 => Some(Action::SearchToggleCase),              // c CASE
             3 => Some(Action::SearchToggleWrap),              // w WRAP
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Map a clicked right-side hint index to the corresponding action for the given mode.
+pub fn hint_click_action_right(mode: Mode, hint_index: usize) -> Option<Action> {
+    match mode {
+        Mode::Terminal => match hint_index {
+            0 => Some(Action::NewPane), // n NEW
             _ => None,
         },
         _ => None,

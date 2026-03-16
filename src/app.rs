@@ -6,7 +6,7 @@ use humu::hook::http::{generate_hook_files, AgentState, HookEvent, HookServer};
 use humu::pty::pane::PtyPane;
 use humu::tui::completion::complete_path;
 use humu::tui::search::SearchState;
-use humu::tui::input::{handle_key, hint_click_action, Action, Direction as NavDirection, Mode};
+use humu::tui::input::{handle_key, hint_click_action, hint_click_action_right, Action, Direction as NavDirection, Mode};
 use humu::tui::layout::{PaneId, SplitDirection, SplitTree, TabContainer};
 use humu::tui::widgets::dialog::{Dialog, DialogField};
 use humu::tui::widgets::preset_selector::PresetSelector;
@@ -1886,7 +1886,7 @@ impl App {
                     ("w", "WRAP"), // "WRAP"/"wrap" both 4 chars
                 ];
                 for (i, (key, lbl)) in hints.iter().enumerate() {
-                    let seg = 1 + 1 + key.chars().count() as u16 + 1 + lbl.chars().count() as u16 + 1 + 1;
+                    let seg = status_bar::hint_segment_width(key, lbl);
                     if click_x >= x && click_x < x + seg {
                         if let Some(action) = hint_click_action(self.mode, i) {
                             self.handle_action(action);
@@ -1902,7 +1902,7 @@ impl App {
         // Normal modes: iterate mode_hints
         let hints = status_bar::mode_hints(self.mode);
         for (i, (key, lbl)) in hints.iter().enumerate() {
-            let seg = 1 + 1 + key.chars().count() as u16 + 1 + lbl.chars().count() as u16 + 1 + 1;
+            let seg = status_bar::hint_segment_width(key, lbl);
             if click_x >= x && click_x < x + seg {
                 if let Some(action) = hint_click_action(self.mode, i) {
                     self.handle_action(action);
@@ -1910,6 +1910,27 @@ impl App {
                 return;
             }
             x += seg;
+        }
+
+        // Right-aligned hints (e.g. Alt+n in Terminal mode)
+        let right_hints = status_bar::mode_hints_right(self.mode);
+        if !right_hints.is_empty() {
+            let alt_prefix_width: u16 = 1 + 7 + 1; // sep + " Alt + " + sep
+            let hints_width: u16 = right_hints.iter().map(|(k, l)| {
+                status_bar::hint_segment_width(k, l)
+            }).sum();
+            let total_right = hints_width + alt_prefix_width;
+            let mut rx = area.x + area.width.saturating_sub(total_right);
+            for (i, (key, lbl)) in right_hints.iter().enumerate() {
+                let seg = status_bar::hint_segment_width(key, lbl);
+                if click_x >= rx && click_x < rx + seg {
+                    if let Some(action) = hint_click_action_right(self.mode, i) {
+                        self.handle_action(action);
+                    }
+                    return;
+                }
+                rx += seg;
+            }
         }
     }
 

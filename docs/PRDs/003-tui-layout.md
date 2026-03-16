@@ -136,6 +136,7 @@ Navigate search results in the focused pane.
 | --- | ------ |
 | `Alt+←/→` | Move focus left / right between panels |
 | `Alt+↑/↓` | Navigate up / down within panel |
+| `Alt+n` | New pane (Terminal mode only) |
 
 ### Mouse Support
 
@@ -160,13 +161,16 @@ Clicking a panel enters the corresponding mode: workspace panel → Workspace mo
 All segments use Powerline-style arrows (entry + exit) for clear visual separation.
 
 ```
-[MODE]▸ ▸[Ctrl +]▸ ▸[key label]▸ ▸[key label]▸ ...
+[MODE]▸ ▸[Ctrl +]▸ ▸[key label]▸ ...          ... ◂[key label]◂ ◂[Alt +]◂
 ```
+
+In Terminal mode, left-aligned hints show `Ctrl+` shortcuts (right-pointing arrows) and right-aligned hints show `Alt+` shortcuts (left-pointing arrows).
 
 | Segment | Background | Key color | Label color |
 |---|---|---|---|
 | Mode badge | `mode_color` (per mode) | — | `bg_primary` (bold) |
-| Ctrl + (Terminal only) | `bg_tertiary` | — | `accent_orange` (bold) |
+| Ctrl + (Terminal, left) | `bg_tertiary` | — | `accent_orange` (bold) |
+| Alt + (Terminal, right) | `bg_tertiary` | — | `accent_orange` (bold) |
 | Key hints | `#8B949E` (light gray) | `#B42828` (dark red, bold) | `#0D1117` (black) |
 
 ## Status Bar Mode Colors
