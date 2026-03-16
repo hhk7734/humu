@@ -29,6 +29,11 @@ src/
 ├── pty/
 │   └── pane.rs      # PTY spawn, background reader thread, vt100 emulation
 ├── id.rs            # Typed IDs (WorkspaceId, RoomId, TabId, PaneId)
+├── notification/
+│   ├── mod.rs       # NotificationManager, NotificationEvent
+│   ├── crypto.rs    # AES-256-GCM encrypt/decrypt with machine-derived key
+│   ├── os.rs        # OsNotifier (notify-send + paplay)
+│   └── telegram.rs  # TelegramNotifier (Bot API via ureq)
 ├── hook/
 │   └── http.rs      # HTTP hook server (axum) for Claude Code events
 └── tui/
