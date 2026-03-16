@@ -92,7 +92,7 @@ On creation, humu auto-selects the new workspace and its default room (main bran
 
 Terminal panes are room-scoped. Each room can have multiple terminal panes. A terminal pane spawns a shell process (PTY) with its `cwd` set to the room's working directory (repo root for default room, worktree path for additional rooms). If no room is selected, the terminal area is empty and pane/tab creation is blocked.
 
-When a pane's process exits, it shows a distinct "exited" state with exit code. User can press `Enter` to restart or `x` (in Pane mode) to close.
+When a pane's process exits, the pane is automatically closed on the next tick. If it was the only pane in a tab, the tab is also removed.
 
 ## Presets
 

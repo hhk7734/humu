@@ -232,4 +232,9 @@ impl TabContainer {
     pub fn tree_at(&self, index: usize) -> Option<&SplitTree> {
         self.tabs.get(index).map(|t| &t.tree)
     }
+
+    /// Return a mutable reference to the split tree at `index`.
+    pub fn tree_at_mut(&mut self, index: usize) -> Option<&mut SplitTree> {
+        self.tabs.get_mut(index).map(|t| &mut t.tree)
+    }
 }

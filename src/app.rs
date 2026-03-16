@@ -310,6 +310,9 @@ impl App {
                 let _ = pane.process_output();
             }
 
+            // Auto-close exited panes.
+            self.cleanup_exited_panes();
+
             terminal.draw(|frame| self.render(frame))?;
             self.spin_tick = self.spin_tick.wrapping_add(1);
 
@@ -2332,17 +2335,25 @@ impl App {
         }
     }
 
+    fn cleanup_exited_panes(&mut self) {
+        let exited: Vec<PaneId> = self
+            .panes
+            .iter_mut()
+            .filter_map(|(id, p)| p.exit_status().map(|_| *id))
+            .collect();
+        if !exited.is_empty() {
+            self.remove_panes(&exited);
+        }
+    }
+
     fn close_tab(&mut self) {
-        let active = self.tabs.active_index();
-        if let Some(tree) = self.tabs.remove_tab(active) {
-            for id in tree.pane_ids() {
-                self.panes.remove(&id);
-                self.pane_presets.remove(&id);
-                self.agent_states.remove(&id);
-            }
-            self.fullscreen_pane = None;
-            self.sync_focused_pane();
-            self.persist_layout();
+        let ids: Vec<PaneId> = self
+            .tabs
+            .active_tree()
+            .map(|t| t.pane_ids())
+            .unwrap_or_default();
+        if !ids.is_empty() {
+            self.remove_panes(&ids);
         }
     }
 
@@ -2388,37 +2399,34 @@ impl App {
     }
 
     fn close_pane(&mut self) {
-        let focused = match self.focused_pane {
-            Some(id) => id,
-            None => return,
-        };
-
-        // Check if this is the only pane in the active tree.
-        let only_pane = self
-            .tabs
-            .active_tree()
-            .map(|t| t.pane_ids().len() == 1)
-            .unwrap_or(false);
-
-        if only_pane {
-            // Only pane in tab — close the whole tab.
-            self.close_tab();
-            return;
+        if let Some(id) = self.focused_pane {
+            self.remove_panes(&[id]);
         }
+    }
 
-        // Remove from the split tree first.
-        if let Some(tree) = self.tabs.active_tree_mut() {
-            tree.remove_pane(focused);
+    /// Remove panes by ID: clean up state, update split trees, remove empty tabs.
+    fn remove_panes(&mut self, ids: &[PaneId]) {
+        for id in ids {
+            self.panes.remove(id);
+            self.pane_presets.remove(id);
+            self.agent_states.remove(id);
         }
-        self.panes.remove(&focused);
-        self.pane_presets.remove(&focused);
-        self.agent_states.remove(&focused);
-
-        // Pick a new focused pane from remaining panes in the active tree.
-        self.focused_pane = self
-            .tabs
-            .active_tree()
-            .and_then(|t| t.pane_ids().into_iter().next());
+        // Remove dead panes from trees and remove empty tabs.
+        let mut i = self.tabs.len();
+        while i > 0 {
+            i -= 1;
+            if let Some(tree) = self.tabs.tree_at_mut(i) {
+                for id in ids {
+                    tree.remove_pane(*id);
+                }
+                let alive = tree.pane_ids().iter().any(|id| self.panes.contains_key(id));
+                if !alive {
+                    self.tabs.remove_tab(i);
+                }
+            }
+        }
+        self.fullscreen_pane = None;
+        self.sync_focused_pane();
         self.persist_layout();
     }
 
@@ -2502,16 +2510,6 @@ impl App {
             .and_then(|p| p.exit_status())
             .is_some();
         if exited {
-            let pane_count = self
-                .tabs
-                .active_tree()
-                .map(|t| t.pane_ids().len())
-                .unwrap_or(1);
-            match key.code {
-                KeyCode::Char('p') if pane_count > 1 => self.close_pane(),
-                KeyCode::Char('t') if pane_count <= 1 => self.close_tab(),
-                _ => {}
-            }
             return;
         }
 
