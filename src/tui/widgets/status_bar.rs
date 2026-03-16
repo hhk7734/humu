@@ -64,7 +64,7 @@ pub fn mode_hints(mode: Mode) -> Vec<(&'static str, &'static str)> {
 
 pub fn mode_hints_right(mode: Mode) -> Vec<(&'static str, &'static str)> {
     match mode {
-        Mode::Terminal => vec![("n", "NEW")],
+        Mode::Terminal => vec![("n", "NEW PANE")],
         _ => vec![],
     }
 }
