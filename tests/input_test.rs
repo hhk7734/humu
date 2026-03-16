@@ -130,8 +130,8 @@ fn pane_n_creates_new() {
 }
 
 #[test]
-fn pane_x_closes() {
-    assert!(matches!(handle_key(Mode::Pane, key(KeyCode::Char('x'))), Action::ClosePane));
+fn pane_d_deletes() {
+    assert!(matches!(handle_key(Mode::Pane, key(KeyCode::Char('d'))), Action::ClosePane));
 }
 
 #[test]
@@ -211,8 +211,8 @@ fn tab_n_creates_new() {
 }
 
 #[test]
-fn tab_x_closes() {
-    assert!(matches!(handle_key(Mode::Tab, key(KeyCode::Char('x'))), Action::CloseTab));
+fn tab_d_deletes() {
+    assert!(matches!(handle_key(Mode::Tab, key(KeyCode::Char('d'))), Action::CloseTab));
 }
 
 #[test]

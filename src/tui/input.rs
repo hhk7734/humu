@@ -124,9 +124,7 @@ fn handle_pane(key: KeyEvent) -> Action {
     }
     match key.code {
         KeyCode::Char('n') => Action::NewPane,
-        KeyCode::Char('d') => Action::SplitDown,
-        KeyCode::Char('r') => Action::SplitRight,
-        KeyCode::Char('x') => Action::ClosePane,
+        KeyCode::Char('d') => Action::ClosePane,
         KeyCode::Left => Action::MoveFocus(Direction::Left),
         KeyCode::Down => Action::MoveFocus(Direction::Down),
         KeyCode::Up => Action::MoveFocus(Direction::Up),
@@ -146,7 +144,7 @@ fn handle_tab(key: KeyEvent) -> Action {
     }
     match key.code {
         KeyCode::Char('n') => Action::NewTab,
-        KeyCode::Char('x') => Action::CloseTab,
+        KeyCode::Char('d') => Action::CloseTab,
         KeyCode::Left => Action::PrevTab,
         KeyCode::Right => Action::NextTab,
         KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
@@ -269,18 +267,16 @@ pub fn hint_click_action(mode: Mode, hint_index: usize) -> Option<Action> {
         },
         Mode::Pane => match hint_index {
             0 => Some(Action::NewPane),                       // n New
-            1 => Some(Action::SplitDown),                     // d Split↓
-            2 => Some(Action::SplitRight),                    // r Split→
-            3 => Some(Action::ClosePane),                     // x Close
-            4 => None,                                        // ←→↑↓ Move
-            5 => None,                                        // S+←→↑↓ Resize
-            6 => Some(Action::ToggleFullscreen),              // f Full
-            7 => Some(Action::EnterMode(Mode::Terminal)),     // Esc Back
+            1 => Some(Action::ClosePane),                     // d Delete
+            2 => None,                                        // ←→↑↓ Move
+            3 => None,                                        // S+←→↑↓ Resize
+            4 => Some(Action::ToggleFullscreen),              // f Full
+            5 => Some(Action::EnterMode(Mode::Terminal)),     // Esc Back
             _ => None,
         },
         Mode::Tab => match hint_index {
             0 => Some(Action::NewTab),                        // n New
-            1 => Some(Action::CloseTab),                      // x Close
+            1 => Some(Action::CloseTab),                      // d Delete
             2 => None,                                        // ←→ Prev/Next
             3 => None,                                        // 1-9 GoTo
             4 => Some(Action::EnterMode(Mode::Terminal)),     // Esc Back
@@ -289,7 +285,7 @@ pub fn hint_click_action(mode: Mode, hint_index: usize) -> Option<Action> {
         Mode::Workspace => match hint_index {
             0 => None,                                        // ↑↓ Navigate
             1 => Some(Action::Select),                        // Enter Select
-            2 => Some(Action::Create),                        // n Create
+            2 => Some(Action::Create),                        // n New
             3 => Some(Action::Delete),                        // d Delete
             4 => None,                                        // S+←→ Resize
             _ => None,
@@ -297,7 +293,7 @@ pub fn hint_click_action(mode: Mode, hint_index: usize) -> Option<Action> {
         Mode::Room => match hint_index {
             0 => None,                                        // ↑↓ Navigate
             1 => Some(Action::Select),                        // Enter Select
-            2 => Some(Action::Create),                        // n Create
+            2 => Some(Action::Create),                        // n New
             3 => Some(Action::Delete),                        // d Delete
             4 => None,                                        // S+←→ Resize
             _ => None,

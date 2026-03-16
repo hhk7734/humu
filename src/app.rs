@@ -88,6 +88,9 @@ pub enum PopupState {
     Settings {
         selected: usize,
     },
+    SplitDirection {
+        selected: usize,
+    },
     LogViewer {
         lines: Vec<String>,
         scroll: usize,
@@ -414,6 +417,10 @@ impl App {
                 self.handle_settings_key(key);
                 true
             }
+            PopupState::SplitDirection { .. } => {
+                self.handle_split_direction_key(key);
+                true
+            }
             PopupState::LogViewer { .. } => {
                 self.handle_log_viewer_key(key);
                 true
@@ -490,6 +497,43 @@ impl App {
                 self.popup = PopupState::None;
                 match selected {
                     0 => self.open_log_viewer(),
+                    _ => {}
+                }
+            }
+            KeyCode::Esc => {
+                self.popup = PopupState::None;
+            }
+            _ => {}
+        }
+    }
+
+    const SPLIT_DIRECTIONS: &'static [&'static str] = &[
+        "\u{2193} Split Down",
+        "\u{2192} Split Right",
+    ];
+
+    fn handle_split_direction_key(&mut self, key: KeyEvent) {
+        let PopupState::SplitDirection { selected } = &self.popup else {
+            return;
+        };
+        let mut selected = *selected;
+
+        match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                if selected + 1 < Self::SPLIT_DIRECTIONS.len() {
+                    selected += 1;
+                }
+                self.popup = PopupState::SplitDirection { selected };
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                selected = selected.saturating_sub(1);
+                self.popup = PopupState::SplitDirection { selected };
+            }
+            KeyCode::Enter => {
+                self.popup = PopupState::None;
+                match selected {
+                    0 => self.show_preset_selector(PresetAction::SplitDown),
+                    1 => self.show_preset_selector(PresetAction::SplitRight),
                     _ => {}
                 }
             }
@@ -1268,6 +1312,14 @@ impl App {
                     area,
                 );
             }
+            PopupState::SplitDirection { selected } => {
+                let items: Vec<String> = Self::SPLIT_DIRECTIONS.iter().map(|s| s.to_string()).collect();
+                frame.render_widget(
+                    PresetSelector::new(&items, *selected, &self.palette, &self.ui_config)
+                        .title(" Split Direction "),
+                    area,
+                );
+            }
             PopupState::LogViewer { lines, scroll, h_scroll, .. } => {
                 self.render_log_viewer(frame, area, lines, *scroll, *h_scroll);
             }
@@ -1518,7 +1570,9 @@ impl App {
             }
 
             // Pane actions
-            Action::NewPane => self.show_preset_selector(PresetAction::SplitDown),
+            Action::NewPane => {
+                self.popup = PopupState::SplitDirection { selected: 0 };
+            }
             Action::SplitDown => self.show_preset_selector(PresetAction::SplitDown),
             Action::SplitRight => self.show_preset_selector(PresetAction::SplitRight),
             Action::ClosePane => self.close_pane(),

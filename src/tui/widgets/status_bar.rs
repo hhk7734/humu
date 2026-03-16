@@ -31,9 +31,7 @@ pub fn mode_hints(mode: Mode) -> Vec<(&'static str, &'static str)> {
         Mode::Locked => vec![("Ctrl+g", "UNLOCK")],
         Mode::Pane => vec![
             ("n", "New"),
-            ("d", "Split\u{2193}"),
-            ("r", "Split\u{2192}"),
-            ("x", "Close"),
+            ("d", "Delete"),
             ("\u{2190}\u{2192}\u{2191}\u{2193}", "Move"),
             ("S+\u{2190}\u{2192}\u{2191}\u{2193}", "Resize"),
             ("f", "Full"),
@@ -41,7 +39,7 @@ pub fn mode_hints(mode: Mode) -> Vec<(&'static str, &'static str)> {
         ],
         Mode::Tab => vec![
             ("n", "New"),
-            ("x", "Close"),
+            ("d", "Delete"),
             ("\u{2190}\u{2192}", "Prev/Next"),
             ("1-9", "GoTo"),
             ("Esc", "Back"),
@@ -49,14 +47,14 @@ pub fn mode_hints(mode: Mode) -> Vec<(&'static str, &'static str)> {
         Mode::Workspace => vec![
             ("\u{2191}\u{2193}", "Navigate"),
             ("Enter", "Select"),
-            ("n", "Create"),
+            ("n", "New"),
             ("d", "Delete"),
             ("S+\u{2190}\u{2192}", "Resize"),
         ],
         Mode::Room => vec![
             ("\u{2191}\u{2193}", "Navigate"),
             ("Enter", "Select"),
-            ("n", "Create"),
+            ("n", "New"),
             ("d", "Delete"),
             ("S+\u{2190}\u{2192}", "Resize"),
         ],

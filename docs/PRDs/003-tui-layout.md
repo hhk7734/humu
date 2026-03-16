@@ -66,10 +66,8 @@ Manages panes within the terminal area.
 
 | Key | Action |
 | --- | ------ |
-| `n` | New pane (select preset) |
-| `d` | Split down |
-| `r` | Split right |
-| `x` | Close pane |
+| `n` | New pane (select direction, then preset) |
+| `d` | Delete pane |
 | `←↓↑→` | Move focus between panes |
 | `Shift+←↓↑→` | Resize pane |
 | `f` | Toggle fullscreen |
@@ -82,7 +80,7 @@ Manages tabs within the terminal area. Enter via `Ctrl+t` from Terminal mode.
 | Key | Action |
 | --- | ------ |
 | `n` | New tab (select preset) |
-| `x` | Close tab |
+| `d` | Delete tab |
 | `←/→` | Previous / next tab |
 | `1-9` | Go to tab N |
 | `Esc` / `Ctrl+t` | Back to Terminal |
@@ -93,8 +91,8 @@ Manages tabs within the terminal area. Enter via `Ctrl+t` from Terminal mode.
 | --- | ------ |
 | `↑/↓` | Navigate list |
 | `Enter` | Select |
-| `n` | Create workspace or room (context-dependent) |
-| `d` | Delete workspace or room (context-dependent) |
+| `n` | New workspace |
+| `d` | Delete workspace |
 | `Shift+←/→` | Resize workspace panel |
 
 ### Room Mode
@@ -103,7 +101,7 @@ Manages tabs within the terminal area. Enter via `Ctrl+t` from Terminal mode.
 | --- | ------ |
 | `↑/↓` | Navigate list |
 | `Enter` | Select room |
-| `n` | Create room |
+| `n` | New room |
 | `d` | Delete room |
 | `Shift+←/→` | Resize room panel |
 
