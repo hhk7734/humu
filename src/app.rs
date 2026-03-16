@@ -269,7 +269,20 @@ impl App {
     pub fn run(&mut self) -> Result<()> {
         enable_raw_mode()?;
         stdout().execute(EnterAlternateScreen)?;
-        crossterm::execute!(stdout(), crossterm::event::EnableMouseCapture)?;
+        crossterm::execute!(
+            stdout(),
+            crossterm::event::EnableMouseCapture,
+            crossterm::event::EnableBracketedPaste,
+        )?;
+        // Enable Kitty keyboard protocol for modifier-aware keys (Shift+Enter, etc.).
+        // Silently ignored on terminals that don't support it.
+        let keyboard_enhanced = crossterm::execute!(
+            stdout(),
+            crossterm::event::PushKeyboardEnhancementFlags(
+                crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES,
+            ),
+        )
+        .is_ok();
 
         let backend = ratatui::backend::CrosstermBackend::new(stdout());
         let mut terminal = Terminal::new(backend)?;
@@ -318,6 +331,9 @@ impl App {
                             _ => {}
                         }
                     }
+                    Event::Paste(text) => {
+                        self.handle_paste(&text);
+                    }
                     // Pane resizing is handled in render_terminal_area on the
                     // next draw cycle, so we only need to consume the event.
                     Event::Resize(_, _) => {}
@@ -334,7 +350,14 @@ impl App {
             }
         }
 
-        crossterm::execute!(stdout(), crossterm::event::DisableMouseCapture)?;
+        if keyboard_enhanced {
+            let _ = crossterm::execute!(stdout(), crossterm::event::PopKeyboardEnhancementFlags);
+        }
+        crossterm::execute!(
+            stdout(),
+            crossterm::event::DisableBracketedPaste,
+            crossterm::event::DisableMouseCapture,
+        )?;
         stdout().execute(LeaveAlternateScreen)?;
         disable_raw_mode()?;
 
@@ -2121,6 +2144,43 @@ impl App {
         }
     }
 
+    /// Forward pasted text to the focused PTY pane.
+    /// Wraps in bracketed paste sequences if the child process has requested it.
+    /// In EnterSearch mode, appends the text to the search query instead.
+    fn handle_paste(&mut self, text: &str) {
+        if self.mode == Mode::EnterSearch {
+            if let Some(ref mut state) = self.search_state {
+                state.query.push_str(text);
+                self.run_search();
+            }
+            return;
+        }
+        if self.focus != FocusedPanel::Terminal {
+            return;
+        }
+        let Some(pane_id) = self.focused_pane else {
+            return;
+        };
+        let Some(pane) = self.panes.get_mut(&pane_id) else {
+            return;
+        };
+        if pane.exit_status().is_some() {
+            return;
+        }
+        if pane.scrollback() > 0 {
+            pane.set_scrollback(0);
+        }
+        if pane.bracketed_paste() {
+            let mut buf = Vec::with_capacity(12 + text.len());
+            buf.extend_from_slice(b"\x1b[200~");
+            buf.extend_from_slice(text.as_bytes());
+            buf.extend_from_slice(b"\x1b[201~");
+            let _ = pane.write_input(&buf);
+        } else {
+            let _ = pane.write_input(text.as_bytes());
+        }
+    }
+
     fn navigate(&mut self, delta: i32) {
         match self.focus {
             FocusedPanel::Workspace => {
@@ -2715,17 +2775,37 @@ fn ranges_overlap(a_start: u16, a_end: u16, b_start: u16, b_end: u16) -> bool {
     a_start < b_end && b_start < a_end
 }
 
+/// Compute the CSI u modifier parameter: 1 + bitmask(shift=1, alt=2, ctrl=4).
+fn csi_u_modifier(modifiers: KeyModifiers) -> u8 {
+    1 + if modifiers.contains(KeyModifiers::SHIFT) { 1 } else { 0 }
+        + if modifiers.contains(KeyModifiers::ALT) { 2 } else { 0 }
+        + if modifiers.contains(KeyModifiers::CONTROL) { 4 } else { 0 }
+}
+
 fn key_event_to_bytes(key: &KeyEvent) -> Vec<u8> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    let has_modifier = key.modifiers != KeyModifiers::NONE;
     match key.code {
-        KeyCode::Char(c) if ctrl => vec![(c as u8) & 0x1f],
+        KeyCode::Char(c) if ctrl => {
+            let base = vec![(c as u8) & 0x1f];
+            if alt { [b"\x1b".as_slice(), &base].concat() } else { base }
+        }
         KeyCode::Char(c) => {
             let mut buf = [0u8; 4];
             let s = c.encode_utf8(&mut buf);
-            s.as_bytes().to_vec()
+            let base = s.as_bytes().to_vec();
+            if alt { [b"\x1b".as_slice(), &base].concat() } else { base }
+        }
+        KeyCode::Enter if has_modifier => {
+            // CSI u format: \x1b[13;{modifier}u
+            format!("\x1b[13;{}u", csi_u_modifier(key.modifiers)).into_bytes()
         }
         KeyCode::Enter => vec![b'\r'],
         KeyCode::Backspace => vec![0x7f],
+        KeyCode::Tab if has_modifier => {
+            format!("\x1b[9;{}u", csi_u_modifier(key.modifiers)).into_bytes()
+        }
         KeyCode::Tab => vec![b'\t'],
         KeyCode::Esc => vec![0x1b],
         KeyCode::Up => b"\x1b[A".to_vec(),

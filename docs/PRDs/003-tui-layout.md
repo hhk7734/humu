@@ -144,6 +144,10 @@ Clicking a panel enters the corresponding mode: workspace panel → Workspace mo
 
 **Status bar hint clicks**: Clicking a key hint segment in the status bar triggers the corresponding action (e.g., clicking the "PANE" hint in Terminal mode enters Pane mode). Multi-key hints like arrow navigation are not clickable. Works across all modes including Search mode hints (NEXT, PREV, CASE, WRAP).
 
+**Bracketed paste**: Multi-line paste from the system clipboard is forwarded as a single block. If the child process has requested bracketed paste mode, the text is wrapped in `\x1b[200~`...`\x1b[201~` sequences. In EnterSearch mode, pasted text is appended to the search query.
+
+**Keyboard enhancement**: On terminals that support the Kitty keyboard protocol, humu enables `DISAMBIGUATE_ESCAPE_CODES` to distinguish modified keys (e.g., Shift+Enter vs Enter). Modified Enter and Tab are forwarded as CSI u sequences (`\x1b[{codepoint};{modifier}u`). Alt+char is forwarded with the standard ESC prefix. Gracefully degrades on unsupported terminals.
+
 **Scroll wheel** on terminal panes:
 - **Programs with mouse reporting** (vim, less, tmux): scroll events are forwarded as proper mouse escape sequences (SGR or default encoding) with pane-relative coordinates.
 - **Plain shell / no mouse reporting**: scrolls through the vt100 scrollback buffer (10,000 lines). A yellow `↑N` indicator appears in the pane's bottom border showing lines scrolled back. Scrollback auto-resets to live view on new output or keypress.

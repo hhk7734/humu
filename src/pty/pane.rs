@@ -131,6 +131,11 @@ impl PtyPane {
         self.parser.lock().unwrap().screen().mouse_protocol_encoding()
     }
 
+    /// Returns whether the child process has requested bracketed paste mode.
+    pub fn bracketed_paste(&self) -> bool {
+        self.parser.lock().unwrap().screen().bracketed_paste()
+    }
+
     /// Write input to the PTY (user keystrokes).
     pub fn write_input(&mut self, data: &[u8]) -> Result<()> {
         use std::io::Write;
