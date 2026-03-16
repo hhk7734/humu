@@ -2693,34 +2693,90 @@ impl App {
         }
     }
 
-    /// Drain the hook event channel and update agent_states.
+    /// Drain the hook event channel, update agent_states, and fire
+    /// notifications on Working→NeedsInput / Working→Idle transitions.
     fn process_hook_events(&mut self) {
-        if let Some(rx) = &self.hook_rx {
-            while let Ok(event) = rx.try_recv() {
-                humu::humu_log!(
-                    "hook: ws={:?} room={:?} tab={:?} pane={} state={:?} session={:?}",
-                    event.workspace_id,
-                    event.room_id,
-                    event.tab_id,
-                    event.pane_id,
-                    event.event_type,
-                    event.session_id,
-                );
-                let pane_id = event.pane_id;
-                let new_session_id = event.session_id.clone();
-                let existing_session_id = self
-                    .agent_states
-                    .get(&pane_id)
-                    .and_then(|e| e.session_id.clone());
-                let session_id = new_session_id.or(existing_session_id);
-                self.agent_states.insert(
-                    pane_id,
-                    AgentStateEntry {
-                        state: event.event_type.clone(),
-                        session_id,
-    
-                    },
-                );
+        let events: Vec<HookEvent> = self
+            .hook_rx
+            .as_ref()
+            .map(|rx| std::iter::from_fn(|| rx.try_recv().ok()).collect())
+            .unwrap_or_default();
+
+        for event in events {
+            humu::humu_log!(
+                "hook: ws={:?} room={:?} tab={:?} pane={} state={:?} session={:?}",
+                event.workspace_id,
+                event.room_id,
+                event.tab_id,
+                event.pane_id,
+                event.event_type,
+                event.session_id,
+            );
+
+            let pane_id = event.pane_id;
+            let prev_state = self.agent_states.get(&pane_id).map(|e| e.state.clone());
+
+            let new_session_id = event.session_id.clone();
+            let existing_session_id = self
+                .agent_states
+                .get(&pane_id)
+                .and_then(|e| e.session_id.clone());
+            let session_id = new_session_id.or(existing_session_id);
+
+            // Detect Working → NeedsInput or Working → Idle transitions.
+            let should_notify = matches!(
+                (&prev_state, &event.event_type),
+                (Some(AgentState::Working), AgentState::NeedsInput)
+                    | (Some(AgentState::Working), AgentState::Idle)
+            );
+
+            self.agent_states.insert(
+                pane_id,
+                AgentStateEntry {
+                    state: event.event_type.clone(),
+                    session_id,
+                },
+            );
+
+            if should_notify {
+                let ws_name = event
+                    .workspace_id
+                    .as_deref()
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                    .map(WorkspaceId)
+                    .and_then(|id| self.state.ws_by_id(id))
+                    .map(|ws| ws.name.clone())
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                let room_name = event
+                    .workspace_id
+                    .as_deref()
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                    .map(WorkspaceId)
+                    .and_then(|ws_id| {
+                        let ws = self.state.ws_by_id(ws_id)?;
+                        let room_uuid = event.room_id.as_deref()
+                            .and_then(|s| uuid::Uuid::parse_str(s).ok())?;
+                        ws.room_by_id(RoomId(room_uuid)).map(|r| r.name.clone())
+                    })
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                let notification_event = match event.event_type {
+                    AgentState::NeedsInput => {
+                        humu::notification::NotificationEvent::AgentNeedsInput {
+                            workspace: ws_name,
+                            room: room_name,
+                        }
+                    }
+                    AgentState::Idle => {
+                        humu::notification::NotificationEvent::AgentFinished {
+                            workspace: ws_name,
+                            room: room_name,
+                        }
+                    }
+                    _ => continue,
+                };
+                self.notification_manager.notify(notification_event);
             }
         }
     }
