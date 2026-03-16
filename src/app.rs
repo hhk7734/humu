@@ -88,9 +88,7 @@ pub enum PopupState {
     Settings {
         selected: usize,
     },
-    SplitDirection {
-        selected: usize,
-    },
+    SplitDirection,
     LogViewer {
         lines: Vec<String>,
         scroll: usize,
@@ -134,8 +132,8 @@ pub struct App {
     pub state: HumuState,
     pub mode: Mode,
     pub focus: FocusedPanel,
-    pub workspace_selected: Option<usize>,
-    pub room_selected: Option<usize>,
+    pub workspace_selected: Option<WorkspaceId>,
+    pub room_selected: Option<RoomId>,
     pub running: bool,
     pub panes: HashMap<PaneId, PtyPane>,
     pub tabs: TabContainer,
@@ -415,7 +413,7 @@ impl App {
                 self.handle_settings_key(key);
                 true
             }
-            PopupState::SplitDirection { .. } => {
+            PopupState::SplitDirection => {
                 self.handle_split_direction_key(key);
                 true
             }
@@ -505,35 +503,15 @@ impl App {
         }
     }
 
-    const SPLIT_DIRECTIONS: &'static [&'static str] = &[
-        "\u{2193} Split Down",
-        "\u{2192} Split Right",
-    ];
-
     fn handle_split_direction_key(&mut self, key: KeyEvent) {
-        let PopupState::SplitDirection { selected } = &self.popup else {
-            return;
-        };
-        let mut selected = *selected;
-
         match key.code {
-            KeyCode::Down | KeyCode::Char('j') => {
-                if selected + 1 < Self::SPLIT_DIRECTIONS.len() {
-                    selected += 1;
-                }
-                self.popup = PopupState::SplitDirection { selected };
-            }
-            KeyCode::Up | KeyCode::Char('k') => {
-                selected = selected.saturating_sub(1);
-                self.popup = PopupState::SplitDirection { selected };
-            }
-            KeyCode::Enter => {
+            KeyCode::Down => {
                 self.popup = PopupState::None;
-                match selected {
-                    0 => self.show_preset_selector(PresetAction::SplitDown),
-                    1 => self.show_preset_selector(PresetAction::SplitRight),
-                    _ => {}
-                }
+                self.show_preset_selector(PresetAction::SplitDown);
+            }
+            KeyCode::Right => {
+                self.popup = PopupState::None;
+                self.show_preset_selector(PresetAction::SplitRight);
             }
             KeyCode::Esc => {
                 self.popup = PopupState::None;
@@ -999,13 +977,10 @@ impl App {
         match result {
             Ok(name) => {
                 self.last_error = None;
-                // Auto-select the new workspace and its default room (main branch).
-                // Only set selection indices here — switch_to_selected_room handles
-                // suspending the old room and activating the new workspace/room IDs.
-                let names = self.state.ws_names_sorted();
-                if let Some(idx) = names.iter().position(|n| *n == name) {
-                    self.workspace_selected = Some(idx);
-                    self.room_selected = Some(0);
+                // Auto-select the new workspace and its default room.
+                if let Some(ws) = self.state.ws_by_name(&name) {
+                    self.workspace_selected = Some(ws.id);
+                    self.room_selected = None;
                     self.switch_to_selected_room();
                 }
             }
@@ -1097,22 +1072,17 @@ impl App {
                 }
 
                 // Adjust selection if needed.
-                let count = self.state.workspaces.len();
-                if count == 0 {
+                if self.state.workspaces.is_empty() {
                     self.workspace_selected = None;
                     self.room_selected = None;
-                } else {
-                    if let Some(sel) = self.workspace_selected {
-                        if sel >= count {
-                            self.workspace_selected = Some(count - 1);
-                        }
+                } else if was_active {
+                    // Select first available workspace.
+                    let items = self.workspace_items();
+                    if let Some(first) = items.first() {
+                        self.workspace_selected = Some(first.id);
                     }
-                    // Switch to the selected workspace so the user isn't
-                    // left staring at a dead room.
-                    if was_active {
-                        self.room_selected = Some(0);
-                        self.switch_to_selected_room();
-                    }
+                    self.room_selected = None;
+                    self.switch_to_selected_room();
                 }
                 self.last_error = None;
             }
@@ -1192,16 +1162,22 @@ impl App {
 
         // Workspace panel
         let workspaces = self.workspace_items();
+        let ws_selected_idx = self.workspace_selected.and_then(|id| {
+            workspaces.iter().position(|w| w.id == id)
+        });
         let ws_widget = WorkspacePanel::new(&workspaces, &self.palette, &self.ui_config)
-            .selected(self.workspace_selected)
+            .selected(ws_selected_idx)
             .focus(self.focus == FocusedPanel::Workspace)
             .spinner(spinner_frame);
         frame.render_widget(ws_widget, panel_chunks[0]);
 
         // Room panel
         let rooms = self.room_items();
+        let room_selected_idx = self.room_selected.and_then(|id| {
+            rooms.iter().position(|r| r.id == Some(id))
+        });
         let room_widget = RoomPanel::new(&rooms, &self.palette, &self.ui_config)
-            .selected(self.room_selected)
+            .selected(room_selected_idx)
             .focus(self.focus == FocusedPanel::Room)
             .spinner(spinner_frame);
         frame.render_widget(room_widget, panel_chunks[1]);
@@ -1310,11 +1286,14 @@ impl App {
                     area,
                 );
             }
-            PopupState::SplitDirection { selected } => {
-                let items: Vec<String> = Self::SPLIT_DIRECTIONS.iter().map(|s| s.to_string()).collect();
+            PopupState::SplitDirection => {
+                let items = vec![
+                    "\u{2193} Down".to_string(),
+                    "\u{2192} Right".to_string(),
+                ];
                 frame.render_widget(
-                    PresetSelector::new(&items, *selected, &self.palette, &self.ui_config)
-                        .title(" Split Direction "),
+                    PresetSelector::new(&items, usize::MAX, &self.palette, &self.ui_config)
+                        .title(" Press \u{2193} or \u{2192} "),
                     area,
                 );
             }
@@ -1569,7 +1548,7 @@ impl App {
 
             // Pane actions
             Action::NewPane => {
-                self.popup = PopupState::SplitDirection { selected: 0 };
+                self.popup = PopupState::SplitDirection;
             }
             Action::SplitDown => self.show_preset_selector(PresetAction::SplitDown),
             Action::SplitRight => self.show_preset_selector(PresetAction::SplitRight),
@@ -1700,9 +1679,9 @@ impl App {
         let pos = Position::new(x, y);
         if self.panel_rects.workspace.contains(pos) {
             let row = y.saturating_sub(self.panel_rects.workspace.y + 1) as usize;
-            let count = self.state.workspaces.len();
-            if row < count {
-                self.workspace_selected = Some(row);
+            let items = self.workspace_items();
+            if row < items.len() {
+                self.workspace_selected = Some(items[row].id);
                 self.switch_to_selected_room();
                 self.mode = Mode::Room;
                 self.focus = FocusedPanel::Room;
@@ -1712,9 +1691,11 @@ impl App {
             }
         } else if self.panel_rects.room.contains(pos) {
             let row = y.saturating_sub(self.panel_rects.room.y + 1) as usize;
-            let count = self.room_items().len();
-            if row < count {
-                self.room_selected = Some(row);
+            let items = self.room_items();
+            if row < items.len() {
+                if let Some(id) = items[row].id {
+                    self.room_selected = Some(id);
+                }
                 self.select_current();
                 self.mode = Mode::Terminal;
                 self.focus = FocusedPanel::Terminal;
@@ -2041,14 +2022,10 @@ impl App {
     fn show_delete_dialog(&mut self) {
         match self.focus {
             FocusedPanel::Workspace => {
-                let ws_name = {
-                    let names = self.state.ws_names_sorted();
-                    match self.workspace_selected {
-                        Some(i) => names.into_iter().nth(i),
-                        None => None,
-                    }
-                };
-                let ws_name = match ws_name {
+                let ws_name = match self.workspace_selected
+                    .and_then(|id| self.state.ws_by_id(id))
+                    .map(|w| w.name.clone())
+                {
                     Some(n) => n,
                     None => return, // nothing selected
                 };
@@ -2088,20 +2065,21 @@ impl App {
     /// (the workspace repo itself) maps to the workspace path; worktree rooms
     /// map to `~/.humu/worktrees/<workspace>/<room>`.
     fn current_room_path(&self) -> Option<PathBuf> {
-        let ws_name = self.active_workspace_name()?;
-        let ws_entry = self.state.ws_by_name(&ws_name)?;
-        let room = self.active_room_name()?;
+        let ws_id = self.state.active_workspace_id?;
+        let room_id = self.state.active_room_id?;
+        let ws = self.state.ws_by_id(ws_id)?;
+        let room = ws.room_by_id(room_id)?;
 
         let worktree_path = humu_dir()
             .join("worktrees")
-            .join(&ws_name)
-            .join(&room);
+            .join(&ws.name)
+            .join(&room.name);
 
         if worktree_path.exists() {
             Some(worktree_path)
         } else {
             // Default room: the workspace repo directory itself.
-            Some(ws_entry.path.clone())
+            Some(ws.path.clone())
         }
     }
 
@@ -2438,19 +2416,23 @@ impl App {
     fn navigate(&mut self, delta: i32) {
         match self.focus {
             FocusedPanel::Workspace => {
-                let count = self.state.workspaces.len();
-                if count > 0 {
-                    let current = self.workspace_selected.unwrap_or(0) as i32;
-                    let next = (current + delta).clamp(0, count as i32 - 1) as usize;
-                    self.workspace_selected = Some(next);
-                }
+                let items = self.workspace_items();
+                if items.is_empty() { return; }
+                let current = self.workspace_selected
+                    .and_then(|id| items.iter().position(|w| w.id == id))
+                    .unwrap_or(0) as i32;
+                let next = (current + delta).clamp(0, items.len() as i32 - 1) as usize;
+                self.workspace_selected = Some(items[next].id);
             }
             FocusedPanel::Room => {
-                let count = self.room_items().len();
-                if count > 0 {
-                    let current = self.room_selected.unwrap_or(0) as i32;
-                    let next = (current + delta).clamp(0, count as i32 - 1) as usize;
-                    self.room_selected = Some(next);
+                let items = self.room_items();
+                if items.is_empty() { return; }
+                let current = self.room_selected
+                    .and_then(|id| items.iter().position(|r| r.id == Some(id)))
+                    .unwrap_or(0) as i32;
+                let next = (current + delta).clamp(0, items.len() as i32 - 1) as usize;
+                if let Some(id) = items[next].id {
+                    self.room_selected = Some(id);
                 }
             }
             FocusedPanel::Terminal => {}
@@ -2496,33 +2478,16 @@ impl App {
             }
         }
 
-        if let Some(ws_name) = self.active_workspace_name() {
-            let names: Vec<_> = {
-                self.state.ws_names_sorted()
-            };
-            if let Some(idx) = names.iter().position(|n| *n == ws_name) {
-                self.workspace_selected = Some(idx);
-            }
-        }
-
-        // Find the active room index
-        if let Some(room_name) = self.active_room_name() {
-            let rooms = self.room_items();
-            if let Some(idx) = rooms.iter().position(|r| r.name == room_name) {
-                self.room_selected = Some(idx);
-            }
-        }
+        self.workspace_selected = self.state.active_workspace_id;
+        self.room_selected = self.state.active_room_id;
 
         // Restore layout if saved
-        if let (Some(ws), Some(room)) = (
-            self.active_workspace_name(),
-            self.active_room_name(),
-        ) {
-            if let Some(ws_entry) = self.state.ws_by_name(&ws) {
-                if let Some(room_entry) = ws_entry.room_by_name(&room) {
-                    if !room_entry.tabs.is_empty() {
-                        let active_tab = room_entry.active_tab.unwrap_or(0);
-                        let tabs = room_entry.tabs.clone();
+        if let (Some(ws_id), Some(room_id)) = (self.state.active_workspace_id, self.state.active_room_id) {
+            if let Some(ws) = self.state.ws_by_id(ws_id) {
+                if let Some(room) = ws.room_by_id(room_id) {
+                    if !room.tabs.is_empty() {
+                        let active_tab = room.active_tab.unwrap_or(0);
+                        let tabs = room.tabs.clone();
                         self.restore_layout(active_tab, tabs);
                     }
                 }
@@ -2594,7 +2559,7 @@ impl App {
             .iter()
             .map(|ws| {
                 let active = self.has_active_agent(&self.pane_ids_for_workspace(ws.id));
-                WorkspaceItem { name: ws.name.clone(), active }
+                WorkspaceItem { id: ws.id, name: ws.name.clone(), active }
             })
             .collect();
         items.sort_by(|a, b| a.name.cmp(&b.name));
@@ -2602,11 +2567,11 @@ impl App {
     }
 
     fn room_items(&self) -> Vec<RoomItem> {
-        let ws_name = match self.active_workspace_name() {
-            Some(name) => name,
+        let ws_id = match self.state.active_workspace_id {
+            Some(id) => id,
             None => return vec![],
         };
-        self.room_items_for_workspace(&ws_name)
+        self.room_items_for_workspace(ws_id)
     }
 
     /// Collect pane IDs belonging to a specific room (live + suspended).
@@ -2625,13 +2590,12 @@ impl App {
         ids
     }
 
-    /// List rooms for a specific workspace by name, with agent activity flags.
-    fn room_items_for_workspace(&self, ws_name: &str) -> Vec<RoomItem> {
-        let ws = match self.state.ws_by_name(ws_name) {
+    /// List rooms for a specific workspace by ID, with agent activity flags.
+    fn room_items_for_workspace(&self, ws_id: WorkspaceId) -> Vec<RoomItem> {
+        let ws = match self.state.ws_by_id(ws_id) {
             Some(ws) => ws,
             None => return vec![],
         };
-        let ws_id = ws.id;
         let mgr = RoomManager::new();
         match mgr.list(&ws.path) {
             Ok(rooms) => rooms
@@ -2642,6 +2606,7 @@ impl App {
                         .map(|rid| self.has_active_agent(&self.pane_ids_for_room(ws_id, rid)))
                         .unwrap_or(false);
                     RoomItem {
+                        id: room_id,
                         name: r.branch,
                         is_default: r.is_default,
                         active,
@@ -2710,25 +2675,21 @@ impl App {
 
     /// Persist the current layout for the active workspace/room into `self.state`.
     fn persist_layout(&mut self) {
-        let ws = match self.active_workspace_name() {
-            Some(w) => w,
+        let ws_id = match self.state.active_workspace_id {
+            Some(id) => id,
             None => return,
         };
-        let room = match self.active_room_name() {
-            Some(r) => r,
+        let room_id = match self.state.active_room_id {
+            Some(id) => id,
             None => return,
         };
-        if let Some((active_tab, tabs)) = self.save_layout() {
-            if let Some(ws_entry) = self.state.ws_by_name_mut(&ws) {
-                if let Some(room_entry) = ws_entry.room_by_name_mut(&room) {
+        let layout = self.save_layout();
+        if let Some(ws_entry) = self.state.ws_by_id_mut(ws_id) {
+            if let Some(room_entry) = ws_entry.room_by_id_mut(room_id) {
+                if let Some((active_tab, tabs)) = layout {
                     room_entry.active_tab = Some(active_tab);
                     room_entry.tabs = tabs;
-                }
-            }
-        } else {
-            // No tabs left — clear the layout from the room entry.
-            if let Some(ws_entry) = self.state.ws_by_name_mut(&ws) {
-                if let Some(room_entry) = ws_entry.room_by_name_mut(&room) {
+                } else {
                     room_entry.active_tab = None;
                     room_entry.tabs.clear();
                 }
@@ -2900,50 +2861,48 @@ impl App {
     /// Switch to the room identified by the current workspace/room selection,
     /// suspending the current room and restoring the target room.
     fn switch_to_selected_room(&mut self) {
-        // Resolve workspace name from index.
-        let ws_name = {
-            let names = self.state.ws_names_sorted();
-            match self.workspace_selected {
-                Some(i) => names.into_iter().nth(i),
-                None => None,
-            }
-        };
-        let ws_name = match ws_name {
-            Some(w) => w,
+        let target_ws_id = match self.workspace_selected {
+            Some(id) => id,
             None => return,
         };
 
-        // Resolve room name from the room_selected index using the TARGET
-        // workspace, not the currently active one.  This is critical when
-        // creating a new workspace: active_workspace_id still points at
-        // the old workspace at this point.
-        let room_name = {
-            let rooms = self.room_items_for_workspace(&ws_name);
-            match self.room_selected {
-                Some(i) => rooms.into_iter().nth(i).map(|r| r.name),
-                None => None,
+        // Resolve room ID. If room_selected is set, use it directly.
+        // Otherwise, discover the first room for the target workspace.
+        let target_room_id = if let Some(rid) = self.room_selected {
+            rid
+        } else {
+            // Find the first room (default room) for this workspace.
+            let items = self.room_items_for_workspace(target_ws_id);
+            match items.first().and_then(|r| r.id) {
+                Some(id) => {
+                    self.room_selected = Some(id);
+                    id
+                }
+                None => {
+                    // No rooms discovered yet — ensure the default room exists.
+                    let ws_name = match self.state.ws_by_id(target_ws_id) {
+                        Some(w) => w.name.clone(),
+                        None => return,
+                    };
+                    match humu::config::ensure_room_id_for_workspace(
+                        &mut self.state, &ws_name, "main",
+                    ) {
+                        Some(id) => {
+                            self.room_selected = Some(id);
+                            id
+                        }
+                        None => return,
+                    }
+                }
             }
-        };
-        let room_name = match room_name {
-            Some(r) => r,
-            None => match self.active_room_name() {
-                Some(r) => r,
-                None => return,
-            },
         };
 
         // Suspend current room (preserves live PTY panes).
-        // Must happen BEFORE changing active IDs so the old room's panes
-        // are stored under the correct (old) workspace/room key.
         self.suspend_current_room();
 
-        // Update active workspace/room in state.
-        self.set_active_workspace_by_name(&ws_name);
-        self.set_active_room_by_name(&room_name);
-
-        // Resolve IDs for the target room.
-        let target_ws_id = self.state.active_workspace_id.unwrap();
-        let target_room_id = self.state.active_room_id.unwrap();
+        // Update active IDs directly.
+        self.state.active_workspace_id = Some(target_ws_id);
+        self.state.active_room_id = Some(target_room_id);
 
         // Restore target room (hot if suspended, cold otherwise).
         self.restore_room(target_ws_id, target_room_id);
@@ -2965,27 +2924,6 @@ impl App {
         ws.room_by_id(id).map(|r| r.name.clone())
     }
 
-    /// Set active workspace by name, creating the ID mapping if needed.
-    fn set_active_workspace_by_name(&mut self, name: &str) {
-        if let Some(entry) = self.state.ws_by_name(name) {
-            self.state.active_workspace_id = Some(entry.id);
-        }
-    }
-
-    /// Set active room by name within the active workspace.
-    fn set_active_room_by_name(&mut self, name: &str) {
-        let ws_name = match self.active_workspace_name() {
-            Some(n) => n,
-            None => return,
-        };
-        if let Some(room_id) = humu::config::ensure_room_id_for_workspace(
-            &mut self.state,
-            &ws_name,
-            name,
-        ) {
-            self.state.active_room_id = Some(room_id);
-        }
-    }
 }
 
 impl Drop for App {

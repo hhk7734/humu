@@ -14,6 +14,7 @@ pub struct RoomPanel<'a> {
 }
 
 pub struct RoomItem {
+    pub id: Option<crate::id::RoomId>,
     pub name: String,
     pub is_default: bool,
     pub active: bool,

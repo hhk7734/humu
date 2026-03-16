@@ -56,6 +56,8 @@ All entities use explicit ID types via the newtype pattern in `src/id.rs`:
 
 All four types implement `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Hash`, `Serialize`, `Deserialize`, and `Display`.
 
+IDs are the first-class identity for all entities. Names are used only for display. UI selection state (`workspace_selected`, `room_selected`) stores IDs, not indices. All state access goes through ID-based lookups (`ws_by_id`, `room_by_id`). Name-based lookups (`ws_by_name`, `room_by_name`) are used only at system boundaries: workspace creation (from directory name), room discovery (from git branch name).
+
 `RoomId` is assigned lazily on first discovery and persisted. On startup, persisted rooms are compared against git worktrees — stale entries are pruned.
 
 ## Rendering Pipeline

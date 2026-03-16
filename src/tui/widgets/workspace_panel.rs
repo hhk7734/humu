@@ -14,6 +14,7 @@ pub struct WorkspacePanel<'a> {
 }
 
 pub struct WorkspaceItem {
+    pub id: crate::id::WorkspaceId,
     pub name: String,
     pub active: bool,
 }
