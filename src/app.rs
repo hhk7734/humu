@@ -2866,12 +2866,23 @@ impl App {
             None => return,
         };
 
-        // Resolve room ID. If room_selected is set, use it directly.
-        // Otherwise, discover the first room for the target workspace.
+        // If switching to a different workspace, clear room_selected so
+        // the last_room_id fallback kicks in.
+        if self.state.active_workspace_id != Some(target_ws_id) {
+            self.room_selected = None;
+        }
+
+        // Resolve room ID:
+        // 1. If room_selected is set (same workspace navigation), use it.
+        // 2. Otherwise, restore the last-used room for this workspace.
+        // 3. Otherwise, use the first discovered room (default/main).
+        // 4. Otherwise, ensure the "main" room entry exists.
         let target_room_id = if let Some(rid) = self.room_selected {
             rid
+        } else if let Some(last) = self.state.ws_by_id(target_ws_id).and_then(|w| w.last_room_id) {
+            self.room_selected = Some(last);
+            last
         } else {
-            // Find the first room (default room) for this workspace.
             let items = self.room_items_for_workspace(target_ws_id);
             match items.first().and_then(|r| r.id) {
                 Some(id) => {
@@ -2879,7 +2890,6 @@ impl App {
                     id
                 }
                 None => {
-                    // No rooms discovered yet — ensure the default room exists.
                     let ws_name = match self.state.ws_by_id(target_ws_id) {
                         Some(w) => w.name.clone(),
                         None => return,
@@ -2896,6 +2906,13 @@ impl App {
                 }
             }
         };
+
+        // Save last room on the current workspace before suspending.
+        if let (Some(ws_id), Some(room_id)) = (self.state.active_workspace_id, self.state.active_room_id) {
+            if let Some(ws) = self.state.ws_by_id_mut(ws_id) {
+                ws.last_room_id = Some(room_id);
+            }
+        }
 
         // Suspend current room (preserves live PTY panes).
         self.suspend_current_room();

@@ -23,6 +23,7 @@ impl WorkspaceManager {
             name: name.clone(),
             id: WorkspaceId::new(),
             path,
+            last_room_id: None,
             rooms: vec![],
         });
         Ok(name)

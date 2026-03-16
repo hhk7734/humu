@@ -47,6 +47,7 @@ fn state_round_trip() {
             name: "ws1".to_string(),
             id: ws_id,
             path: PathBuf::from("/tmp/ws1"),
+            last_room_id: None,
             rooms: vec![RoomEntry {
                 name: "room1".to_string(),
                 id: room_id,
@@ -127,6 +128,7 @@ fn state_round_trip_with_ids() {
         name: "humu".to_string(),
         id: ws_id,
         path: PathBuf::from("/tmp/humu"),
+        last_room_id: None,
         rooms: vec![RoomEntry {
             name: "main".to_string(),
             id: room_id,
@@ -213,6 +215,7 @@ fn ensure_room_id_creates_new_id() {
         name: "test".to_string(),
         id: ws_id,
         path: PathBuf::from("/tmp/test"),
+        last_room_id: None,
         rooms: vec![],
     });
 
@@ -235,6 +238,7 @@ fn prune_removes_stale_rooms() {
         name: "test".to_string(),
         id: ws_id,
         path: PathBuf::from("/tmp/test"),
+        last_room_id: None,
         rooms: vec![
             RoomEntry { name: "main".to_string(), id: RoomId::new(), active_tab: None, tabs: vec![] },
             RoomEntry { name: "deleted-branch".to_string(), id: RoomId::new(), active_tab: None, tabs: vec![] },

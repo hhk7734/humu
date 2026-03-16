@@ -161,6 +161,8 @@ pub struct WorkspaceEntry {
     pub name: String,
     pub id: WorkspaceId,
     pub path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_room_id: Option<RoomId>,
     #[serde(default)]
     pub rooms: Vec<RoomEntry>,
 }
