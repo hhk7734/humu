@@ -92,16 +92,10 @@ impl PtyPane {
     }
 
     /// Drain any PTY output received from the background reader thread.
-    /// Auto-resets scrollback to bottom when new output arrives.
     pub fn process_output(&mut self) -> Result<()> {
         let mut parser = self.parser.lock().unwrap();
-        let mut received = false;
         while let Ok(data) = self.output_rx.try_recv() {
             parser.process(&data);
-            received = true;
-        }
-        if received && parser.screen().scrollback() > 0 {
-            parser.set_scrollback(0);
         }
         drop(parser);
         self.check_exit();
