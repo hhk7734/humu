@@ -2056,6 +2056,9 @@ impl App {
     /// Spawn a new pane from the named preset and register it.
     /// Returns the new `PaneId` on success.
     fn spawn_pane(&mut self, preset_name: &str, session_id: Option<String>) -> Option<PaneId> {
+        // Preserve session_id for agent_states before it's consumed by args.
+        let restored_session_id = session_id.clone();
+
         let shell_cmd = self
             .config
             .presets
@@ -2109,6 +2112,18 @@ impl App {
         let id = self.next_pane_id;
         self.panes.insert(id, pane);
         self.pane_presets.insert(id, preset_name.to_string());
+        // Seed agent_states so session_id survives restart even if no hook
+        // event arrives before the next shutdown.
+        if restored_session_id.is_some() {
+            self.agent_states.insert(
+                id,
+                AgentStateEntry {
+                    state: AgentState::Idle,
+                    session_id: restored_session_id,
+                    updated_at: Instant::now(),
+                },
+            );
+        }
         self.next_pane_id = PaneId(self.next_pane_id.0 + 1);
         Some(id)
     }
