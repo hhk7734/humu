@@ -252,6 +252,64 @@ fn check_mode_switch(current: Mode, key: KeyEvent) -> Option<Action> {
     }
 }
 
+/// Map a clicked hint index to the corresponding action for the given mode.
+pub fn hint_click_action(mode: Mode, hint_index: usize) -> Option<Action> {
+    match mode {
+        Mode::Terminal => match hint_index {
+            0 => Some(Action::EnterMode(Mode::Locked)),      // g LOCK
+            1 => Some(Action::EnterMode(Mode::EnterSearch)), // f FIND
+            2 => Some(Action::EnterMode(Mode::Pane)),        // p PANE
+            3 => Some(Action::EnterMode(Mode::Tab)),         // t TAB
+            4 => Some(Action::EnterMode(Mode::Workspace)),   // w WORKSPACE
+            5 => Some(Action::EnterMode(Mode::Room)),        // r ROOM
+            _ => None,
+        },
+        Mode::Pane => match hint_index {
+            0 => Some(Action::NewPane),                       // n New
+            1 => Some(Action::SplitDown),                     // d Split↓
+            2 => Some(Action::SplitRight),                    // r Split→
+            3 => Some(Action::ClosePane),                     // x Close
+            4 => None,                                        // ←→↑↓ Move
+            5 => None,                                        // S+←→↑↓ Resize
+            6 => Some(Action::ToggleFullscreen),              // f Full
+            7 => Some(Action::EnterMode(Mode::Terminal)),     // Esc Back
+            _ => None,
+        },
+        Mode::Tab => match hint_index {
+            0 => Some(Action::NewTab),                        // n New
+            1 => Some(Action::CloseTab),                      // x Close
+            2 => None,                                        // ←→ Prev/Next
+            3 => None,                                        // 1-9 GoTo
+            4 => Some(Action::EnterMode(Mode::Terminal)),     // Esc Back
+            _ => None,
+        },
+        Mode::Workspace => match hint_index {
+            0 => None,                                        // ↑↓ Navigate
+            1 => Some(Action::Select),                        // Enter Select
+            2 => Some(Action::Create),                        // n Create
+            3 => Some(Action::Delete),                        // d Delete
+            4 => None,                                        // S+←→ Resize
+            _ => None,
+        },
+        Mode::Room => match hint_index {
+            0 => None,                                        // ↑↓ Navigate
+            1 => Some(Action::Select),                        // Enter Select
+            2 => Some(Action::Create),                        // n Create
+            3 => Some(Action::Delete),                        // d Delete
+            4 => None,                                        // S+←→ Resize
+            _ => None,
+        },
+        Mode::Search => match hint_index {
+            0 => Some(Action::SearchNext),                    // n NEXT
+            1 => Some(Action::SearchPrev),                    // N PREV
+            2 => Some(Action::SearchToggleCase),              // c CASE
+            3 => Some(Action::SearchToggleWrap),              // w WRAP
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn check_shared_alt(key: KeyEvent) -> Option<Action> {
     if !key.modifiers.contains(KeyModifiers::ALT) {
         return None;

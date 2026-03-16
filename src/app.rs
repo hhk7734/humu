@@ -6,12 +6,12 @@ use humu::hook::http::{generate_hook_files, AgentState, HookEvent, HookServer};
 use humu::pty::pane::PtyPane;
 use humu::tui::completion::complete_path;
 use humu::tui::search::SearchState;
-use humu::tui::input::{handle_key, Action, Direction as NavDirection, Mode};
+use humu::tui::input::{handle_key, hint_click_action, Action, Direction as NavDirection, Mode};
 use humu::tui::layout::{PaneId, SplitDirection, SplitTree, TabContainer};
 use humu::tui::widgets::dialog::{Dialog, DialogField};
 use humu::tui::widgets::preset_selector::PresetSelector;
 use humu::tui::widgets::room_panel::{RoomItem, RoomPanel};
-use humu::tui::widgets::status_bar::StatusBar;
+use humu::tui::widgets::status_bar::{self, StatusBar};
 use humu::tui::widgets::terminal_area::TabBar;
 use humu::tui::widgets::terminal_widget::TerminalWidget;
 use humu::tui::widgets::workspace_panel::{WorkspaceItem, WorkspacePanel};
@@ -48,6 +48,7 @@ pub struct PanelRects {
     pub room: Rect,
     pub terminal: Rect,
     pub tab_bar: Rect,
+    pub status_bar: Rect,
 }
 
 /// Which panel border is currently being dragged.
@@ -1003,6 +1004,7 @@ impl App {
             room: panel_chunks[1],
             terminal: panel_chunks[2],
             tab_bar: tab_bar_rect,
+            status_bar: main_chunks[1],
         };
 
         // Compute animated spinner frame (~100ms per frame at 50ms tick).
@@ -1452,6 +1454,8 @@ impl App {
             if let Some((pane_id, _)) = self.pane_at(pos) {
                 self.focused_pane = Some(pane_id);
             }
+        } else if self.panel_rects.status_bar.contains(pos) {
+            self.handle_status_bar_click(x);
         } else {
             // Click on a panel border — detect which border and start dragging.
             let ws_right = self.panel_rects.workspace.x + self.panel_rects.workspace.width;
@@ -1461,6 +1465,65 @@ impl App {
             } else if x.abs_diff(room_right) <= 1 {
                 self.dragging = Some(DragTarget::RoomTerminal);
             }
+        }
+    }
+
+    /// Handle a click on a status bar hint segment.
+    fn handle_status_bar_click(&mut self, click_x: u16) {
+        // Modes without clickable hints
+        if matches!(self.mode, Mode::EnterSearch | Mode::Locked) {
+            return;
+        }
+
+        let area = self.panel_rects.status_bar;
+        let mut x = area.x;
+
+        // Mode badge: " MODE " + separator
+        let label = status_bar::mode_label(self.mode);
+        x += label.chars().count() as u16 + 2 + 1;
+
+        // Terminal mode has a "Ctrl+" prefix block
+        if self.mode == Mode::Terminal {
+            x += 1 + 8 + 1; // sep + " Ctrl + " + sep
+        }
+
+        // Search mode: skip over query prefix, then test search-specific hints
+        if self.mode == Mode::Search {
+            if let Some(ref state) = self.search_state {
+                // " / {query} " rendered before hints
+                x += 3 + state.query.chars().count() as u16 + 1;
+
+                let hints: [(&str, &str); 4] = [
+                    ("n", "NEXT"),
+                    ("N", "PREV"),
+                    ("c", "CASE"), // "CASE"/"case" both 4 chars
+                    ("w", "WRAP"), // "WRAP"/"wrap" both 4 chars
+                ];
+                for (i, (key, lbl)) in hints.iter().enumerate() {
+                    let seg = 1 + 1 + key.chars().count() as u16 + 1 + lbl.chars().count() as u16 + 1 + 1;
+                    if click_x >= x && click_x < x + seg {
+                        if let Some(action) = hint_click_action(self.mode, i) {
+                            self.handle_action(action);
+                        }
+                        return;
+                    }
+                    x += seg;
+                }
+            }
+            return;
+        }
+
+        // Normal modes: iterate mode_hints
+        let hints = status_bar::mode_hints(self.mode);
+        for (i, (key, lbl)) in hints.iter().enumerate() {
+            let seg = 1 + 1 + key.chars().count() as u16 + 1 + lbl.chars().count() as u16 + 1 + 1;
+            if click_x >= x && click_x < x + seg {
+                if let Some(action) = hint_click_action(self.mode, i) {
+                    self.handle_action(action);
+                }
+                return;
+            }
+            x += seg;
         }
     }
 

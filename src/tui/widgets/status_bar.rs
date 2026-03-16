@@ -5,6 +5,64 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
 
+pub fn mode_label(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Terminal => "TERMINAL",
+        Mode::Locked => "LOCKED",
+        Mode::Pane => "PANE",
+        Mode::Tab => "TAB",
+        Mode::Workspace => "WORKSPACE",
+        Mode::Room => "ROOM",
+        Mode::EnterSearch | Mode::Search => "SEARCH",
+    }
+}
+
+pub fn mode_hints(mode: Mode) -> Vec<(&'static str, &'static str)> {
+    match mode {
+        Mode::Terminal => vec![
+            ("g", "LOCK"),
+            ("f", "FIND"),
+            ("p", "PANE"),
+            ("t", "TAB"),
+            ("w", "WORKSPACE"),
+            ("r", "ROOM"),
+        ],
+        Mode::Locked => vec![("Ctrl+g", "UNLOCK")],
+        Mode::Pane => vec![
+            ("n", "New"),
+            ("d", "Split\u{2193}"),
+            ("r", "Split\u{2192}"),
+            ("x", "Close"),
+            ("\u{2190}\u{2192}\u{2191}\u{2193}", "Move"),
+            ("S+\u{2190}\u{2192}\u{2191}\u{2193}", "Resize"),
+            ("f", "Full"),
+            ("Esc", "Back"),
+        ],
+        Mode::Tab => vec![
+            ("n", "New"),
+            ("x", "Close"),
+            ("\u{2190}\u{2192}", "Prev/Next"),
+            ("1-9", "GoTo"),
+            ("Esc", "Back"),
+        ],
+        Mode::Workspace => vec![
+            ("\u{2191}\u{2193}", "Navigate"),
+            ("Enter", "Select"),
+            ("n", "Create"),
+            ("d", "Delete"),
+            ("S+\u{2190}\u{2192}", "Resize"),
+        ],
+        Mode::Room => vec![
+            ("\u{2191}\u{2193}", "Navigate"),
+            ("Enter", "Select"),
+            ("n", "Create"),
+            ("d", "Delete"),
+            ("S+\u{2190}\u{2192}", "Resize"),
+        ],
+        Mode::EnterSearch | Mode::Search => vec![],
+    }
+}
+
 pub struct StatusBar<'a> {
     mode: Mode,
     error: Option<&'a str>,
@@ -47,64 +105,6 @@ impl<'a> StatusBar<'a> {
     pub fn search_valid(mut self, valid: bool) -> Self {
         self.search_valid = valid;
         self
-    }
-
-    fn mode_label(&self) -> &'static str {
-        match self.mode {
-            Mode::Terminal => "TERMINAL",
-            Mode::Locked => "LOCKED",
-            Mode::Pane => "PANE",
-            Mode::Tab => "TAB",
-            Mode::Workspace => "WORKSPACE",
-            Mode::Room => "ROOM",
-            Mode::EnterSearch | Mode::Search => "SEARCH",
-        }
-    }
-
-    fn mode_hints(&self) -> Vec<(&'static str, &'static str)> {
-        match self.mode {
-            Mode::Terminal => vec![
-                ("g", "LOCK"),
-                ("f", "FIND"),
-                ("p", "PANE"),
-                ("t", "TAB"),
-                ("w", "WORKSPACE"),
-                ("r", "ROOM"),
-            ],
-            Mode::Locked => vec![("Ctrl+g", "UNLOCK")],
-            Mode::Pane => vec![
-                ("n", "New"),
-                ("d", "Split\u{2193}"),
-                ("r", "Split\u{2192}"),
-                ("x", "Close"),
-                ("\u{2190}\u{2192}\u{2191}\u{2193}", "Move"),
-                ("S+\u{2190}\u{2192}\u{2191}\u{2193}", "Resize"),
-                ("f", "Full"),
-                ("Esc", "Back"),
-            ],
-            Mode::Tab => vec![
-                ("n", "New"),
-                ("x", "Close"),
-                ("\u{2190}\u{2192}", "Prev/Next"),
-                ("1-9", "GoTo"),
-                ("Esc", "Back"),
-            ],
-            Mode::Workspace => vec![
-                ("\u{2191}\u{2193}", "Navigate"),
-                ("Enter", "Select"),
-                ("n", "Create"),
-                ("d", "Delete"),
-                ("S+\u{2190}\u{2192}", "Resize"),
-            ],
-            Mode::Room => vec![
-                ("\u{2191}\u{2193}", "Navigate"),
-                ("Enter", "Select"),
-                ("n", "Create"),
-                ("d", "Delete"),
-                ("S+\u{2190}\u{2192}", "Resize"),
-            ],
-            Mode::EnterSearch | Mode::Search => vec![],
-        }
     }
 
     /// Render Powerline hint segments starting at `x`.
@@ -209,7 +209,7 @@ impl Widget for StatusBar<'_> {
         let mut x = area.x;
 
         // Mode badge: [MODE_NAME] + separator
-        let mode_label = format!(" {} ", self.mode_label());
+        let mode_label = format!(" {} ", mode_label(self.mode));
         let mode_width = mode_label.chars().count() as u16;
         for (i, ch) in mode_label.chars().enumerate() {
             if x + i as u16 >= area.x + area.width {
@@ -357,7 +357,7 @@ impl Widget for StatusBar<'_> {
         }
 
         // Key hints (none are toggles, so all inactive)
-        let hints = self.mode_hints();
+        let hints = mode_hints(self.mode);
         let hint_refs: Vec<(&str, &str, bool)> = hints.iter().map(|&(k, l)| (k, l, false)).collect();
         self.render_hint_segments(&hint_refs, &mut x, area, buf);
     }
