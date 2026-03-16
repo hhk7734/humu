@@ -35,7 +35,7 @@ Three panels separated by draggable resize handles, plus a status bar.
 
 ## Preset Selector
 
-When creating a new tab or pane, a popup lists available presets from `config.toml`. Navigate with arrow keys, select with `Enter`, dismiss with `Esc`. Blocked if no room is selected.
+When creating a new tab or pane, a popup lists available presets from `config.yaml`. Navigate with arrow keys, select with `Enter`, dismiss with `Esc`. Blocked if no room is selected.
 
 ## Keybindings
 

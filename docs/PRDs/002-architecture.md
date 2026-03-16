@@ -25,8 +25,8 @@ humu (single binary)
 │   └── Typed IDs: WorkspaceId, RoomId, TabId, PaneId
 └── State Layer
     └── $HUMU_DIR (default: ~/.humu/)
-        ├── config.toml
-        ├── state.toml
+        ├── config.yaml
+        ├── state.yaml
         ├── port
         └── hooks/
 ```
@@ -49,8 +49,8 @@ All entities use explicit ID types via the newtype pattern in `src/id.rs`:
 
 | Entity | Type | Backing | Persistence |
 |---|---|---|---|
-| Workspace | `WorkspaceId(Uuid)` | UUID v4 | Permanent — stored in `state.toml` |
-| Room | `RoomId(Uuid)` | UUID v4 | Permanent — stored in `state.toml` per workspace |
+| Workspace | `WorkspaceId(Uuid)` | UUID v4 | Permanent — stored in `state.yaml` |
+| Room | `RoomId(Uuid)` | UUID v4 | Permanent — stored in `state.yaml` per workspace |
 | Tab | `TabId(u64)` | Sequential counter | Session-scoped — reset on restart |
 | Pane | `PaneId(u64)` | Sequential counter | Session-scoped — reset on restart |
 
@@ -96,23 +96,22 @@ When a pane's process exits, it shows a distinct "exited" state with exit code. 
 
 Two built-in presets, extensible via config. Environment variables in `command` and `args` are expanded at PTY spawn time.
 
-```toml
-# ~/.humu/config.toml
-
-[presets.claude]
-command = "claude"
-args = []
-
-[presets.shell]
-command = "$SHELL"
-args = []
+```yaml
+# ~/.humu/config.yaml
+presets:
+  claude:
+    command: claude
+    args: []
+  shell:
+    command: $SHELL
+    args: []
 ```
 
 ## Layout Persistence
 
-Tab and pane layout is saved per room in `state.toml` and restored on room switch or restart. The layout is a tree structure: each tab contains a `SplitNode` that is either a `Leaf` (single pane with preset and optional `session_id`) or a `Split` (binary split with direction, ratio, and children).
+Tab and pane layout is saved per room in `state.yaml` and restored on room switch or restart. The layout is a tree structure: each tab contains a `SplitNode` that is either a `Leaf` (single pane with preset and optional `session_id`) or a `Split` (binary split with direction, ratio, and children).
 
-Layout is persisted via **event-driven persistence** — `persist_layout()` is called on every structural mutation (tab add/remove, pane split/close), not on a timer or only at shutdown. This ensures crash safety: if humu is killed unexpectedly, the layout reflects the last structural change. When all tabs are closed, the layout entry is removed from `state.toml` so that a restart creates a fresh default shell instead of restoring stale panes.
+Layout is persisted via **event-driven persistence** — `persist_layout()` is called on every structural mutation (tab add/remove, pane split/close), not on a timer or only at shutdown. This ensures crash safety: if humu is killed unexpectedly, the layout reflects the last structural change. When all tabs are closed, the layout entry is removed from `state.yaml` so that a restart creates a fresh default shell instead of restoring stale panes.
 
 Layout keys use UUID strings for workspace and room identification.
 
@@ -123,12 +122,12 @@ When switching rooms or workspaces, live PTY panes are **suspended** rather than
 The runtime state (`RoomState`: panes, tabs, pane_presets, focused_pane, fullscreen_pane) is moved into `suspended_rooms: HashMap<(WorkspaceId, RoomId), RoomState>`. When switching back:
 
 1. **Hot restore**: If the room has suspended state, swap it back in — PTY processes resume instantly with full terminal history intact.
-2. **Cold restore**: If no suspended state exists (e.g., after restart), rebuild from the persisted layout in `state.toml`, spawning new PTY processes.
+2. **Cold restore**: If no suspended state exists (e.g., after restart), rebuild from the persisted layout in `state.yaml`, spawning new PTY processes.
 3. **Default**: If no persisted layout exists either, create a single shell tab.
 
 Suspended panes continue running in the background — their reader threads accumulate output in unbounded `mpsc` channels, which is drained on restore. `PaneId` remains globally unique (monotonically increasing `next_pane_id` is never saved/restored per room). `agent_states` is global since hook events can arrive for any pane.
 
-On graceful shutdown, all suspended rooms have their layouts persisted to `state.toml` before PTY processes are dropped.
+On graceful shutdown, all suspended rooms have their layouts persisted to `state.yaml` before PTY processes are dropped.
 
 When a workspace is deleted, all its entries in `suspended_rooms` are discarded. If the deleted workspace was active, live panes are cleared and humu auto-switches to the next available workspace.
 
@@ -189,10 +188,10 @@ Workspace/room panel spinners are derived from pane states:
 
 GitHub Dark color palette (`#0d1117` base). Powerline-style separators in tab bar and status bar (Nerd Font). Rounded borders on all panels and panes. Configurable via `[ui]` section:
 
-```toml
-[ui]
-simplified_ui = false    # true = plain separators instead of Powerline
-rounded_corners = true
+```yaml
+ui:
+  simplified_ui: false    # true = plain separators instead of Powerline
+  rounded_corners: true
 ```
 
 `Palette` and `UiConfig` are passed by reference from `App` to all widgets. No global state.

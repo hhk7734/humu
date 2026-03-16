@@ -16,8 +16,8 @@ TUI-based. Implemented in Rust.
 
 ```
 ~/.humu/
-├── config.toml
-├── state.toml
+├── config.yaml
+├── state.yaml
 ├── port                      # HTTP hook server port (auto-managed)
 ├── hooks/
 │   ├── notify.sh             # Hook script (auto-generated)

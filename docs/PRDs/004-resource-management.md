@@ -74,53 +74,56 @@ HUMU_DIR=/tmp/humu-test cargo test  # tests against a throwaway directory
 
 ## Configuration
 
-### `<HUMU_DIR>/config.toml` (user-edited)
+### `<HUMU_DIR>/config.yaml` (user-edited)
 
-```toml
-[presets.claude]
-command = "claude"
-args = []
+```yaml
+presets:
+  claude:
+    command: claude
+    args: []
+  shell:
+    command: $SHELL
+    args: []
 
-[presets.shell]
-command = "$SHELL"
-args = []
-
-[ui]
-simplified_ui = false
-rounded_corners = true
+ui:
+  simplified_ui: false
+  rounded_corners: true
 ```
 
-### `<HUMU_DIR>/state.toml` (auto-managed)
+### `<HUMU_DIR>/state.yaml` (auto-managed)
 
-```toml
-active_workspace_id = "550e8400-e29b-41d4-a716-446655440000"
-active_room_id = "660e8400-e29b-41d4-a716-446655440001"
-panel_widths = [20, 18]
+```yaml
+active_workspace_id: 550e8400-e29b-41d4-a716-446655440000
+active_room_id: 660e8400-e29b-41d4-a716-446655440001
+panel_widths:
+  - 20
+  - 18
 
-[workspaces.humu]
-id = "550e8400-e29b-41d4-a716-446655440000"
-path = "/home/user/github/humu"
+workspaces:
+  humu:
+    id: 550e8400-e29b-41d4-a716-446655440000
+    path: /home/user/github/humu
+    rooms:
+      main:
+        id: 660e8400-e29b-41d4-a716-446655440001
+      feat/auth:
+        id: 770e8400-e29b-41d4-a716-446655440002
+  infra:
+    id: 880e8400-e29b-41d4-a716-446655440003
+    path: /home/user/github/infra
 
-[workspaces.humu.rooms.main]
-id = "660e8400-e29b-41d4-a716-446655440001"
-
-[workspaces.humu.rooms."feat/auth"]
-id = "770e8400-e29b-41d4-a716-446655440002"
-
-[workspaces.infra]
-id = "880e8400-e29b-41d4-a716-446655440003"
-path = "/home/user/github/infra"
-
-[layout."550e8400-..."]["660e8400-..."]
-active_tab = 0
-
-[[layout."550e8400-..."]["660e8400-...".tabs]]
-name = "claude"
-tree = { preset = "claude", session_id = "abc123-def456" }
-
-[[layout."550e8400-..."]["660e8400-...".tabs]]
-name = "shell"
-tree = { preset = "shell" }
+layout:
+  550e8400-...:
+    660e8400-...:
+      active_tab: 0
+      tabs:
+        - name: claude
+          split:
+            preset: claude
+            session_id: abc123-def456
+        - name: shell
+          split:
+            preset: shell
 ```
 
-Workspace and room IDs are UUIDs. Room IDs are assigned lazily on first discovery and persisted. On startup, stale room entries (worktrees that no longer exist) are pruned. Layout keys use UUID strings. Old-format `state.toml` (pre-UUID) is discarded on load with a log message.
+Workspace and room IDs are UUIDs. Room IDs are assigned lazily on first discovery and persisted. On startup, stale room entries (worktrees that no longer exist) are pruned. Layout keys use UUID strings. On startup, humu auto-migrates old `config.toml` / `state.toml` files to YAML format.

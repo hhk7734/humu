@@ -92,12 +92,19 @@ impl Default for HumuConfig {
 impl HumuConfig {
     pub fn load(path: &Path) -> Result<Self> {
         let contents = std::fs::read_to_string(path)?;
+        let config = serde_yaml::from_str(&contents)?;
+        Ok(config)
+    }
+
+    /// Load from TOML format (migration from old config.toml).
+    pub fn load_toml(path: &Path) -> Result<Self> {
+        let contents = std::fs::read_to_string(path)?;
         let config = toml::from_str(&contents)?;
         Ok(config)
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        let contents = toml::to_string_pretty(self)?;
+        let contents = serde_yaml::to_string(self)?;
         std::fs::write(path, contents)?;
         Ok(())
     }
@@ -175,9 +182,19 @@ pub struct HumuState {
 impl HumuState {
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
+        let mut state: Self = serde_yaml::from_str(&content)?;
+        if state.workspaces.is_empty() && !state.layout.is_empty() {
+            eprintln!("Clearing stale layout data from old format");
+            state.layout.clear();
+        }
+        Ok(state)
+    }
+
+    /// Load from TOML format (migration from old state.toml).
+    pub fn load_toml(path: &Path) -> Result<Self> {
+        let content = std::fs::read_to_string(path)?;
         match toml::from_str::<Self>(&content) {
             Ok(mut state) => {
-                // If workspaces have no UUIDs (empty after migration), clear layout too
                 if state.workspaces.is_empty() && !state.layout.is_empty() {
                     eprintln!("Clearing stale layout data from old format");
                     state.layout.clear();
@@ -185,14 +202,14 @@ impl HumuState {
                 Ok(state)
             }
             Err(_) => {
-                eprintln!("Migrated state.toml to new format (old state discarded)");
+                eprintln!("Old state.toml format not compatible, starting fresh");
                 Ok(Self::default())
             }
         }
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        let contents = toml::to_string_pretty(self)?;
+        let contents = serde_yaml::to_string(self)?;
         std::fs::write(path, contents)?;
         Ok(())
     }

@@ -17,13 +17,16 @@ fn default_config_has_claude_and_shell_presets() {
 }
 
 #[test]
-fn parse_config_from_toml() {
-    let toml = r#"
-[presets.my_tool]
-command = "my_tool"
-args = ["--flag", "value"]
+fn parse_config_from_yaml() {
+    let yaml = r#"
+presets:
+  my_tool:
+    command: my_tool
+    args:
+      - --flag
+      - value
 "#;
-    let config: HumuConfig = toml::from_str(toml).expect("parse failed");
+    let config: HumuConfig = serde_yaml::from_str(yaml).expect("parse failed");
     let preset = config.presets.get("my_tool").expect("preset missing");
     assert_eq!(preset.command, "my_tool");
     assert_eq!(preset.args, vec!["--flag", "value"]);
@@ -32,7 +35,7 @@ args = ["--flag", "value"]
 #[test]
 fn state_round_trip() {
     let dir = tempdir().expect("tempdir failed");
-    let path = dir.path().join("state.toml");
+    let path = dir.path().join("state.yaml");
 
     let ws_id = WorkspaceId::new();
     let room_id = RoomId::new();
@@ -108,8 +111,8 @@ fn split_node_nested_round_trip() {
         ],
     };
 
-    let toml_str = toml::to_string(&node).expect("serialize failed");
-    let parsed: SplitNode = toml::from_str(&toml_str).expect("deserialize failed");
+    let yaml_str = serde_yaml::to_string(&node).expect("serialize failed");
+    let parsed: SplitNode = serde_yaml::from_str(&yaml_str).expect("deserialize failed");
 
     match parsed {
         SplitNode::Split { direction, ratio, children } => {
@@ -126,7 +129,7 @@ fn split_node_nested_round_trip() {
 #[test]
 fn state_round_trip_with_ids() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("state.toml");
+    let path = dir.path().join("state.yaml");
 
     let ws_id = WorkspaceId::new();
     let room_id = RoomId::new();
@@ -162,8 +165,8 @@ fn split_node_leaf_with_session_id() {
         preset: "claude".to_string(),
         session_id: Some("abc123".to_string()),
     };
-    let toml_str = toml::to_string(&node).unwrap();
-    let parsed: SplitNode = toml::from_str(&toml_str).unwrap();
+    let yaml_str = serde_yaml::to_string(&node).unwrap();
+    let parsed: SplitNode = serde_yaml::from_str(&yaml_str).unwrap();
     assert_eq!(parsed, node);
 }
 
@@ -173,16 +176,16 @@ fn split_node_leaf_without_session_id() {
         preset: "shell".to_string(),
         session_id: None,
     };
-    let toml_str = toml::to_string(&node).unwrap();
-    let parsed: SplitNode = toml::from_str(&toml_str).unwrap();
+    let yaml_str = serde_yaml::to_string(&node).unwrap();
+    let parsed: SplitNode = serde_yaml::from_str(&yaml_str).unwrap();
     assert_eq!(parsed, node);
 }
 
 #[test]
-fn state_load_old_format_returns_default() {
+fn state_load_toml_migration() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("state.toml");
-    // Write old-format state with string active_workspace (no UUIDs)
+    // Write old TOML format state
     std::fs::write(&path, r#"
 active_workspace = "humu"
 active_room = "main"
@@ -190,7 +193,7 @@ active_room = "main"
 [workspaces.humu]
 path = "/tmp/humu"
 "#).unwrap();
-    let loaded = HumuState::load(&path).unwrap();
+    let loaded = HumuState::load_toml(&path).unwrap();
     // Old format can't deserialize into new types — returns default
     assert!(loaded.active_workspace_id.is_none());
     assert!(loaded.workspaces.is_empty());

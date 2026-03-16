@@ -166,17 +166,29 @@ impl App {
             eprintln!("failed to generate hook files: {e}");
         }
 
-        let config_path = humu_dir().join("config.toml");
-        let state_path = humu_dir().join("state.toml");
+        let config_path = humu_dir().join("config.yaml");
+        let config_toml_path = humu_dir().join("config.toml");
+        let state_path = humu_dir().join("state.yaml");
+        let state_toml_path = humu_dir().join("state.toml");
 
         let config = if config_path.exists() {
             HumuConfig::load(&config_path)?
+        } else if config_toml_path.exists() {
+            let cfg = HumuConfig::load_toml(&config_toml_path)?;
+            cfg.save(&config_path)?;
+            eprintln!("Migrated config.toml → config.yaml");
+            cfg
         } else {
             HumuConfig::default()
         };
 
         let state = if state_path.exists() {
             HumuState::load(&state_path)?
+        } else if state_toml_path.exists() {
+            let st = HumuState::load_toml(&state_toml_path)?;
+            st.save(&state_path)?;
+            eprintln!("Migrated state.toml → state.yaml");
+            st
         } else {
             HumuState::default()
         };
@@ -367,7 +379,7 @@ impl App {
         }
 
         self.state.panel_widths = Some(self.panel_widths);
-        let state_path = humu_dir().join("state.toml");
+        let state_path = humu_dir().join("state.yaml");
         self.state.save(&state_path)?;
 
         Ok(())
@@ -2513,7 +2525,7 @@ impl App {
         // Clear search state — suspended panes may receive new output.
         self.search_state = None;
 
-        // Persist layout to state.toml so the room can also be cold-restored.
+        // Persist layout to state.yaml so the room can also be cold-restored.
         self.persist_layout();
 
         // Move live state out of self into suspended storage.
