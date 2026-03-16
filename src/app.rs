@@ -51,14 +51,6 @@ pub struct PanelRects {
     pub status_bar: Rect,
 }
 
-/// Which panel border is currently being dragged.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DragTarget {
-    /// The border between the workspace panel and the room panel.
-    WorkspaceRoom,
-    /// The border between the room panel and the terminal area.
-    RoomTerminal,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PresetAction {
@@ -154,8 +146,8 @@ pub struct App {
     pub panel_rects: PanelRects,
     /// Panel widths: [workspace, room]. Used in the layout constraints.
     pub panel_widths: [u16; 2],
-    /// Active drag target when resizing a panel border via mouse drag.
-    pub dragging: Option<DragTarget>,
+    /// True when a mouse-down was forwarded to the focused PTY (not humu UI).
+    pub pty_mouse_active: bool,
     /// When Some(id), only that pane is rendered filling the full terminal area.
     pub fullscreen_pane: Option<PaneId>,
     pub palette: humu::tui::theme::Palette,
@@ -260,7 +252,7 @@ impl App {
             hook_port,
             panel_rects: PanelRects::default(),
             panel_widths: saved_panel_widths,
-            dragging: None,
+            pty_mouse_active: false,
             fullscreen_pane: None,
             palette: humu::tui::theme::Palette::GITHUB_DARK,
             ui_config,
@@ -299,47 +291,43 @@ impl App {
         }
 
         while self.running {
+            // Process PTY output before render so cursor position is up-to-date.
+            for pane in self.panes.values_mut() {
+                let _ = pane.process_output();
+            }
+
             terminal.draw(|frame| self.render(frame))?;
             self.spin_tick = self.spin_tick.wrapping_add(1);
 
-            if event::poll(Duration::from_millis(50))? {
+            // Drain all pending events before rendering to avoid
+            // per-event renders when mouse moves queue up.
+            while event::poll(Duration::from_millis(0))? {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        // Clear any previous error on new keypress.
                         self.last_error = None;
-                        // Popup intercepts all key handling when active.
                         if self.handle_popup_key(key) {
-                            // key was consumed by popup
                         } else {
                             self.handle_action(handle_key(self.mode, key));
                         }
                     }
-                    Event::Mouse(mouse) => {
-                        match mouse.kind {
-                            MouseEventKind::Down(MouseButton::Left) => {
-                                self.dragging = None;
-                                self.handle_click(mouse.column, mouse.row);
-                            }
-                            MouseEventKind::Drag(MouseButton::Left) => {
-                                self.handle_drag(mouse.column);
-                            }
-                            MouseEventKind::Up(MouseButton::Left) => {
-                                self.dragging = None;
-                            }
-                            MouseEventKind::ScrollUp => {
-                                self.handle_scroll(mouse.column, mouse.row, true);
-                            }
-                            MouseEventKind::ScrollDown => {
-                                self.handle_scroll(mouse.column, mouse.row, false);
-                            }
-                            _ => {}
+                    Event::Mouse(mouse) => self.handle_mouse(mouse),
+                    Event::Paste(text) => self.handle_paste(&text),
+                    Event::Resize(_, _) => {}
+                    _ => {}
+                }
+            }
+            // If no events were pending, wait up to 50ms for the next one.
+            if event::poll(Duration::from_millis(50))? {
+                match event::read()? {
+                    Event::Key(key) if key.kind == KeyEventKind::Press => {
+                        self.last_error = None;
+                        if self.handle_popup_key(key) {
+                        } else {
+                            self.handle_action(handle_key(self.mode, key));
                         }
                     }
-                    Event::Paste(text) => {
-                        self.handle_paste(&text);
-                    }
-                    // Pane resizing is handled in render_terminal_area on the
-                    // next draw cycle, so we only need to consume the event.
+                    Event::Mouse(mouse) => self.handle_mouse(mouse),
+                    Event::Paste(text) => self.handle_paste(&text),
                     Event::Resize(_, _) => {}
                     _ => {}
                 }
@@ -351,10 +339,6 @@ impl App {
             // Refresh log viewer if open.
             self.refresh_log_viewer();
 
-            // Process PTY output each tick
-            for pane in self.panes.values_mut() {
-                let _ = pane.process_output();
-            }
         }
 
         if keyboard_enhanced {
@@ -1420,7 +1404,7 @@ impl App {
                         .pane_count(fs_pane_count)
                         .search(search_matches, search_active, search_base_row);
                 frame.render_widget(widget, pane_area);
-                if fs_exit_code.is_none() && !screen.hide_cursor() && screen.scrollback() == 0 {
+                if fs_exit_code.is_none() && screen.scrollback() == 0 {
                     let (crow, ccol) = screen.cursor_position();
                     let cx = pane_area.x + 1 + ccol;
                     let cy = pane_area.y + 1 + crow;
@@ -1674,6 +1658,48 @@ impl App {
         }
     }
 
+    fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) {
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.pty_mouse_active = false;
+                self.handle_click(mouse.column, mouse.row);
+                if self.try_forward_mouse(&mouse) {
+                    self.pty_mouse_active = true;
+                }
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if self.pty_mouse_active {
+                    self.try_forward_mouse(&mouse);
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                if self.pty_mouse_active {
+                    self.try_forward_mouse(&mouse);
+                    self.pty_mouse_active = false;
+                }
+            }
+            MouseEventKind::Down(_) | MouseEventKind::Up(_) => {
+                self.try_forward_mouse(&mouse);
+            }
+            MouseEventKind::Drag(_) => {
+                if self.pty_mouse_active {
+                    self.try_forward_mouse(&mouse);
+                }
+            }
+            MouseEventKind::ScrollUp => {
+                if !self.try_forward_mouse(&mouse) {
+                    self.handle_scroll(mouse.column, mouse.row, true);
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if !self.try_forward_mouse(&mouse) {
+                    self.handle_scroll(mouse.column, mouse.row, false);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Handle a left-button mouse click at terminal coordinates (x, y).
     fn handle_click(&mut self, x: u16, y: u16) {
         let pos = Position::new(x, y);
@@ -1714,15 +1740,6 @@ impl App {
             }
         } else if self.panel_rects.status_bar.contains(pos) {
             self.handle_status_bar_click(x);
-        } else {
-            // Click on a panel border — detect which border and start dragging.
-            let ws_right = self.panel_rects.workspace.x + self.panel_rects.workspace.width;
-            let room_right = self.panel_rects.room.x + self.panel_rects.room.width;
-            if x.abs_diff(ws_right) <= 1 {
-                self.dragging = Some(DragTarget::WorkspaceRoom);
-            } else if x.abs_diff(room_right) <= 1 {
-                self.dragging = Some(DragTarget::RoomTerminal);
-            }
         }
     }
 
@@ -1785,36 +1802,6 @@ impl App {
         }
     }
 
-    /// Handle a left-button drag at column `x` — resize the panel being dragged.
-    fn handle_drag(&mut self, x: u16) {
-        match self.dragging {
-            Some(DragTarget::WorkspaceRoom) => {
-                let origin = self.panel_rects.workspace.x;
-                let new_width = x.saturating_sub(origin).clamp(5, 60);
-                self.panel_widths[0] = new_width;
-            }
-            Some(DragTarget::RoomTerminal) => {
-                let origin = self.panel_rects.room.x;
-                let new_width = x.saturating_sub(origin).clamp(5, 60);
-                let ws_width = self.panel_widths[0];
-                if ws_width + new_width < 120 {
-                    self.panel_widths[1] = new_width;
-                }
-            }
-            None => {
-                // No active drag — try to start one if the cursor is near a border.
-                let ws_right = self.panel_rects.workspace.x + self.panel_rects.workspace.width;
-                let room_right = self.panel_rects.room.x + self.panel_rects.room.width;
-                if x.abs_diff(ws_right) <= 1 {
-                    self.dragging = Some(DragTarget::WorkspaceRoom);
-                    self.handle_drag(x);
-                } else if x.abs_diff(room_right) <= 1 {
-                    self.dragging = Some(DragTarget::RoomTerminal);
-                    self.handle_drag(x);
-                }
-            }
-        }
-    }
 
     /// Returns the pane content area (terminal area minus the tab bar row).
     fn terminal_pane_area(&self) -> Rect {
@@ -1834,6 +1821,77 @@ impl App {
             .compute_rects(pane_area)
             .into_iter()
             .find(|(_, rect)| rect.contains(pos))
+    }
+
+    /// Try to forward a mouse event to the focused pane's PTY.
+    /// Returns true if the event was forwarded (child has mouse reporting enabled).
+    fn try_forward_mouse(&mut self, mouse: &crossterm::event::MouseEvent) -> bool {
+        let pane_id = match self.focused_pane {
+            Some(id) => id,
+            None => return false,
+        };
+
+        // Find the focused pane's rect for coordinate translation.
+        let pane_rect = self
+            .pane_at(Position::new(mouse.column, mouse.row))
+            .map(|(_, rect)| rect)
+            .or_else(|| {
+                // Pane not at mouse position (drag outside) — find focused pane's rect.
+                let pane_area = self.terminal_pane_area();
+                self.tabs
+                    .active_tree()
+                    .and_then(|t| {
+                        t.compute_rects(pane_area)
+                            .into_iter()
+                            .find(|(id, _)| *id == pane_id)
+                            .map(|(_, rect)| rect)
+                    })
+            })
+            .unwrap_or_else(|| self.terminal_pane_area());
+
+        let pane = match self.panes.get_mut(&pane_id) {
+            Some(p) => p,
+            None => return false,
+        };
+
+        if pane.mouse_protocol_mode() == vt100::MouseProtocolMode::None {
+            return false;
+        }
+
+        let encoding = pane.mouse_protocol_encoding();
+        let col = mouse.column.saturating_sub(pane_rect.x + 1) as u32;
+        let row = mouse.row.saturating_sub(pane_rect.y + 1) as u32;
+
+        let (button, press) = match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => (0u32, true),
+            MouseEventKind::Down(MouseButton::Right) => (2, true),
+            MouseEventKind::Down(MouseButton::Middle) => (1, true),
+            MouseEventKind::Up(MouseButton::Left) => (0, false),
+            MouseEventKind::Up(MouseButton::Right) => (2, false),
+            MouseEventKind::Up(MouseButton::Middle) => (1, false),
+            MouseEventKind::Drag(MouseButton::Left) => (32, true),
+            MouseEventKind::Drag(MouseButton::Right) => (34, true),
+            MouseEventKind::Drag(MouseButton::Middle) => (33, true),
+            MouseEventKind::ScrollUp => (64, true),
+            MouseEventKind::ScrollDown => (65, true),
+            MouseEventKind::Moved => (35, true),
+            _ => return false,
+        };
+
+        let seq = match encoding {
+            vt100::MouseProtocolEncoding::Sgr => {
+                let suffix = if press { 'M' } else { 'm' };
+                format!("\x1b[<{};{};{}{}", button, col + 1, row + 1, suffix)
+            }
+            _ => {
+                let b = (button + 32) as u8;
+                let c = ((col + 33).min(255)) as u8;
+                let r = ((row + 33).min(255)) as u8;
+                format!("\x1b[M{}{}{}", b as char, c as char, r as char)
+            }
+        };
+        let _ = pane.write_input(seq.as_bytes());
+        true
     }
 
     /// Handle mouse scroll within the terminal area.

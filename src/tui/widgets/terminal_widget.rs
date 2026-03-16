@@ -209,7 +209,9 @@ impl Widget for TerminalWidget<'_> {
                             style = style.add_modifier(Modifier::UNDERLINED);
                         }
                         if cell.inverse() {
-                            style = Style::default().fg(bg).bg(fg);
+                            let real_fg = if fg == Color::Reset { self.palette.fg_primary } else { fg };
+                            let real_bg = if bg == Color::Reset { self.palette.bg_primary } else { bg };
+                            style = style.fg(real_bg).bg(real_fg);
                         }
                         let ch = cell.contents();
                         let display_char = if ch.is_empty() { " " } else { &ch };
