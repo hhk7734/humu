@@ -1,3 +1,5 @@
+// Nerd Font cheat sheet: https://www.nerdfonts.com/cheat-sheet
+
 use ratatui::style::Color;
 
 /// Returns the Nerd Font icon and its color for a file.
