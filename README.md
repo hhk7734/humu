@@ -13,7 +13,7 @@ HuMu organizes your terminal workflow around git concepts: **workspaces** map to
 |    infra   | > feat/x | |                                  | |    app.rs    |
 |    docs    |   fix/y  | +----------------------------------+ |    main.rs   |
 |            |          | | $ cargo test                     | |   Cargo.toml |
-|            |          | | running 12 tests ... ok           | |              |
+|            |          | | running 12 tests ... ok          | |              |
 |            |          | | $                                | |              |
 +------------+----------+--------------------------------------+--------------+
  TERMINAL >> Ctrl+ >> g LOCK >> p PANE >> t TAB >> w WS >> r ROOM
@@ -61,6 +61,12 @@ HuMu organizes your terminal workflow around git concepts: **workspaces** map to
 - Rust 2024 edition (1.85+)
 - A [Nerd Font](https://www.nerdfonts.com/) for file explorer icons
 - [delta](https://github.com/dandavison/delta) for diff viewing (optional)
+
+### Install from GitHub
+
+```bash
+cargo install --git https://github.com/hhk7734/humu.git
+```
 
 ### Build from source
 
