@@ -29,6 +29,9 @@ src/
 ├── pty/
 │   └── pane.rs      # PTY spawn, background reader thread, vt100 emulation
 ├── id.rs            # Typed IDs (WorkspaceId, RoomId, TabId, PaneId)
+├── explorer/
+│   ├── mod.rs       # ExplorerState, FileEntry, tree scan/toggle operations
+│   └── icons.rs     # Nerd Font file extension icon lookup
 ├── notification/
 │   ├── mod.rs       # NotificationManager, NotificationEvent
 │   ├── crypto.rs    # AES-256-GCM encrypt/decrypt with machine-derived key
@@ -49,6 +52,7 @@ src/
         ├── terminal_widget.rs
         ├── workspace_panel.rs
         ├── room_panel.rs
+        ├── explorer_panel.rs
         ├── preset_selector.rs
         └── dialog.rs
 ```
