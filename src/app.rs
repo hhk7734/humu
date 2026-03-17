@@ -301,6 +301,7 @@ impl App {
         };
 
         let saved_panel_widths = state.panel_widths.unwrap_or([25, 25]);
+        let all_ws_ids: HashSet<WorkspaceId> = state.workspaces.iter().map(|w| w.id).collect();
 
         Ok(Self {
             config,
@@ -331,7 +332,7 @@ impl App {
             search_state: None,
             explorer_state: humu::explorer::ExplorerState::new(std::path::PathBuf::new()),
             room_cache: HashMap::new(),
-            expanded_workspaces: HashSet::new(),
+            expanded_workspaces: all_ws_ids,
             selected_tree_index: 0,
             state_path: humu_dir().join("state.yaml"),
             notification_manager,
@@ -1519,7 +1520,8 @@ impl App {
         let ws_widget = WorkspacePanel::new(&tree_items, &self.palette, &self.ui_config)
             .selected(Some(self.selected_tree_index))
             .focus(self.focus == FocusedPanel::Workspace)
-            .spinner(spinner_frame);
+            .spinner(spinner_frame)
+            .active(self.state.active_workspace_id, self.state.active_room_id);
         frame.render_widget(ws_widget, panel_chunks[0]);
 
         // Terminal area: tab bar (1 line) + pane area
@@ -2273,11 +2275,11 @@ impl App {
     fn handle_click(&mut self, x: u16, y: u16) {
         let pos = Position::new(x, y);
         if self.panel_rects.workspace.contains(pos) {
-            let row = y.saturating_sub(self.panel_rects.workspace.y + 1) as usize;
+            let visual_row = y.saturating_sub(self.panel_rects.workspace.y + 1) as usize;
             let tree = self.build_workspace_tree();
-            if row < tree.len() {
-                self.selected_tree_index = row;
-                let item = &tree[row];
+            if let Some(idx) = Self::visual_row_to_tree_index(&tree, visual_row) {
+                self.selected_tree_index = idx;
+                let item = &tree[idx];
                 match &item.kind {
                     TreeItemKind::Workspace { expanded } => {
                         if *expanded {
@@ -3155,6 +3157,11 @@ impl App {
                         } else {
                             self.expanded_workspaces.insert(item.workspace_id);
                         }
+                        // Re-clamp index after tree shape change
+                        let new_tree = self.build_workspace_tree();
+                        if !new_tree.is_empty() {
+                            self.selected_tree_index = self.selected_tree_index.min(new_tree.len() - 1);
+                        }
                     }
                     TreeItemKind::Room => {
                         // Switch to this room
@@ -3368,6 +3375,30 @@ impl App {
         }
 
         items
+    }
+
+    /// Map a visual row in the workspace panel to a tree item index.
+    /// Accounts for rooms with git stats taking 2 rows.
+    fn visual_row_to_tree_index(tree: &[WorkspaceTreeItem], visual_row: usize) -> Option<usize> {
+        let mut y = 0usize;
+        for (i, item) in tree.iter().enumerate() {
+            if y == visual_row {
+                return Some(i);
+            }
+            y += 1;
+            // Rooms with git stats take an extra row
+            if matches!(item.kind, TreeItemKind::Room) {
+                let (ahead, behind) = item.ahead_behind.unwrap_or((0, 0));
+                let (ins, del) = item.diff_stat.unwrap_or((0, 0));
+                if ahead > 0 || behind > 0 || ins > 0 || del > 0 {
+                    if y == visual_row {
+                        return Some(i); // clicked on stats line → same item
+                    }
+                    y += 1;
+                }
+            }
+        }
+        None
     }
 
     /// Collect pane IDs belonging to a specific room (live + suspended).

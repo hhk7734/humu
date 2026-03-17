@@ -33,6 +33,8 @@ pub struct WorkspacePanel<'a> {
     palette: &'a Palette,
     ui_config: &'a UiConfig,
     spinner_frame: &'a str,
+    active_ws: Option<WorkspaceId>,
+    active_room: Option<RoomId>,
 }
 
 impl<'a> WorkspacePanel<'a> {
@@ -48,6 +50,8 @@ impl<'a> WorkspacePanel<'a> {
             palette,
             ui_config,
             spinner_frame: "\u{280b}",
+            active_ws: None,
+            active_room: None,
         }
     }
 
@@ -63,6 +67,12 @@ impl<'a> WorkspacePanel<'a> {
 
     pub fn spinner(mut self, frame: &'a str) -> Self {
         self.spinner_frame = frame;
+        self
+    }
+
+    pub fn active(mut self, ws: Option<WorkspaceId>, room: Option<RoomId>) -> Self {
+        self.active_ws = ws;
+        self.active_room = room;
         self
     }
 }
@@ -97,6 +107,22 @@ impl Widget for WorkspacePanel<'_> {
             let is_selected = self.selected == Some(i);
             let max_width = inner.width as usize;
 
+            // Highlight the active workspace/room with bg_tertiary
+            let is_active = match &item.kind {
+                TreeItemKind::Workspace { .. } => self.active_ws == Some(item.workspace_id),
+                TreeItemKind::Room => {
+                    self.active_ws == Some(item.workspace_id)
+                        && self.active_room.is_some()
+                        && self.active_room == item.room_id
+                }
+            };
+            if is_active {
+                let bg = Style::default().bg(self.palette.bg_tertiary);
+                for bx in inner.x..inner.x + inner.width {
+                    buf[(bx, y)].set_style(bg);
+                }
+            }
+
             match &item.kind {
                 TreeItemKind::Workspace { expanded } => {
                     // Workspace row: "▸ name" (collapsed) or "▾ name" (expanded)
@@ -110,8 +136,9 @@ impl Widget for WorkspacePanel<'_> {
                     let suffix_len = if item.active { 2 } else { 0 };
                     let name_budget = max_width.saturating_sub(chevron_len + suffix_len);
 
-                    let display_name = if item.name.len() > name_budget && name_budget >= 3 {
-                        format!("{}...", &item.name[..name_budget - 3])
+                    let display_name = if item.name.chars().count() > name_budget && name_budget >= 3 {
+                        let truncated: String = item.name.chars().take(name_budget - 3).collect();
+                        format!("{truncated}...")
                     } else {
                         item.name.clone()
                     };
@@ -140,8 +167,9 @@ impl Widget for WorkspacePanel<'_> {
                     let suffix_len = if item.active { 2 } else { 0 };
                     let name_budget = max_width.saturating_sub(indent_len + suffix_len);
 
-                    let display_name = if item.name.len() > name_budget && name_budget >= 3 {
-                        format!("{}...", &item.name[..name_budget - 3])
+                    let display_name = if item.name.chars().count() > name_budget && name_budget >= 3 {
+                        let truncated: String = item.name.chars().take(name_budget - 3).collect();
+                        format!("{truncated}...")
                     } else {
                         item.name.clone()
                     };
@@ -164,7 +192,18 @@ impl Widget for WorkspacePanel<'_> {
                     let has_stats = ahead > 0 || behind > 0 || ins > 0 || del > 0;
 
                     if y < inner.y + inner.height && has_stats {
-                        let mut x = inner.x + 5; // align under room name
+                        // Fill background for active room stats line
+                        if is_active {
+                            let bg = Style::default().bg(self.palette.bg_tertiary);
+                            for bx in inner.x..inner.x + inner.width {
+                                buf[(bx, y)].set_style(bg);
+                            }
+                        }
+                        let mut x = inner.x + 4;
+
+                        // Git branch icon
+                        buf.set_string(x, y, "\u{e725} ", Style::default().fg(self.palette.fg_muted));
+                        x += 2;
 
                         let mut need_space = false;
 
@@ -208,7 +247,7 @@ impl Widget for WorkspacePanel<'_> {
                                 &text,
                                 Style::default().fg(self.palette.accent_green),
                             );
-                            x += text.len() as u16;
+                            x += text.chars().count() as u16;
                             need_space = true;
                         }
 
