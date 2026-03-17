@@ -2115,6 +2115,17 @@ impl App {
                 self.explorer_state.scan();
             }
 
+            Action::CopyPath => {
+                if let Some(entry) = self.explorer_state.selected_entry() {
+                    let abs_path = entry.path.to_string_lossy();
+                    use std::io::Write;
+                    let encoded = base64_encode(abs_path.as_bytes());
+                    let osc = format!("\x1b]52;c;{}\x07", encoded);
+                    let _ = stdout().write_all(osc.as_bytes());
+                    let _ = stdout().flush();
+                }
+            }
+
             _ => {}
         }
     }
@@ -2272,8 +2283,8 @@ impl App {
             if row < items.len() {
                 self.workspace_selected = Some(items[row].id);
                 self.switch_to_selected_room();
-                self.mode = Mode::Room;
-                self.focus = FocusedPanel::Room;
+                self.mode = Mode::Terminal;
+                self.focus = FocusedPanel::Terminal;
             } else {
                 self.mode = Mode::Workspace;
                 self.focus = FocusedPanel::Workspace;

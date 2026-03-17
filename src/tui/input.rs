@@ -52,6 +52,7 @@ pub enum Action {
     ScrollPageDown,
     DiffFile,
     ToggleIgnored,
+    CopyPath,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -222,6 +223,7 @@ fn handle_explorer(key: KeyEvent) -> Action {
             KeyCode::Right => return Action::Resize(Direction::Right),
             KeyCode::Enter => return Action::DiffFile,
             KeyCode::Char('I') => return Action::ToggleIgnored,
+            KeyCode::Char('C') => return Action::CopyPath,
             _ => {}
         }
     }
@@ -335,9 +337,10 @@ pub fn hint_click_action(mode: Mode, hint_index: usize) -> Option<Action> {
             0 => None,                                        // ↑↓ Navigate
             1 => Some(Action::Select),                        // Enter Open
             2 => Some(Action::DiffFile),                      // S+Enter Diff
-            3 => Some(Action::ToggleIgnored),                 // S+I Ignored
-            4 => None,                                        // S+←→ Resize
-            5 => Some(Action::EnterMode(Mode::Terminal)),     // Esc Back
+            3 => Some(Action::CopyPath),                      // S+C Copy
+            4 => Some(Action::ToggleIgnored),                 // S+I Ignored
+            5 => None,                                        // S+←→ Resize
+            6 => Some(Action::EnterMode(Mode::Terminal)),     // Esc Back
             _ => None,
         },
         Mode::Search => match hint_index {
