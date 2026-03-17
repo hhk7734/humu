@@ -38,17 +38,17 @@ src/
 ├── id.rs            # Typed IDs (WorkspaceId, RoomId, TabId, PaneId)
 ├── explorer/
 │   ├── mod.rs       # ExplorerState, FileEntry, tree scan/toggle operations
-│   └── icons.rs     # Nerd Font file extension icon lookup
+│   └── icons.rs     # Nerd Font file extension icon lookup with per-type colors
 ├── notification/
-│   ├── mod.rs       # NotificationManager, NotificationEvent
+│   ├── mod.rs       # NotificationManager, NotificationEvent, Channel<T>
 │   ├── crypto.rs    # AES-256-GCM encrypt/decrypt with machine-derived key
-│   ├── os.rs        # OsNotifier (notify-send + paplay)
+│   ├── os.rs        # OsNotifier (notify-send) + SoundNotifier (paplay)
 │   └── telegram.rs  # TelegramNotifier (Bot API via ureq)
 ├── hook/
 │   └── http.rs      # HTTP hook server (axum) for Claude Code events
 └── tui/
     ├── mod.rs
-    ├── input.rs       # Modal keybinding dispatch (Terminal/Locked/Pane/Tab/Workspace/Room/Search)
+    ├── input.rs       # Modal keybinding dispatch (Terminal/Locked/Pane/Tab/Workspace/Room/Explorer/Search)
     ├── search.rs      # SearchState, SearchMatch, regex engine, scrollback text extraction
     ├── completion.rs  # Fuzzy path autocomplete with cross-segment matching
     ├── layout.rs      # SplitTree, TabContainer, PaneId
