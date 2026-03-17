@@ -252,20 +252,20 @@ pub struct HumuState {
     pub active_room_id: Option<RoomId>,
     #[serde(default)]
     pub workspaces: Vec<WorkspaceEntry>,
-    /// Panel widths: [workspace_panel, room_panel, explorer_panel]. Persisted across restarts.
+    /// Panel widths: [workspace_panel, explorer_panel]. Persisted across restarts.
     #[serde(default, deserialize_with = "deserialize_panel_widths")]
-    pub panel_widths: Option<[u16; 3]>,
+    pub panel_widths: Option<[u16; 2]>,
 }
 
-fn deserialize_panel_widths<'de, D>(deserializer: D) -> Result<Option<[u16; 3]>, D::Error>
+fn deserialize_panel_widths<'de, D>(deserializer: D) -> Result<Option<[u16; 2]>, D::Error>
 where
     D: Deserializer<'de>,
 {
     let opt: Option<Vec<u16>> = Option::deserialize(deserializer)?;
     Ok(opt.map(|v| match v.len() {
-        2 => [v[0], v[1], 25],
-        3 => [v[0], v[1], v[2]],
-        _ => [20, 18, 25],
+        2 => [v[0], v[1]],
+        3 => [v[0], v[2]], // legacy: [workspace, room, explorer] → [workspace, explorer]
+        _ => [25, 25],
     }))
 }
 

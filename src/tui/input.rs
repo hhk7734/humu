@@ -7,7 +7,6 @@ pub enum Mode {
     Pane,
     Tab,
     Workspace,
-    Room,
     Explorer,
     EnterSearch,
     Search,
@@ -28,7 +27,6 @@ pub enum Action {
     NextTab,
     GoToTab(usize),
     FocusWorkspacePanel,
-    FocusRoomPanel,
     OpenSettings,
     NavigateUp,
     NavigateDown,
@@ -70,7 +68,6 @@ pub fn handle_key(mode: Mode, key: KeyEvent) -> Action {
         Mode::Pane => handle_pane(key),
         Mode::Tab => handle_tab(key),
         Mode::Workspace => handle_workspace(key),
-        Mode::Room => handle_room(key),
         Mode::Explorer => handle_explorer(key),
         Mode::EnterSearch => handle_enter_search(key),
         Mode::Search => handle_search(key),
@@ -84,7 +81,6 @@ fn handle_terminal(key: KeyEvent) -> Action {
             KeyCode::Char('p') => Action::EnterMode(Mode::Pane),
             KeyCode::Char('t') => Action::EnterMode(Mode::Tab),
             KeyCode::Char('w') => Action::EnterMode(Mode::Workspace),
-            KeyCode::Char('r') => Action::EnterMode(Mode::Room),
             KeyCode::Char('e') => Action::EnterMode(Mode::Explorer),
             KeyCode::Char('f') => Action::EnterMode(Mode::EnterSearch),
             KeyCode::Char('q') => Action::Quit,
@@ -186,30 +182,6 @@ fn handle_workspace(key: KeyEvent) -> Action {
     }
 }
 
-fn handle_room(key: KeyEvent) -> Action {
-    if let Some(action) = check_mode_switch(Mode::Room, key) {
-        return action;
-    }
-    if let Some(action) = check_shared_alt(key) {
-        return action;
-    }
-    if key.modifiers.contains(KeyModifiers::SHIFT) {
-        match key.code {
-            KeyCode::Left => return Action::Resize(Direction::Left),
-            KeyCode::Right => return Action::Resize(Direction::Right),
-            _ => {}
-        }
-    }
-    match key.code {
-        KeyCode::Down => Action::NavigateDown,
-        KeyCode::Up => Action::NavigateUp,
-        KeyCode::Enter => Action::Select,
-        KeyCode::Char('n') => Action::Create,
-        KeyCode::Char('d') => Action::Delete,
-        _ => Action::None,
-    }
-}
-
 fn handle_explorer(key: KeyEvent) -> Action {
     if let Some(action) = check_mode_switch(Mode::Explorer, key) {
         return action;
@@ -266,8 +238,8 @@ fn handle_search(key: KeyEvent) -> Action {
 }
 
 /// Universal mode switching via Ctrl+key.
-/// Ctrl+w always enters Workspace, Ctrl+r always enters Room,
-/// Ctrl+t always enters Terminal, Ctrl+p toggles Pane/Terminal.
+/// Ctrl+w always enters Workspace, Ctrl+t always enters Terminal,
+/// Ctrl+p toggles Pane/Terminal.
 fn check_mode_switch(current: Mode, key: KeyEvent) -> Option<Action> {
     if !key.modifiers.contains(KeyModifiers::CONTROL) {
         return None;
@@ -275,7 +247,6 @@ fn check_mode_switch(current: Mode, key: KeyEvent) -> Option<Action> {
     match key.code {
         KeyCode::Char('q') => Some(Action::Quit),
         KeyCode::Char('w') => Some(Action::EnterMode(Mode::Workspace)),
-        KeyCode::Char('r') => Some(Action::EnterMode(Mode::Room)),
         KeyCode::Char('e') => Some(Action::EnterMode(Mode::Explorer)),
         KeyCode::Char('t') => Some(Action::EnterMode(Mode::Terminal)),
         KeyCode::Char('p') => Some(if current == Mode::Pane {
@@ -296,8 +267,7 @@ pub fn hint_click_action(mode: Mode, hint_index: usize) -> Option<Action> {
             2 => Some(Action::EnterMode(Mode::Pane)),        // p PANE
             3 => Some(Action::EnterMode(Mode::Tab)),         // t TAB
             4 => Some(Action::EnterMode(Mode::Workspace)),   // w WORKSPACE
-            5 => Some(Action::EnterMode(Mode::Room)),        // r ROOM
-            6 => Some(Action::OpenSettings),                  // , SET
+            5 => Some(Action::OpenSettings),                  // , SET
             _ => None,
         },
         Mode::Pane => match hint_index {
@@ -318,14 +288,6 @@ pub fn hint_click_action(mode: Mode, hint_index: usize) -> Option<Action> {
             _ => None,
         },
         Mode::Workspace => match hint_index {
-            0 => None,                                        // ↑↓ Navigate
-            1 => Some(Action::Select),                        // Enter Select
-            2 => Some(Action::Create),                        // n New
-            3 => Some(Action::Delete),                        // d Delete
-            4 => None,                                        // S+←→ Resize
-            _ => None,
-        },
-        Mode::Room => match hint_index {
             0 => None,                                        // ↑↓ Navigate
             1 => Some(Action::Select),                        // Enter Select
             2 => Some(Action::Create),                        // n New

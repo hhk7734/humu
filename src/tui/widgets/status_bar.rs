@@ -12,7 +12,6 @@ pub fn mode_label(mode: Mode) -> &'static str {
         Mode::Pane => "PANE",
         Mode::Tab => "TAB",
         Mode::Workspace => "WORKSPACE",
-        Mode::Room => "ROOM",
         Mode::Explorer => "EXPLORER",
         Mode::EnterSearch | Mode::Search => "SEARCH",
     }
@@ -26,7 +25,6 @@ pub fn mode_hints(mode: Mode) -> Vec<(&'static str, &'static str)> {
             ("p", "PANE"),
             ("t", "TAB"),
             ("w", "WORKSPACE"),
-            ("r", "ROOM"),
             (",", "SET"),
         ],
         Mode::Locked => vec![("Ctrl+g", "UNLOCK")],
@@ -46,13 +44,6 @@ pub fn mode_hints(mode: Mode) -> Vec<(&'static str, &'static str)> {
             ("Esc", "Back"),
         ],
         Mode::Workspace => vec![
-            ("\u{2191}\u{2193}", "Navigate"),
-            ("Enter", "Select"),
-            ("n", "New"),
-            ("d", "Delete"),
-            ("S+\u{2190}\u{2192}", "Resize"),
-        ],
-        Mode::Room => vec![
             ("\u{2191}\u{2193}", "Navigate"),
             ("Enter", "Select"),
             ("n", "New"),

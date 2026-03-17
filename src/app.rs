@@ -10,11 +10,10 @@ use humu::tui::input::{handle_key, hint_click_action, hint_click_action_right, A
 use humu::tui::layout::{PaneId, SplitDirection, SplitTree, TabContainer};
 use humu::tui::widgets::dialog::{Dialog, DialogField};
 use humu::tui::widgets::preset_selector::PresetSelector;
-use humu::tui::widgets::room_panel::{RoomItem, RoomPanel};
 use humu::tui::widgets::status_bar::{self, StatusBar};
 use humu::tui::widgets::terminal_area::TabBar;
 use humu::tui::widgets::terminal_widget::TerminalWidget;
-use humu::tui::widgets::workspace_panel::{WorkspaceItem, WorkspacePanel};
+use humu::tui::widgets::workspace_panel::{TreeItemKind, WorkspacePanel, WorkspaceTreeItem};
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
 use crossterm::terminal::{
@@ -23,7 +22,7 @@ use crossterm::terminal::{
 use crossterm::ExecutableCommand;
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use ratatui::Terminal;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::stdout;
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -36,7 +35,6 @@ const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusedPanel {
     Workspace,
-    Room,
     Terminal,
     Explorer,
 }
@@ -51,12 +49,22 @@ struct CachedRoomInfo {
     ahead_behind: Option<(usize, usize)>,
 }
 
+/// Internal room item with resolved ID and agent activity flag.
+struct CachedRoomItem {
+    id: Option<RoomId>,
+    name: String,
+    #[allow(dead_code)]
+    is_default: bool,
+    active: bool,
+    diff_stat: Option<(usize, usize)>,
+    ahead_behind: Option<(usize, usize)>,
+}
+
 /// Tracks the last-rendered rects for each major panel so mouse clicks can be
 /// hit-tested without re-running the layout computation.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PanelRects {
     pub workspace: Rect,
-    pub room: Rect,
     pub terminal: Rect,
     pub explorer: Rect,
     pub tab_bar: Rect,
@@ -184,8 +192,8 @@ pub struct App {
     pub hook_port: Option<u16>,
     /// Last-rendered panel rects used for mouse hit-testing.
     pub panel_rects: PanelRects,
-    /// Panel widths: [workspace, room, explorer]. Used in the layout constraints.
-    pub panel_widths: [u16; 3],
+    /// Panel widths: [workspace, explorer]. Used in the layout constraints.
+    pub panel_widths: [u16; 2],
     /// True when a mouse-down was forwarded to the focused PTY (not humu UI).
     pub pty_mouse_active: bool,
     /// Whether the terminal window is focused (for focus-aware notifications).
@@ -205,8 +213,12 @@ pub struct App {
     pub search_state: Option<SearchState>,
     /// File explorer state for the right-side panel.
     pub explorer_state: humu::explorer::ExplorerState,
-    /// Cached room list + git stats, refreshed periodically (~3s).
-    room_cache: Vec<CachedRoomInfo>,
+    /// Cached room list + git stats per workspace, refreshed periodically (~3s).
+    room_cache: HashMap<WorkspaceId, Vec<CachedRoomInfo>>,
+    /// Which workspace IDs are expanded in the workspace tree.
+    expanded_workspaces: HashSet<WorkspaceId>,
+    /// Cursor position in the flat workspace tree (for keyboard navigation).
+    selected_tree_index: usize,
     /// Cached path to state.yaml.
     state_path: std::path::PathBuf,
     /// Notification manager for OS/Telegram alerts.
@@ -288,7 +300,7 @@ impl App {
             rounded_corners: config.ui.rounded_corners,
         };
 
-        let saved_panel_widths = state.panel_widths.unwrap_or([20, 18, 25]);
+        let saved_panel_widths = state.panel_widths.unwrap_or([25, 25]);
 
         Ok(Self {
             config,
@@ -318,7 +330,9 @@ impl App {
             suspended_rooms: HashMap::new(),
             search_state: None,
             explorer_state: humu::explorer::ExplorerState::new(std::path::PathBuf::new()),
-            room_cache: Vec::new(),
+            room_cache: HashMap::new(),
+            expanded_workspaces: HashSet::new(),
+            selected_tree_index: 0,
             state_path: humu_dir().join("state.yaml"),
             notification_manager,
             config_path,
@@ -1422,8 +1436,7 @@ impl App {
                     self.save_state();
                 } else if was_active {
                     // Select first available workspace.
-                    let items = self.workspace_items();
-                    if let Some(first) = items.first() {
+                    if let Some(first) = self.state.workspaces.first() {
                         self.workspace_selected = Some(first.id);
                     }
                     self.room_selected = None;
@@ -1473,7 +1486,7 @@ impl App {
     fn render(&mut self, frame: &mut ratatui::Frame) {
         let size = frame.area();
 
-        // Main layout: [workspace | room | terminal] + status bar
+        // Main layout: [workspace | terminal | explorer] + status bar
         let main_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(1), Constraint::Length(1)])
@@ -1483,19 +1496,17 @@ impl App {
             .direction(Direction::Horizontal)
             .constraints([
                 Constraint::Length(self.panel_widths[0]),
-                Constraint::Length(self.panel_widths[1]),
                 Constraint::Min(1),
-                Constraint::Length(self.panel_widths[2]),
+                Constraint::Length(self.panel_widths[1]),
             ])
             .split(main_chunks[0]);
 
         // Store rects for mouse hit-testing.
-        let tab_bar_rect = Rect::new(panel_chunks[2].x, panel_chunks[2].y, panel_chunks[2].width, 1);
+        let tab_bar_rect = Rect::new(panel_chunks[1].x, panel_chunks[1].y, panel_chunks[1].width, 1);
         self.panel_rects = PanelRects {
             workspace: panel_chunks[0],
-            room: panel_chunks[1],
-            terminal: panel_chunks[2],
-            explorer: panel_chunks[3],
+            terminal: panel_chunks[1],
+            explorer: panel_chunks[2],
             tab_bar: tab_bar_rect,
             status_bar: main_chunks[1],
         };
@@ -1503,30 +1514,16 @@ impl App {
         // Compute animated spinner frame (~100ms per frame at 50ms tick).
         let spinner_frame = SPINNER_FRAMES[self.spin_tick / 2 % SPINNER_FRAMES.len()];
 
-        // Workspace panel
-        let workspaces = self.workspace_items();
-        let ws_selected_idx = self.workspace_selected.and_then(|id| {
-            workspaces.iter().position(|w| w.id == id)
-        });
-        let ws_widget = WorkspacePanel::new(&workspaces, &self.palette, &self.ui_config)
-            .selected(ws_selected_idx)
+        // Workspace tree panel (workspaces + rooms)
+        let tree_items = self.build_workspace_tree();
+        let ws_widget = WorkspacePanel::new(&tree_items, &self.palette, &self.ui_config)
+            .selected(Some(self.selected_tree_index))
             .focus(self.focus == FocusedPanel::Workspace)
             .spinner(spinner_frame);
         frame.render_widget(ws_widget, panel_chunks[0]);
 
-        // Room panel
-        let rooms = self.room_items();
-        let room_selected_idx = self.room_selected.and_then(|id| {
-            rooms.iter().position(|r| r.id == Some(id))
-        });
-        let room_widget = RoomPanel::new(&rooms, &self.palette, &self.ui_config)
-            .selected(room_selected_idx)
-            .focus(self.focus == FocusedPanel::Room)
-            .spinner(spinner_frame);
-        frame.render_widget(room_widget, panel_chunks[1]);
-
         // Terminal area: tab bar (1 line) + pane area
-        self.render_terminal_area(frame, panel_chunks[2]);
+        self.render_terminal_area(frame, panel_chunks[1]);
 
         // Explorer panel
         let explorer_widget = humu::tui::widgets::explorer_panel::ExplorerPanel::new(
@@ -1534,7 +1531,7 @@ impl App {
             &self.palette,
             &self.ui_config,
         ).focus(self.focus == FocusedPanel::Explorer);
-        frame.render_widget(explorer_widget, panel_chunks[3]);
+        frame.render_widget(explorer_widget, panel_chunks[2]);
 
         // Status bar
         let mut status = StatusBar::new(self.mode, &self.palette, &self.ui_config);
@@ -1935,7 +1932,6 @@ impl App {
                 self.mode = mode;
                 match mode {
                     Mode::Workspace => self.focus = FocusedPanel::Workspace,
-                    Mode::Room => self.focus = FocusedPanel::Room,
                     Mode::Explorer => {
                         self.focus = FocusedPanel::Explorer;
                         if let Some(path) = self.current_room_path() {
@@ -1951,7 +1947,6 @@ impl App {
             Action::Quit => self.running = false,
 
             Action::FocusWorkspacePanel => self.focus = FocusedPanel::Workspace,
-            Action::FocusRoomPanel => self.focus = FocusedPanel::Room,
 
             Action::NavigateUp => self.navigate(-1),
             Action::NavigateDown => self.navigate(1),
@@ -2279,29 +2274,30 @@ impl App {
         let pos = Position::new(x, y);
         if self.panel_rects.workspace.contains(pos) {
             let row = y.saturating_sub(self.panel_rects.workspace.y + 1) as usize;
-            let items = self.workspace_items();
-            if row < items.len() {
-                self.workspace_selected = Some(items[row].id);
-                self.switch_to_selected_room();
-                self.mode = Mode::Terminal;
-                self.focus = FocusedPanel::Terminal;
+            let tree = self.build_workspace_tree();
+            if row < tree.len() {
+                self.selected_tree_index = row;
+                let item = &tree[row];
+                match &item.kind {
+                    TreeItemKind::Workspace { expanded } => {
+                        if *expanded {
+                            self.expanded_workspaces.remove(&item.workspace_id);
+                        } else {
+                            self.expanded_workspaces.insert(item.workspace_id);
+                        }
+                    }
+                    TreeItemKind::Room => {
+                        // Click on a room: switch to it
+                        self.workspace_selected = Some(item.workspace_id);
+                        self.room_selected = item.room_id;
+                        self.switch_to_selected_room();
+                        self.mode = Mode::Terminal;
+                        self.focus = FocusedPanel::Terminal;
+                    }
+                }
             } else {
                 self.mode = Mode::Workspace;
                 self.focus = FocusedPanel::Workspace;
-            }
-        } else if self.panel_rects.room.contains(pos) {
-            let row = y.saturating_sub(self.panel_rects.room.y + 1) as usize;
-            let items = self.room_items();
-            if row < items.len() {
-                if let Some(id) = items[row].id {
-                    self.room_selected = Some(id);
-                }
-                self.select_current();
-                self.mode = Mode::Terminal;
-                self.focus = FocusedPanel::Terminal;
-            } else {
-                self.mode = Mode::Room;
-                self.focus = FocusedPanel::Room;
             }
         } else if self.panel_rects.tab_bar.contains(pos) {
             // Determine which tab or "+" was clicked.
@@ -2589,7 +2585,7 @@ impl App {
                 self.panel_widths[0] =
                     (self.panel_widths[0] as i16 + delta).clamp(5, 60) as u16;
             }
-            FocusedPanel::Room => {
+            FocusedPanel::Explorer => {
                 let delta: i16 = match dir {
                     NavDirection::Right => 1,
                     NavDirection::Left => -1,
@@ -2597,15 +2593,6 @@ impl App {
                 };
                 self.panel_widths[1] =
                     (self.panel_widths[1] as i16 + delta).clamp(5, 60) as u16;
-            }
-            FocusedPanel::Explorer => {
-                let delta: i16 = match dir {
-                    NavDirection::Right => 1,
-                    NavDirection::Left => -1,
-                    _ => 0,
-                };
-                self.panel_widths[2] =
-                    (self.panel_widths[2] as i16 + delta).clamp(5, 60) as u16;
             }
         }
     }
@@ -2649,90 +2636,110 @@ impl App {
         self.popup = PopupState::PresetSelector { presets, selected: 0, action };
     }
 
-    /// Show the appropriate create dialog based on focused panel.
+    /// Show the appropriate create dialog based on focused panel and tree selection.
     fn show_create_dialog(&mut self) {
         match self.focus {
             FocusedPanel::Workspace => {
-                let fields = vec![
-                    DialogField::Select {
-                        label: "Mode".to_string(),
-                        options: vec![
-                            "Clone".to_string(),
-                            "Existing".to_string(),
-                            "New".to_string(),
-                        ],
-                        selected: 0,
-                    },
-                    DialogField::TextInput {
-                        label: "Path".to_string(),
-                        value: String::new(),
-                    },
-                    DialogField::TextInput {
-                        label: "URL (Clone only)".to_string(),
-                        value: String::new(),
-                    },
-                ];
-                self.popup = PopupState::WorkspaceCreate {
-                    fields,
-                    focused_field: 0,
-                    completions: vec![],
-                    completion_selected: None,
+                // Determine whether to create workspace or room based on tree selection.
+                let tree = self.build_workspace_tree();
+                let on_room_or_expanded_ws = if self.selected_tree_index < tree.len() {
+                    match &tree[self.selected_tree_index].kind {
+                        TreeItemKind::Room => true,
+                        TreeItemKind::Workspace { expanded } => *expanded,
+                    }
+                } else {
+                    false
                 };
-            }
-            FocusedPanel::Room => {
-                let fields = vec![
-                    DialogField::TextInput {
-                        label: "Branch name".to_string(),
-                        value: String::new(),
-                    },
-                    DialogField::TextInput {
-                        label: "Base branch".to_string(),
-                        value: String::new(),
-                    },
-                ];
-                self.popup = PopupState::RoomCreate { fields, focused_field: 0 };
+
+                if on_room_or_expanded_ws && self.state.active_workspace_id.is_some() {
+                    // Create room
+                    let fields = vec![
+                        DialogField::TextInput {
+                            label: "Branch name".to_string(),
+                            value: String::new(),
+                        },
+                        DialogField::TextInput {
+                            label: "Base branch".to_string(),
+                            value: String::new(),
+                        },
+                    ];
+                    self.popup = PopupState::RoomCreate { fields, focused_field: 0 };
+                } else {
+                    // Create workspace
+                    let fields = vec![
+                        DialogField::Select {
+                            label: "Mode".to_string(),
+                            options: vec![
+                                "Clone".to_string(),
+                                "Existing".to_string(),
+                                "New".to_string(),
+                            ],
+                            selected: 0,
+                        },
+                        DialogField::TextInput {
+                            label: "Path".to_string(),
+                            value: String::new(),
+                        },
+                        DialogField::TextInput {
+                            label: "URL (Clone only)".to_string(),
+                            value: String::new(),
+                        },
+                    ];
+                    self.popup = PopupState::WorkspaceCreate {
+                        fields,
+                        focused_field: 0,
+                        completions: vec![],
+                        completion_selected: None,
+                    };
+                }
             }
             FocusedPanel::Terminal => {}
             FocusedPanel::Explorer => {}
         }
     }
 
-    /// Show the appropriate delete dialog based on focused panel.
+    /// Show the appropriate delete dialog based on focused panel and tree selection.
     fn show_delete_dialog(&mut self) {
         match self.focus {
             FocusedPanel::Workspace => {
-                let ws_name = match self.workspace_selected
-                    .and_then(|id| self.state.ws_by_id(id))
-                    .map(|w| w.name.clone())
-                {
-                    Some(n) => n,
-                    None => return, // nothing selected
-                };
-                let fields = vec![DialogField::Confirm {
-                    message: format!("Delete workspace '{ws_name}'? Also remove from disk?"),
-                    yes: false,
-                }];
-                self.popup = PopupState::WorkspaceDelete {
-                    fields,
-                    focused_field: 0,
-                    workspace_name: ws_name,
-                };
-            }
-            FocusedPanel::Room => {
-                // Use active room as the target.
-                let branch = match self.active_room_name() {
-                    Some(r) => r,
-                    None => return,
-                };
-                let fields = vec![DialogField::Confirm {
-                    message: "Delete room? This removes worktree and branch.".to_string(),
-                    yes: false,
-                }];
-                self.popup = PopupState::RoomDelete {
-                    fields,
-                    focused_field: 0,
-                    branch,
-                };
+                let tree = self.build_workspace_tree();
+                if self.selected_tree_index >= tree.len() { return; }
+                let item = &tree[self.selected_tree_index];
+                match &item.kind {
+                    TreeItemKind::Workspace { .. } => {
+                        let ws_name = match self.state.ws_by_id(item.workspace_id) {
+                            Some(w) => w.name.clone(),
+                            None => return,
+                        };
+                        let fields = vec![DialogField::Confirm {
+                            message: format!("Delete workspace '{ws_name}'? Also remove from disk?"),
+                            yes: false,
+                        }];
+                        self.popup = PopupState::WorkspaceDelete {
+                            fields,
+                            focused_field: 0,
+                            workspace_name: ws_name,
+                        };
+                    }
+                    TreeItemKind::Room => {
+                        let branch = match self.state.ws_by_id(item.workspace_id)
+                            .and_then(|ws| item.room_id.and_then(|rid| ws.room_by_id(rid)))
+                            .map(|r| r.name.clone())
+                        {
+                            Some(b) => b,
+                            None => return,
+                        };
+                        let fields = vec![DialogField::Confirm {
+                            message: "Delete room? This removes worktree and branch.".to_string(),
+                            yes: false,
+                        }];
+                        self.popup = PopupState::RoomDelete {
+                            fields,
+                            focused_field: 0,
+                            branch,
+                        };
+                    }
+                }
             }
             FocusedPanel::Terminal => {}
             FocusedPanel::Explorer => {}
@@ -3117,24 +3124,11 @@ impl App {
     fn navigate(&mut self, delta: i32) {
         match self.focus {
             FocusedPanel::Workspace => {
-                let items = self.workspace_items();
-                if items.is_empty() { return; }
-                let current = self.workspace_selected
-                    .and_then(|id| items.iter().position(|w| w.id == id))
-                    .unwrap_or(0) as i32;
-                let next = (current + delta).clamp(0, items.len() as i32 - 1) as usize;
-                self.workspace_selected = Some(items[next].id);
-            }
-            FocusedPanel::Room => {
-                let items = self.room_items();
-                if items.is_empty() { return; }
-                let current = self.room_selected
-                    .and_then(|id| items.iter().position(|r| r.id == Some(id)))
-                    .unwrap_or(0) as i32;
-                let next = (current + delta).clamp(0, items.len() as i32 - 1) as usize;
-                if let Some(id) = items[next].id {
-                    self.room_selected = Some(id);
-                }
+                let tree = self.build_workspace_tree();
+                if tree.is_empty() { return; }
+                let current = self.selected_tree_index as i32;
+                let next = (current + delta).clamp(0, tree.len() as i32 - 1) as usize;
+                self.selected_tree_index = next;
             }
             FocusedPanel::Terminal => {}
             FocusedPanel::Explorer => {
@@ -3150,14 +3144,27 @@ impl App {
     fn select_current(&mut self) {
         match self.focus {
             FocusedPanel::Workspace => {
-                self.switch_to_selected_room();
-                self.mode = Mode::Terminal;
-                self.focus = FocusedPanel::Terminal;
-            }
-            FocusedPanel::Room => {
-                self.switch_to_selected_room();
-                self.mode = Mode::Terminal;
-                self.focus = FocusedPanel::Terminal;
+                let tree = self.build_workspace_tree();
+                if self.selected_tree_index >= tree.len() { return; }
+                let item = tree[self.selected_tree_index].clone();
+                match &item.kind {
+                    TreeItemKind::Workspace { expanded } => {
+                        // Toggle expand/collapse
+                        if *expanded {
+                            self.expanded_workspaces.remove(&item.workspace_id);
+                        } else {
+                            self.expanded_workspaces.insert(item.workspace_id);
+                        }
+                    }
+                    TreeItemKind::Room => {
+                        // Switch to this room
+                        self.workspace_selected = Some(item.workspace_id);
+                        self.room_selected = item.room_id;
+                        self.switch_to_selected_room();
+                        self.mode = Mode::Terminal;
+                        self.focus = FocusedPanel::Terminal;
+                    }
+                }
             }
             FocusedPanel::Terminal => {}
             FocusedPanel::Explorer => {
@@ -3319,26 +3326,48 @@ impl App {
         })
     }
 
-    fn workspace_items(&self) -> Vec<WorkspaceItem> {
-        let mut items: Vec<_> = self
-            .state
-            .workspaces
-            .iter()
-            .map(|ws| {
-                let active = self.has_active_agent(&self.pane_ids_for_workspace(ws.id));
-                WorkspaceItem { id: ws.id, name: ws.name.clone(), active }
-            })
-            .collect();
-        items.sort_by(|a, b| a.name.cmp(&b.name));
-        items
-    }
+    /// Build a flattened workspace tree for rendering. Workspaces are sorted
+    /// alphabetically. Expanded workspaces show their rooms as children. The
+    /// active workspace is always expanded.
+    fn build_workspace_tree(&self) -> Vec<WorkspaceTreeItem> {
+        let mut ws_list: Vec<_> = self.state.workspaces.iter().collect();
+        ws_list.sort_by(|a, b| a.name.cmp(&b.name));
 
-    fn room_items(&self) -> Vec<RoomItem> {
-        let ws_id = match self.state.active_workspace_id {
-            Some(id) => id,
-            None => return vec![],
-        };
-        self.room_items_for_workspace(ws_id)
+        let active_ws_id = self.state.active_workspace_id;
+        let mut items = Vec::new();
+
+        for ws in ws_list {
+            let ws_active = self.has_active_agent(&self.pane_ids_for_workspace(ws.id));
+            let expanded = self.expanded_workspaces.contains(&ws.id)
+                || active_ws_id == Some(ws.id);
+
+            items.push(WorkspaceTreeItem {
+                kind: TreeItemKind::Workspace { expanded },
+                name: ws.name.clone(),
+                active: ws_active,
+                workspace_id: ws.id,
+                room_id: None,
+                diff_stat: None,
+                ahead_behind: None,
+            });
+
+            if expanded {
+                let room_items = self.room_items_for_workspace(ws.id);
+                for r in room_items {
+                    items.push(WorkspaceTreeItem {
+                        kind: TreeItemKind::Room,
+                        name: r.name.clone(),
+                        active: r.active,
+                        workspace_id: ws.id,
+                        room_id: r.id,
+                        diff_stat: r.diff_stat,
+                        ahead_behind: r.ahead_behind,
+                    });
+                }
+            }
+        }
+
+        items
     }
 
     /// Collect pane IDs belonging to a specific room (live + suspended).
@@ -3357,50 +3386,57 @@ impl App {
         ids
     }
 
-    /// Refresh cached room list + git stats for the active workspace.
+    /// Refresh cached room list + git stats for the active workspace and all
+    /// expanded workspaces (so the tree panel can display room data).
     fn refresh_room_cache(&mut self) {
-        let ws_id = match self.state.active_workspace_id {
-            Some(id) => id,
-            None => return,
-        };
-        let ws = match self.state.ws_by_id(ws_id) {
-            Some(ws) => ws,
-            None => return,
-        };
         let mgr = RoomManager::new();
-        if let Ok(rooms) = mgr.list(&ws.path) {
-            self.room_cache = rooms
-                .into_iter()
-                .map(|r| {
-                    let diff = mgr.diff_stat(&r.path);
-                    let ab = mgr.ahead_behind(&r.path);
-                    CachedRoomInfo {
-                        branch: r.branch,
-                        path: r.path,
-                        is_default: r.is_default,
-                        diff_stat: diff,
-                        ahead_behind: ab,
-                    }
-                })
-                .collect();
+        // Collect workspace IDs that need refreshing: active + expanded.
+        let mut ws_ids: HashSet<WorkspaceId> = self.expanded_workspaces.clone();
+        if let Some(id) = self.state.active_workspace_id {
+            ws_ids.insert(id);
+        }
+        for ws_id in ws_ids {
+            let ws = match self.state.ws_by_id(ws_id) {
+                Some(ws) => ws,
+                None => continue,
+            };
+            if let Ok(rooms) = mgr.list(&ws.path) {
+                let cached: Vec<CachedRoomInfo> = rooms
+                    .into_iter()
+                    .map(|r| {
+                        let diff = mgr.diff_stat(&r.path);
+                        let ab = mgr.ahead_behind(&r.path);
+                        CachedRoomInfo {
+                            branch: r.branch,
+                            path: r.path,
+                            is_default: r.is_default,
+                            diff_stat: diff,
+                            ahead_behind: ab,
+                        }
+                    })
+                    .collect();
+                self.room_cache.insert(ws_id, cached);
+            }
         }
     }
 
     /// List rooms for a specific workspace by ID, with agent activity flags.
-    /// Uses the cached room list — no git subprocesses.
-    fn room_items_for_workspace(&self, ws_id: WorkspaceId) -> Vec<RoomItem> {
+    /// Uses the cached room list -- no git subprocesses.
+    fn room_items_for_workspace(&self, ws_id: WorkspaceId) -> Vec<CachedRoomItem> {
         let ws = match self.state.ws_by_id(ws_id) {
             Some(ws) => ws,
             None => return vec![],
         };
-        self.room_cache
+        let empty = Vec::new();
+        let cache = self.room_cache.get(&ws_id).unwrap_or(&empty);
+        cache
             .iter()
             .map(|r| {
                 let room_id = ws.room_by_name(&r.branch).map(|e| e.id);
                 let active = room_id
                     .map(|rid| self.has_active_agent(&self.pane_ids_for_room(ws_id, rid)))
                     .unwrap_or(false);
-                RoomItem {
+                CachedRoomItem {
                     id: room_id,
                     name: r.branch.clone(),
                     is_default: r.is_default,
@@ -3823,14 +3859,6 @@ impl App {
     fn active_workspace_name(&self) -> Option<String> {
         let id = self.state.active_workspace_id?;
         self.state.ws_by_id(id).map(|w| w.name.clone())
-    }
-
-    /// Return the name of the active room, looked up by ID.
-    fn active_room_name(&self) -> Option<String> {
-        let id = self.state.active_room_id?;
-        let ws_id = self.state.active_workspace_id?;
-        let ws = self.state.ws_by_id(ws_id)?;
-        ws.room_by_id(id).map(|r| r.name.clone())
     }
 
 }

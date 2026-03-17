@@ -1,11 +1,33 @@
+use crate::id::{RoomId, WorkspaceId};
 use crate::tui::theme::{Palette, UiConfig};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Widget};
 
+/// Kinds of items in the workspace tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TreeItemKind {
+    Workspace { expanded: bool },
+    Room,
+}
+
+/// A single row in the flattened workspace tree.
+#[derive(Debug, Clone)]
+pub struct WorkspaceTreeItem {
+    pub kind: TreeItemKind,
+    pub name: String,
+    pub active: bool,
+    pub workspace_id: WorkspaceId,
+    pub room_id: Option<RoomId>,
+    /// (insertions, deletions) from `git diff --shortstat`
+    pub diff_stat: Option<(usize, usize)>,
+    /// (ahead, behind) commits relative to upstream
+    pub ahead_behind: Option<(usize, usize)>,
+}
+
 pub struct WorkspacePanel<'a> {
-    workspaces: &'a [WorkspaceItem],
+    items: &'a [WorkspaceTreeItem],
     selected: Option<usize>,
     has_focus: bool,
     palette: &'a Palette,
@@ -13,21 +35,19 @@ pub struct WorkspacePanel<'a> {
     spinner_frame: &'a str,
 }
 
-pub struct WorkspaceItem {
-    pub id: crate::id::WorkspaceId,
-    pub name: String,
-    pub active: bool,
-}
-
 impl<'a> WorkspacePanel<'a> {
-    pub fn new(workspaces: &'a [WorkspaceItem], palette: &'a Palette, ui_config: &'a UiConfig) -> Self {
+    pub fn new(
+        items: &'a [WorkspaceTreeItem],
+        palette: &'a Palette,
+        ui_config: &'a UiConfig,
+    ) -> Self {
         Self {
-            workspaces,
+            items,
             selected: None,
             has_focus: false,
             palette,
             ui_config,
-            spinner_frame: "⠋",
+            spinner_frame: "\u{280b}",
         }
     }
 
@@ -69,40 +89,147 @@ impl Widget for WorkspacePanel<'_> {
         let inner = block.inner(area);
         block.render(area, buf);
 
-        for (i, ws) in self.workspaces.iter().enumerate() {
-            if i as u16 >= inner.height {
+        let mut y = inner.y;
+        for (i, item) in self.items.iter().enumerate() {
+            if y >= inner.y + inner.height {
                 break;
             }
-            let y = inner.y + i as u16;
             let is_selected = self.selected == Some(i);
             let max_width = inner.width as usize;
 
-            let prefix = if is_selected { "\u{25b8} " } else { "  " };
-            let suffix = if ws.active {
-                format!(" {}", self.spinner_frame)
-            } else {
-                String::new()
-            };
-            let prefix_len = 2;
-            let suffix_len = if ws.active { 2 } else { 0 };
-            let name_budget = max_width.saturating_sub(prefix_len + suffix_len);
+            match &item.kind {
+                TreeItemKind::Workspace { expanded } => {
+                    // Workspace row: "▸ name" (collapsed) or "▾ name" (expanded)
+                    let chevron = if *expanded { "\u{25be} " } else { "\u{25b8} " };
+                    let suffix = if item.active {
+                        format!(" {}", self.spinner_frame)
+                    } else {
+                        String::new()
+                    };
+                    let chevron_len = 2; // "▸ " or "▾ "
+                    let suffix_len = if item.active { 2 } else { 0 };
+                    let name_budget = max_width.saturating_sub(chevron_len + suffix_len);
 
-            let display_name = if ws.name.len() > name_budget && name_budget >= 3 {
-                format!("{}...", &ws.name[..name_budget - 3])
-            } else {
-                ws.name.clone()
-            };
-            let text = format!("{prefix}{display_name}{suffix}");
+                    let display_name = if item.name.len() > name_budget && name_budget >= 3 {
+                        format!("{}...", &item.name[..name_budget - 3])
+                    } else {
+                        item.name.clone()
+                    };
+                    let text = format!("{chevron}{display_name}{suffix}");
 
-            let style = if is_selected {
-                Style::default()
-                    .fg(self.palette.accent_blue)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(self.palette.fg_primary)
-            };
+                    let style = if is_selected {
+                        Style::default()
+                            .fg(self.palette.accent_blue)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(self.palette.fg_primary)
+                    };
 
-            buf.set_string(inner.x, y, &text, style);
+                    buf.set_string(inner.x, y, &text, style);
+                    y += 1;
+                }
+                TreeItemKind::Room => {
+                    // Room row: "    name" (indented by 4)
+                    let indent = "    ";
+                    let indent_len = 4;
+                    let suffix = if item.active {
+                        format!(" {}", self.spinner_frame)
+                    } else {
+                        String::new()
+                    };
+                    let suffix_len = if item.active { 2 } else { 0 };
+                    let name_budget = max_width.saturating_sub(indent_len + suffix_len);
+
+                    let display_name = if item.name.len() > name_budget && name_budget >= 3 {
+                        format!("{}...", &item.name[..name_budget - 3])
+                    } else {
+                        item.name.clone()
+                    };
+                    let text = format!("{indent}{display_name}{suffix}");
+
+                    let style = if is_selected {
+                        Style::default()
+                            .fg(self.palette.accent_blue)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(self.palette.fg_secondary)
+                    };
+
+                    buf.set_string(inner.x, y, &text, style);
+                    y += 1;
+
+                    // Git stats line below room: "     ↑N ↓N +N -N"
+                    let (ahead, behind) = item.ahead_behind.unwrap_or((0, 0));
+                    let (ins, del) = item.diff_stat.unwrap_or((0, 0));
+                    let has_stats = ahead > 0 || behind > 0 || ins > 0 || del > 0;
+
+                    if y < inner.y + inner.height && has_stats {
+                        let mut x = inner.x + 5; // align under room name
+
+                        let mut need_space = false;
+
+                        if ahead > 0 {
+                            let text = format!("\u{2191}{}", ahead);
+                            buf.set_string(
+                                x,
+                                y,
+                                &text,
+                                Style::default().fg(self.palette.accent_cyan),
+                            );
+                            x += text.chars().count() as u16;
+                            need_space = true;
+                        }
+
+                        if behind > 0 {
+                            if need_space {
+                                buf.set_string(x, y, " ", Style::default());
+                                x += 1;
+                            }
+                            let text = format!("\u{2193}{}", behind);
+                            buf.set_string(
+                                x,
+                                y,
+                                &text,
+                                Style::default().fg(self.palette.accent_orange),
+                            );
+                            x += text.chars().count() as u16;
+                            need_space = true;
+                        }
+
+                        if ins > 0 {
+                            if need_space {
+                                buf.set_string(x, y, " ", Style::default());
+                                x += 1;
+                            }
+                            let text = format!("+{}", ins);
+                            buf.set_string(
+                                x,
+                                y,
+                                &text,
+                                Style::default().fg(self.palette.accent_green),
+                            );
+                            x += text.len() as u16;
+                            need_space = true;
+                        }
+
+                        if del > 0 {
+                            if need_space {
+                                buf.set_string(x, y, " ", Style::default());
+                                x += 1;
+                            }
+                            let text = format!("-{}", del);
+                            buf.set_string(
+                                x,
+                                y,
+                                &text,
+                                Style::default().fg(self.palette.accent_red),
+                            );
+                        }
+
+                        y += 1;
+                    }
+                }
+            }
         }
     }
 }

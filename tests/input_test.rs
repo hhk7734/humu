@@ -64,14 +64,6 @@ fn terminal_ctrl_w_enters_workspace() {
 }
 
 #[test]
-fn terminal_ctrl_r_enters_room() {
-    assert!(matches!(
-        handle_key(Mode::Terminal, ctrl('r')),
-        Action::EnterMode(Mode::Room)
-    ));
-}
-
-#[test]
 fn terminal_ctrl_q_quits() {
     assert!(matches!(handle_key(Mode::Terminal, ctrl('q')), Action::Quit));
 }
@@ -292,86 +284,28 @@ fn workspace_ctrl_w_stays() {
     ));
 }
 
-// ── Room mode ───────────────────────────────────────────────────────────────
-
-#[test]
-fn room_arrows_navigate() {
-    assert!(matches!(
-        handle_key(Mode::Room, key(KeyCode::Down)),
-        Action::NavigateDown
-    ));
-    assert!(matches!(
-        handle_key(Mode::Room, key(KeyCode::Up)),
-        Action::NavigateUp
-    ));
-}
-
-#[test]
-fn room_enter_selects() {
-    assert!(matches!(
-        handle_key(Mode::Room, key(KeyCode::Enter)),
-        Action::Select
-    ));
-}
-
-#[test]
-fn room_n_creates() {
-    assert!(matches!(handle_key(Mode::Room, key(KeyCode::Char('n'))), Action::Create));
-}
-
-#[test]
-fn room_d_deletes() {
-    assert!(matches!(handle_key(Mode::Room, key(KeyCode::Char('d'))), Action::Delete));
-}
-
-#[test]
-fn room_shift_arrows_resize() {
-    assert!(matches!(
-        handle_key(Mode::Room, shift_arrow(KeyCode::Left)),
-        Action::Resize(Direction::Left)
-    ));
-    assert!(matches!(
-        handle_key(Mode::Room, shift_arrow(KeyCode::Right)),
-        Action::Resize(Direction::Right)
-    ));
-}
-
-
-#[test]
-fn room_ctrl_r_stays() {
-    assert!(matches!(handle_key(Mode::Room, ctrl('r')), Action::EnterMode(Mode::Room)));
-}
-
 // ── Cross-mode switching ────────────────────────────────────────────────────
 
 #[test]
 fn cross_mode_switching() {
-    // From Pane: Ctrl+w → Workspace, Ctrl+r → Room, Ctrl+t → Terminal
+    // From Pane: Ctrl+w → Workspace, Ctrl+t → Terminal
     assert!(matches!(handle_key(Mode::Pane, ctrl('w')), Action::EnterMode(Mode::Workspace)));
-    assert!(matches!(handle_key(Mode::Pane, ctrl('r')), Action::EnterMode(Mode::Room)));
     assert!(matches!(handle_key(Mode::Pane, ctrl('t')), Action::EnterMode(Mode::Terminal)));
 
-    // From Tab: Ctrl+w → Workspace, Ctrl+r → Room, Ctrl+p → Pane
+    // From Tab: Ctrl+w → Workspace, Ctrl+p → Pane
     assert!(matches!(handle_key(Mode::Tab, ctrl('w')), Action::EnterMode(Mode::Workspace)));
-    assert!(matches!(handle_key(Mode::Tab, ctrl('r')), Action::EnterMode(Mode::Room)));
     assert!(matches!(handle_key(Mode::Tab, ctrl('p')), Action::EnterMode(Mode::Pane)));
 
-    // From Workspace: Ctrl+r → Room, Ctrl+t → Terminal, Ctrl+p → Pane
-    assert!(matches!(handle_key(Mode::Workspace, ctrl('r')), Action::EnterMode(Mode::Room)));
+    // From Workspace: Ctrl+t → Terminal, Ctrl+p → Pane
     assert!(matches!(handle_key(Mode::Workspace, ctrl('t')), Action::EnterMode(Mode::Terminal)));
     assert!(matches!(handle_key(Mode::Workspace, ctrl('p')), Action::EnterMode(Mode::Pane)));
-
-    // From Room: Ctrl+w → Workspace, Ctrl+t → Terminal, Ctrl+p → Pane
-    assert!(matches!(handle_key(Mode::Room, ctrl('w')), Action::EnterMode(Mode::Workspace)));
-    assert!(matches!(handle_key(Mode::Room, ctrl('t')), Action::EnterMode(Mode::Terminal)));
-    assert!(matches!(handle_key(Mode::Room, ctrl('p')), Action::EnterMode(Mode::Pane)));
 }
 
 // ── Shared Alt bindings across sub-modes ────────────────────────────────────
 
 #[test]
 fn alt_overrides_in_submodes() {
-    for mode in [Mode::Pane, Mode::Tab, Mode::Workspace, Mode::Room] {
+    for mode in [Mode::Pane, Mode::Tab, Mode::Workspace] {
         assert!(
             matches!(handle_key(mode, alt_arrow(KeyCode::Left)), Action::MoveFocus(Direction::Left)),
             "Alt+Left should move focus left in {:?}",
