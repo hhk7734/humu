@@ -8,6 +8,7 @@ pub enum Mode {
     Tab,
     Workspace,
     Room,
+    Explorer,
     EnterSearch,
     Search,
 }
@@ -49,6 +50,8 @@ pub enum Action {
     ScrollDown,
     ScrollPageUp,
     ScrollPageDown,
+    DiffFile,
+    ToggleIgnored,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +70,7 @@ pub fn handle_key(mode: Mode, key: KeyEvent) -> Action {
         Mode::Tab => handle_tab(key),
         Mode::Workspace => handle_workspace(key),
         Mode::Room => handle_room(key),
+        Mode::Explorer => handle_explorer(key),
         Mode::EnterSearch => handle_enter_search(key),
         Mode::Search => handle_search(key),
     }
@@ -80,6 +84,7 @@ fn handle_terminal(key: KeyEvent) -> Action {
             KeyCode::Char('t') => Action::EnterMode(Mode::Tab),
             KeyCode::Char('w') => Action::EnterMode(Mode::Workspace),
             KeyCode::Char('r') => Action::EnterMode(Mode::Room),
+            KeyCode::Char('e') => Action::EnterMode(Mode::Explorer),
             KeyCode::Char('f') => Action::EnterMode(Mode::EnterSearch),
             KeyCode::Char('q') => Action::Quit,
             KeyCode::Char(',') => Action::OpenSettings,
@@ -204,6 +209,31 @@ fn handle_room(key: KeyEvent) -> Action {
     }
 }
 
+fn handle_explorer(key: KeyEvent) -> Action {
+    if let Some(action) = check_mode_switch(Mode::Explorer, key) {
+        return action;
+    }
+    if let Some(action) = check_shared_alt(key) {
+        return action;
+    }
+    if key.modifiers.contains(KeyModifiers::SHIFT) {
+        match key.code {
+            KeyCode::Left => return Action::Resize(Direction::Left),
+            KeyCode::Right => return Action::Resize(Direction::Right),
+            KeyCode::Enter => return Action::DiffFile,
+            KeyCode::Char('I') => return Action::ToggleIgnored,
+            _ => {}
+        }
+    }
+    match key.code {
+        KeyCode::Down => Action::NavigateDown,
+        KeyCode::Up => Action::NavigateUp,
+        KeyCode::Enter => Action::Select,
+        KeyCode::Esc => Action::EnterMode(Mode::Terminal),
+        _ => Action::None,
+    }
+}
+
 fn handle_enter_search(key: KeyEvent) -> Action {
     if let Some(action) = check_mode_switch(Mode::EnterSearch, key) {
         return action;
@@ -243,6 +273,7 @@ fn check_mode_switch(current: Mode, key: KeyEvent) -> Option<Action> {
     match key.code {
         KeyCode::Char('w') => Some(Action::EnterMode(Mode::Workspace)),
         KeyCode::Char('r') => Some(Action::EnterMode(Mode::Room)),
+        KeyCode::Char('e') => Some(Action::EnterMode(Mode::Explorer)),
         KeyCode::Char('t') => Some(Action::EnterMode(Mode::Terminal)),
         KeyCode::Char('p') => Some(if current == Mode::Pane {
             Action::EnterMode(Mode::Terminal)
@@ -297,6 +328,15 @@ pub fn hint_click_action(mode: Mode, hint_index: usize) -> Option<Action> {
             2 => Some(Action::Create),                        // n New
             3 => Some(Action::Delete),                        // d Delete
             4 => None,                                        // S+←→ Resize
+            _ => None,
+        },
+        Mode::Explorer => match hint_index {
+            0 => None,                                        // ↑↓ Navigate
+            1 => Some(Action::Select),                        // Enter Open
+            2 => Some(Action::DiffFile),                      // S+Enter Diff
+            3 => Some(Action::ToggleIgnored),                 // S+I Ignored
+            4 => None,                                        // S+←→ Resize
+            5 => Some(Action::EnterMode(Mode::Terminal)),     // Esc Back
             _ => None,
         },
         Mode::Search => match hint_index {

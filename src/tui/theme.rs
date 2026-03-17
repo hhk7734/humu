@@ -46,6 +46,7 @@ impl Palette {
             Mode::Tab => self.accent_orange,
             Mode::Workspace => self.accent_purple,
             Mode::Room => self.accent_magenta,
+            Mode::Explorer => self.accent_yellow,
             Mode::EnterSearch | Mode::Search => self.accent_cyan,
         }
     }

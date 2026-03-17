@@ -13,6 +13,7 @@ pub fn mode_label(mode: Mode) -> &'static str {
         Mode::Tab => "TAB",
         Mode::Workspace => "WORKSPACE",
         Mode::Room => "ROOM",
+        Mode::Explorer => "EXPLORER",
         Mode::EnterSearch | Mode::Search => "SEARCH",
     }
 }
@@ -57,6 +58,14 @@ pub fn mode_hints(mode: Mode) -> Vec<(&'static str, &'static str)> {
             ("n", "New"),
             ("d", "Delete"),
             ("S+\u{2190}\u{2192}", "Resize"),
+        ],
+        Mode::Explorer => vec![
+            ("\u{2191}\u{2193}", "Navigate"),
+            ("Enter", "Open"),
+            ("S+Enter", "Diff"),
+            ("S+I", "Ignored"),
+            ("S+\u{2190}\u{2192}", "Resize"),
+            ("Esc", "Back"),
         ],
         Mode::EnterSearch | Mode::Search => vec![],
     }
