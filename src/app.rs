@@ -135,6 +135,10 @@ pub enum PopupState {
         field: NotificationField,
         value: String,
     },
+    FloatingPane {
+        pane_id: PaneId,
+        title: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -328,6 +332,12 @@ impl App {
 
         self.restore_selection();
 
+        // Initialize explorer with the active room's directory.
+        if let Some(path) = self.current_room_path() {
+            self.explorer_state = humu::explorer::ExplorerState::new(path);
+            self.explorer_state.scan();
+        }
+
         if self.state.active_room_id.is_none() {
             self.mode = Mode::Workspace;
             self.focus = FocusedPanel::Workspace;
@@ -341,6 +351,24 @@ impl App {
 
             // Auto-close exited panes.
             self.cleanup_exited_panes();
+
+            // Floating pane: resize PTY to match popup area, auto-close on exit.
+            if let PopupState::FloatingPane { pane_id, .. } = &self.popup {
+                let pane_id = *pane_id;
+                let fp_area = self.floating_pane_area();
+                let inner_w = fp_area.width.saturating_sub(2);
+                let inner_h = fp_area.height.saturating_sub(2);
+                if let Some(pane) = self.panes.get_mut(&pane_id) {
+                    if pane.cols() != inner_w || pane.rows() != inner_h {
+                        let _ = pane.resize(inner_w, inner_h);
+                    }
+                }
+                if self.panes.get_mut(&pane_id).and_then(|p| p.exit_status()).is_some() {
+                    self.panes.remove(&pane_id);
+                    self.pane_presets.remove(&pane_id);
+                    self.popup = PopupState::None;
+                }
+            }
 
             terminal.draw(|frame| self.render(frame))?;
             self.spin_tick = self.spin_tick.wrapping_add(1);
@@ -465,6 +493,11 @@ impl App {
             }
             PopupState::NotificationTokenInput { .. } => {
                 self.handle_notification_token_input_key(key);
+                true
+            }
+            PopupState::FloatingPane { pane_id, .. } => {
+                let pane_id = *pane_id;
+                self.handle_floating_pane_key(pane_id, key);
                 true
             }
         }
@@ -669,6 +702,94 @@ impl App {
             _ => {}
         }
         self.popup = PopupState::NotificationTokenInput { field, value };
+    }
+
+    fn handle_floating_pane_key(&mut self, pane_id: PaneId, key: KeyEvent) {
+        // Ctrl+G closes the floating pane (same as Lock toggle, unlikely to conflict with editors)
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('g') {
+            self.panes.remove(&pane_id);
+            self.pane_presets.remove(&pane_id);
+            self.popup = PopupState::None;
+            return;
+        }
+        // Forward all keys to the PTY
+        if let Some(pane) = self.panes.get_mut(&pane_id) {
+            let bytes = key_event_to_bytes(&key);
+            if !bytes.is_empty() {
+                let _ = pane.write_input(&bytes);
+            }
+        }
+    }
+
+    /// Forward a mouse event to the floating pane's PTY. Returns true if handled.
+    fn forward_mouse_to_floating_pane(&mut self, pane_id: PaneId, mouse: &crossterm::event::MouseEvent) -> bool {
+        let popup_area = self.floating_pane_area();
+
+        let pos = Position::new(mouse.column, mouse.row);
+        if !popup_area.contains(pos) {
+            return false;
+        }
+
+        let pane = match self.panes.get_mut(&pane_id) {
+            Some(p) => p,
+            None => return false,
+        };
+
+        // If child has no mouse reporting, convert scroll to arrow keys
+        // and consume other mouse events.
+        if pane.mouse_protocol_mode() == vt100::MouseProtocolMode::None {
+            let lines_per_tick = 3;
+            match mouse.kind {
+                MouseEventKind::ScrollUp => {
+                    for _ in 0..lines_per_tick {
+                        let _ = pane.write_input(b"k");
+                    }
+                }
+                MouseEventKind::ScrollDown => {
+                    for _ in 0..lines_per_tick {
+                        let _ = pane.write_input(b"j");
+                    }
+                }
+                _ => {}
+            }
+            return true;
+        }
+
+        // Pane-relative coordinates (inside border)
+        let col = mouse.column.saturating_sub(popup_area.x + 1) as u32;
+        let row = mouse.row.saturating_sub(popup_area.y + 1) as u32;
+
+        let (button, press) = match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => (0u32, true),
+            MouseEventKind::Down(MouseButton::Right) => (2, true),
+            MouseEventKind::Down(MouseButton::Middle) => (1, true),
+            MouseEventKind::Up(MouseButton::Left) => (0, false),
+            MouseEventKind::Up(MouseButton::Right) => (2, false),
+            MouseEventKind::Up(MouseButton::Middle) => (1, false),
+            MouseEventKind::Drag(MouseButton::Left) => (32, true),
+            MouseEventKind::Drag(MouseButton::Right) => (34, true),
+            MouseEventKind::Drag(MouseButton::Middle) => (33, true),
+            MouseEventKind::ScrollUp => (64, true),
+            MouseEventKind::ScrollDown => (65, true),
+            MouseEventKind::Moved => (35, true),
+            _ => return false,
+        };
+
+        let encoding = pane.mouse_protocol_encoding();
+        let seq = match encoding {
+            vt100::MouseProtocolEncoding::Sgr => {
+                let suffix = if press { 'M' } else { 'm' };
+                format!("\x1b[<{};{};{}{}", button, col + 1, row + 1, suffix)
+            }
+            _ => {
+                let b = (button + 32) as u8;
+                let c = ((col + 33).min(255)) as u8;
+                let r = ((row + 33).min(255)) as u8;
+                format!("\x1b[M{}{}{}", b as char, c as char, r as char)
+            }
+        };
+        let _ = pane.write_input(seq.as_bytes());
+        true
     }
 
     fn rebuild_notification_manager(&mut self) {
@@ -1553,6 +1674,33 @@ impl App {
                     Dialog::new(title.trim(), &fields, 0, &self.palette, &self.ui_config);
                 frame.render_widget(dialog, area);
             }
+            PopupState::FloatingPane { pane_id, title } => {
+                use ratatui::widgets::Clear;
+                use humu::tui::widgets::terminal_widget::TerminalWidget;
+
+                let popup_area = self.floating_pane_area();
+
+                frame.render_widget(Clear, popup_area);
+
+                if let Some(pane) = self.panes.get(pane_id) {
+                    let parser = pane.parser_ref().lock().unwrap();
+                    let screen = parser.screen();
+                    let tw = TerminalWidget::new(screen, title, &self.palette, &self.ui_config)
+                        .focus(true)
+                        .pane_count(1);
+                    frame.render_widget(tw, popup_area);
+
+                    // Show cursor inside the floating pane.
+                    if !screen.hide_cursor() {
+                        let (crow, ccol) = screen.cursor_position();
+                        let cx = popup_area.x + 1 + ccol;
+                        let cy = popup_area.y + 1 + crow;
+                        if cx < popup_area.x + popup_area.width && cy < popup_area.y + popup_area.height {
+                            frame.set_cursor_position(Position::new(cx, cy));
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1907,6 +2055,14 @@ impl App {
     }
 
     fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) {
+        // Forward mouse events to floating pane if active and within its area.
+        if let PopupState::FloatingPane { pane_id, .. } = &self.popup {
+            let pane_id = *pane_id;
+            if self.forward_mouse_to_floating_pane(pane_id, &mouse) {
+                return;
+            }
+        }
+
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.pty_mouse_active = false;
@@ -2071,8 +2227,21 @@ impl App {
             // Determine which tab or "+" was clicked.
             self.handle_tab_bar_click(x);
         } else if self.panel_rects.explorer.contains(pos) {
+            let was_focused = self.focus == FocusedPanel::Explorer;
             self.mode = Mode::Explorer;
             self.focus = FocusedPanel::Explorer;
+            // Map click y to tree entry (accounting for border + scroll offset)
+            let inner_y = y.saturating_sub(self.panel_rects.explorer.y + 1);
+            let clicked_index = self.explorer_state.scroll_offset + inner_y as usize;
+            if clicked_index < self.explorer_state.entries.len() {
+                if was_focused && clicked_index == self.explorer_state.selected {
+                    // Focused + same item → open (same as Enter)
+                    self.explorer_select();
+                } else {
+                    // Not focused or different item → just select
+                    self.explorer_state.selected = clicked_index;
+                }
+            }
         } else if self.panel_rects.terminal.contains(pos) {
             self.mode = Mode::Terminal;
             self.focus = FocusedPanel::Terminal;
@@ -2598,10 +2767,17 @@ impl App {
     }
 
     fn cleanup_exited_panes(&mut self) {
+        // Don't clean up floating pane — it has its own auto-close logic.
+        let floating_id = if let PopupState::FloatingPane { pane_id, .. } = &self.popup {
+            Some(*pane_id)
+        } else {
+            None
+        };
         let exited: Vec<PaneId> = self
             .panes
             .iter_mut()
             .filter_map(|(id, p)| p.exit_status().map(|_| *id))
+            .filter(|id| Some(*id) != floating_id)
             .collect();
         if !exited.is_empty() {
             self.remove_panes(&exited);
@@ -2802,13 +2978,20 @@ impl App {
         }
     }
 
-    /// Route paste events: token input popup gets priority, otherwise forward to PTY.
+    /// Route paste events: popups get priority, otherwise forward to PTY.
     fn handle_paste_event(&mut self, text: &str) {
         if let PopupState::NotificationTokenInput { field, value } = &self.popup {
             let field = *field;
             let mut value = value.clone();
             value.push_str(text);
             self.popup = PopupState::NotificationTokenInput { field, value };
+            return;
+        }
+        if let PopupState::FloatingPane { pane_id, .. } = &self.popup {
+            let pane_id = *pane_id;
+            if let Some(pane) = self.panes.get_mut(&pane_id) {
+                let _ = pane.write_input(text.as_bytes());
+            }
             return;
         }
         self.handle_paste(text);
@@ -3378,10 +3561,20 @@ impl App {
         }
     }
 
+    /// Compute the floating pane overlay rect (centered on terminal panel, 90% size).
+    fn floating_pane_area(&self) -> Rect {
+        let base = self.panel_rects.terminal;
+        let width = (base.width * 9 / 10).max(20);
+        let height = (base.height * 9 / 10).max(10);
+        let x = base.x + (base.width.saturating_sub(width)) / 2;
+        let y = base.y + (base.height.saturating_sub(height)) / 2;
+        Rect::new(x, y, width, height)
+    }
+
     /// Spawn an arbitrary command in a new PTY pane without going through presets.
-    fn spawn_command(&mut self, cmd: &str, args: &[String], cwd: &std::path::Path, preset_name: &str) -> Option<PaneId> {
+    fn spawn_command(&mut self, cmd: &str, args: &[String], cwd: &std::path::Path, preset_name: &str, cols: u16, rows: u16) -> Option<PaneId> {
         let id = PaneId::new();
-        let pane = PtyPane::spawn_with_envs(cmd, args, Some(cwd), 80, 24, &[]).ok()?;
+        let pane = PtyPane::spawn_with_envs(cmd, args, Some(cwd), cols, rows, &[]).ok()?;
         self.panes.insert(id, pane);
         self.pane_presets.insert(id, preset_name.to_string());
         Some(id)
@@ -3397,30 +3590,16 @@ impl App {
             self.explorer_state.toggle_dir();
             return;
         }
-        // Open file in $EDITOR
+        // Open file in $EDITOR as floating pane
         let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
         let cwd = self.explorer_state.root.clone();
         let filepath = entry.path.clone();
         let args = vec![filepath.to_string_lossy().into_owned()];
-        if let Some(id) = self.spawn_command(&editor, &args, &cwd, "_editor") {
-            if let Some(tree) = self.tabs.active_tree_mut() {
-                if let Some(focused) = self.focused_pane {
-                    tree.split_horizontal(focused, id);
-                } else {
-                    // No focused pane — add as new tab
-                    self.tabs.add_tab("editor".to_string(), SplitTree::leaf(id));
-                    let last = self.tabs.len() - 1;
-                    self.tabs.set_active(last);
-                }
-            } else {
-                self.tabs.add_tab("editor".to_string(), SplitTree::leaf(id));
-                let last = self.tabs.len() - 1;
-                self.tabs.set_active(last);
-            }
-            self.focused_pane = Some(id);
-            self.mode = Mode::Terminal;
-            self.focus = FocusedPanel::Terminal;
-            self.persist_layout();
+        let title = entry.name.clone();
+        let fp = self.floating_pane_area();
+        let (cols, rows) = (fp.width.saturating_sub(2), fp.height.saturating_sub(2));
+        if let Some(id) = self.spawn_command(&editor, &args, &cwd, "_editor", cols, rows) {
+            self.popup = PopupState::FloatingPane { pane_id: id, title };
         }
     }
 
@@ -3443,26 +3622,14 @@ impl App {
         }
         let cwd = self.explorer_state.root.clone();
         let rel_path = entry.path.strip_prefix(&cwd).unwrap_or(&entry.path);
-        let diff_cmd = format!("git diff {} | delta --paging=always", rel_path.display());
+        let escaped_path = rel_path.display().to_string().replace('\'', "'\\''");
+        let diff_cmd = format!("git diff '{}' | delta --side-by-side --paging=always", escaped_path);
         let args = vec!["-c".to_string(), diff_cmd];
-        if let Some(id) = self.spawn_command("sh", &args, &cwd, "_diff") {
-            if let Some(tree) = self.tabs.active_tree_mut() {
-                if let Some(focused) = self.focused_pane {
-                    tree.split_horizontal(focused, id);
-                } else {
-                    self.tabs.add_tab("diff".to_string(), SplitTree::leaf(id));
-                    let last = self.tabs.len() - 1;
-                    self.tabs.set_active(last);
-                }
-            } else {
-                self.tabs.add_tab("diff".to_string(), SplitTree::leaf(id));
-                let last = self.tabs.len() - 1;
-                self.tabs.set_active(last);
-            }
-            self.focused_pane = Some(id);
-            self.mode = Mode::Terminal;
-            self.focus = FocusedPanel::Terminal;
-            self.persist_layout();
+        let title = format!("diff: {}", entry.name);
+        let fp = self.floating_pane_area();
+        let (cols, rows) = (fp.width.saturating_sub(2), fp.height.saturating_sub(2));
+        if let Some(id) = self.spawn_command("sh", &args, &cwd, "_diff", cols, rows) {
+            self.popup = PopupState::FloatingPane { pane_id: id, title };
         }
     }
 
@@ -3535,6 +3702,7 @@ impl App {
         // Reset explorer to the new room's path.
         if let Some(path) = self.current_room_path() {
             self.explorer_state = humu::explorer::ExplorerState::new(path);
+            self.explorer_state.scan();
         }
 
         self.save_state();
