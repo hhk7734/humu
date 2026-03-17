@@ -186,12 +186,12 @@ impl Widget for WorkspacePanel<'_> {
                     buf.set_string(inner.x, y, &text, style);
                     y += 1;
 
-                    // Git stats line below room: "     ↑N ↓N +N -N"
+                    // Git stats line below room: " ↑N ↓N +N -N"
                     let (ahead, behind) = item.ahead_behind.unwrap_or((0, 0));
                     let (ins, del) = item.diff_stat.unwrap_or((0, 0));
-                    let has_stats = ahead > 0 || behind > 0 || ins > 0 || del > 0;
+                    let has_changes = ahead > 0 || behind > 0 || ins > 0 || del > 0;
 
-                    if y < inner.y + inner.height && has_stats {
+                    if y < inner.y + inner.height {
                         // Fill background for active room stats line
                         if is_active {
                             let bg = Style::default().bg(self.palette.bg_tertiary);
@@ -201,8 +201,13 @@ impl Widget for WorkspacePanel<'_> {
                         }
                         let mut x = inner.x + 4;
 
-                        // Git branch icon
-                        buf.set_string(x, y, "\u{e725} ", Style::default().fg(self.palette.fg_muted));
+                        // Git branch icon — green when clean, orange when dirty
+                        let icon_color = if has_changes {
+                            self.palette.accent_orange
+                        } else {
+                            self.palette.accent_green
+                        };
+                        buf.set_string(x, y, "\u{e725} ", Style::default().fg(icon_color));
                         x += 2;
 
                         let mut need_space = false;

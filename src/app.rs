@@ -3560,7 +3560,7 @@ impl App {
     }
 
     /// Map a visual row in the workspace panel to a tree item index.
-    /// Accounts for rooms with git stats taking 2 rows.
+    /// Rooms always take 2 rows (name + git stats line).
     fn visual_row_to_tree_index(tree: &[WorkspaceTreeItem], visual_row: usize) -> Option<usize> {
         let mut y = 0usize;
         for (i, item) in tree.iter().enumerate() {
@@ -3568,16 +3568,12 @@ impl App {
                 return Some(i);
             }
             y += 1;
-            // Rooms with git stats take an extra row
+            // Rooms always have a git stats line (2nd row)
             if matches!(item.kind, TreeItemKind::Room) {
-                let (ahead, behind) = item.ahead_behind.unwrap_or((0, 0));
-                let (ins, del) = item.diff_stat.unwrap_or((0, 0));
-                if ahead > 0 || behind > 0 || ins > 0 || del > 0 {
-                    if y == visual_row {
-                        return Some(i); // clicked on stats line → same item
-                    }
-                    y += 1;
+                if y == visual_row {
+                    return Some(i); // clicked on stats line → same item
                 }
+                y += 1;
             }
         }
         None
