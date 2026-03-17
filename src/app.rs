@@ -194,6 +194,8 @@ pub struct App {
     pub search_state: Option<SearchState>,
     /// File explorer state for the right-side panel.
     pub explorer_state: humu::explorer::ExplorerState,
+    /// Cached git stats per room path: (diff_stat, ahead_behind), refreshed periodically.
+    room_git_cache: HashMap<std::path::PathBuf, (Option<(usize, usize)>, Option<(usize, usize)>)>,
     /// Cached path to state.yaml.
     state_path: std::path::PathBuf,
     /// Notification manager for OS/Telegram alerts.
@@ -306,6 +308,7 @@ impl App {
             suspended_rooms: HashMap::new(),
             search_state: None,
             explorer_state: humu::explorer::ExplorerState::new(std::path::PathBuf::new()),
+            room_git_cache: HashMap::new(),
             state_path: humu_dir().join("state.yaml"),
             notification_manager,
             config_path,
@@ -374,9 +377,12 @@ impl App {
                 }
             }
 
-            // Periodic explorer rescan (~3s) to pick up git status changes.
-            if self.spin_tick % 60 == 0 && !self.explorer_state.root.as_os_str().is_empty() {
-                self.explorer_state.scan();
+            // Periodic rescan (~3s) to pick up git status changes.
+            if self.spin_tick % 60 == 0 {
+                if !self.explorer_state.root.as_os_str().is_empty() {
+                    self.explorer_state.scan();
+                }
+                self.refresh_room_git_cache();
             }
 
             terminal.draw(|frame| self.render(frame))?;
@@ -3308,6 +3314,27 @@ impl App {
         ids
     }
 
+    /// Refresh cached git stats (diff + ahead/behind) for all rooms in the active workspace.
+    fn refresh_room_git_cache(&mut self) {
+        let ws_id = match self.state.active_workspace_id {
+            Some(id) => id,
+            None => return,
+        };
+        let ws = match self.state.ws_by_id(ws_id) {
+            Some(ws) => ws,
+            None => return,
+        };
+        let mgr = RoomManager::new();
+        if let Ok(rooms) = mgr.list(&ws.path) {
+            self.room_git_cache.clear();
+            for r in &rooms {
+                let diff = mgr.diff_stat(&r.path);
+                let ab = mgr.ahead_behind(&r.path);
+                self.room_git_cache.insert(r.path.clone(), (diff, ab));
+            }
+        }
+    }
+
     /// List rooms for a specific workspace by ID, with agent activity flags.
     fn room_items_for_workspace(&self, ws_id: WorkspaceId) -> Vec<RoomItem> {
         let ws = match self.state.ws_by_id(ws_id) {
@@ -3323,11 +3350,17 @@ impl App {
                     let active = room_id
                         .map(|rid| self.has_active_agent(&self.pane_ids_for_room(ws_id, rid)))
                         .unwrap_or(false);
+                    let (diff_stat, ahead_behind) = self.room_git_cache
+                        .get(&r.path)
+                        .copied()
+                        .unwrap_or((None, None));
                     RoomItem {
                         id: room_id,
                         name: r.branch,
                         is_default: r.is_default,
                         active,
+                        diff_stat,
+                        ahead_behind,
                     }
                 })
                 .collect(),

@@ -97,6 +97,39 @@ impl RoomManager {
         Ok(rooms)
     }
 
+    /// Get (insertions, deletions) from `git diff --shortstat` for a worktree path.
+    pub fn diff_stat(&self, worktree_path: &Path) -> Option<(usize, usize)> {
+        let output = Command::new("git")
+            .args(["diff", "--shortstat"])
+            .current_dir(worktree_path)
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&output.stdout);
+        parse_shortstat(&text)
+    }
+
+    /// Get (ahead, behind) commit counts relative to the upstream tracking branch.
+    /// Returns None if there's no upstream or an error occurs.
+    pub fn ahead_behind(&self, worktree_path: &Path) -> Option<(usize, usize)> {
+        let output = Command::new("git")
+            .args(["rev-list", "--left-right", "--count", "HEAD...@{upstream}"])
+            .current_dir(worktree_path)
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&output.stdout);
+        let parts: Vec<&str> = text.trim().split('\t').collect();
+        if parts.len() == 2 {
+            let ahead = parts[0].parse().ok()?;
+            let behind = parts[1].parse().ok()?;
+            Some((ahead, behind))
+        } else {
+            None
+        }
+    }
+
     /// Create a new room (worktree) branching from base_branch.
     pub fn create(
         &self,
@@ -188,4 +221,22 @@ impl RoomManager {
             bail!("cannot determine branch for repo: {}", repo_path.display())
         }
     }
+}
+
+/// Parse `git diff --shortstat` output like " 3 files changed, 10 insertions(+), 5 deletions(-)"
+fn parse_shortstat(text: &str) -> Option<(usize, usize)> {
+    if text.trim().is_empty() {
+        return Some((0, 0));
+    }
+    let mut insertions = 0usize;
+    let mut deletions = 0usize;
+    for part in text.split(',') {
+        let part = part.trim();
+        if part.contains("insertion") {
+            insertions = part.split_whitespace().next()?.parse().ok()?;
+        } else if part.contains("deletion") {
+            deletions = part.split_whitespace().next()?.parse().ok()?;
+        }
+    }
+    Some((insertions, deletions))
 }

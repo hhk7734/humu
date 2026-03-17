@@ -18,6 +18,10 @@ pub struct RoomItem {
     pub name: String,
     pub is_default: bool,
     pub active: bool,
+    /// (insertions, deletions) from `git diff --shortstat`
+    pub diff_stat: Option<(usize, usize)>,
+    /// (ahead, behind) commits relative to upstream
+    pub ahead_behind: Option<(usize, usize)>,
 }
 
 impl<'a> RoomPanel<'a> {
@@ -70,11 +74,11 @@ impl Widget for RoomPanel<'_> {
         let inner = block.inner(area);
         block.render(area, buf);
 
+        let mut y = inner.y;
         for (i, room) in self.rooms.iter().enumerate() {
-            if i as u16 >= inner.height {
+            if y >= inner.y + inner.height {
                 break;
             }
-            let y = inner.y + i as u16;
             let is_selected = self.selected == Some(i);
             let max_width = inner.width as usize;
 
@@ -104,6 +108,54 @@ impl Widget for RoomPanel<'_> {
             };
 
             buf.set_string(inner.x, y, &text, style);
+            y += 1;
+
+            // Render git stats below room name
+            let (ahead, behind) = room.ahead_behind.unwrap_or((0, 0));
+            let (ins, del) = room.diff_stat.unwrap_or((0, 0));
+            let has_stats = ahead > 0 || behind > 0 || ins > 0 || del > 0;
+
+            if y < inner.y + inner.height && has_stats {
+                let mut x = inner.x + 2; // align with room name
+
+                // Git branch icon
+                let git_icon = "\u{e725} ";
+                buf.set_string(x, y, git_icon, Style::default().fg(self.palette.fg_muted));
+                x += 2;
+
+                let mut need_space = false;
+
+                if ahead > 0 {
+                    let text = format!("\u{2191}{}", ahead); // ↑N
+                    buf.set_string(x, y, &text, Style::default().fg(self.palette.accent_cyan));
+                    x += text.len() as u16;
+                    need_space = true;
+                }
+
+                if behind > 0 {
+                    if need_space { buf.set_string(x, y, " ", Style::default()); x += 1; }
+                    let text = format!("\u{2193}{}", behind); // ↓N
+                    buf.set_string(x, y, &text, Style::default().fg(self.palette.accent_orange));
+                    x += text.len() as u16;
+                    need_space = true;
+                }
+
+                if ins > 0 {
+                    if need_space { buf.set_string(x, y, " ", Style::default()); x += 1; }
+                    let text = format!("+{}", ins);
+                    buf.set_string(x, y, &text, Style::default().fg(self.palette.accent_green));
+                    x += text.len() as u16;
+                    need_space = true;
+                }
+
+                if del > 0 {
+                    if need_space { buf.set_string(x, y, " ", Style::default()); x += 1; }
+                    let text = format!("-{}", del);
+                    buf.set_string(x, y, &text, Style::default().fg(self.palette.accent_red));
+                }
+
+                y += 1;
+            }
         }
     }
 }
