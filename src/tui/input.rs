@@ -189,8 +189,8 @@ fn handle_explorer(key: KeyEvent) -> Action {
     }
     if key.modifiers.contains(KeyModifiers::SHIFT) {
         match key.code {
-            KeyCode::Left => return Action::Resize(Direction::Left),
-            KeyCode::Right => return Action::Resize(Direction::Right),
+            KeyCode::Left => return Action::Resize(Direction::Right),
+            KeyCode::Right => return Action::Resize(Direction::Left),
             KeyCode::Enter => return Action::DiffFile,
             KeyCode::Char('I') => return Action::ToggleIgnored,
             KeyCode::Char('C') => return Action::CopyPath,
