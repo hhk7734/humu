@@ -160,6 +160,15 @@ pub enum PopupState {
     ErrorDialog {
         message: String,
     },
+    ExplorerNewEntry {
+        is_dir: bool,
+        value: String,
+    },
+    ExplorerDeleteConfirm {
+        path: std::path::PathBuf,
+        name: String,
+        ok_selected: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -558,6 +567,53 @@ impl App {
             PopupState::ErrorDialog { .. } => {
                 if matches!(key.code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ')) {
                     self.popup = PopupState::None;
+                }
+                true
+            }
+            PopupState::ExplorerNewEntry { is_dir, value } => {
+                let is_dir = *is_dir;
+                let mut value = value.clone();
+                match key.code {
+                    KeyCode::Enter => {
+                        if !value.is_empty() {
+                            self.explorer_create_entry(is_dir, &value);
+                        }
+                        self.popup = PopupState::None;
+                    }
+                    KeyCode::Esc => {
+                        self.popup = PopupState::None;
+                    }
+                    KeyCode::Backspace => {
+                        value.pop();
+                        self.popup = PopupState::ExplorerNewEntry { is_dir, value };
+                    }
+                    KeyCode::Char(c) => {
+                        value.push(c);
+                        self.popup = PopupState::ExplorerNewEntry { is_dir, value };
+                    }
+                    _ => {}
+                }
+                true
+            }
+            PopupState::ExplorerDeleteConfirm { path, name, ok_selected } => {
+                let path = path.clone();
+                let name = name.clone();
+                let mut ok_selected = *ok_selected;
+                match key.code {
+                    KeyCode::Left | KeyCode::Right | KeyCode::Tab => {
+                        ok_selected = !ok_selected;
+                        self.popup = PopupState::ExplorerDeleteConfirm { path, name, ok_selected };
+                    }
+                    KeyCode::Enter => {
+                        if ok_selected {
+                            self.explorer_delete_entry(&path);
+                        }
+                        self.popup = PopupState::None;
+                    }
+                    KeyCode::Esc => {
+                        self.popup = PopupState::None;
+                    }
+                    _ => {}
                 }
                 true
             }
@@ -1765,6 +1821,78 @@ impl App {
 
                 frame.render_widget(paragraph, popup_area);
             }
+            PopupState::ExplorerNewEntry { is_dir, value } => {
+                use ratatui::style::{Modifier, Style};
+                use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+
+                let title = if *is_dir { " New Directory " } else { " New File " };
+                let width = 40u16.min(area.width - 4);
+                let height = 3u16;
+                let x = area.x + (area.width.saturating_sub(width)) / 2;
+                let y = area.y + (area.height.saturating_sub(height)) / 2;
+                let popup_area = Rect::new(x, y, width, height);
+
+                frame.render_widget(Clear, popup_area);
+
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(self.palette.accent_blue))
+                    .title(title)
+                    .title_style(Style::default().fg(self.palette.accent_blue).add_modifier(Modifier::BOLD));
+
+                let display = format!("{}\u{2588}", value); // value + cursor block
+                let paragraph = Paragraph::new(display)
+                    .style(Style::default().fg(self.palette.fg_primary))
+                    .block(block);
+
+                frame.render_widget(paragraph, popup_area);
+            }
+            PopupState::ExplorerDeleteConfirm { name, ok_selected, .. } => {
+                use ratatui::style::{Modifier, Style};
+                use ratatui::widgets::{Block, Borders, Clear};
+
+                let msg = format!("Delete \"{}\"?", name);
+                let width = (msg.chars().count() as u16 + 6).min(area.width - 4).max(24);
+                let height = 5u16;
+                let x = area.x + (area.width.saturating_sub(width)) / 2;
+                let y = area.y + (area.height.saturating_sub(height)) / 2;
+                let popup_area = Rect::new(x, y, width, height);
+
+                frame.render_widget(Clear, popup_area);
+
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(self.palette.accent_red))
+                    .title(" Confirm Delete ")
+                    .title_style(Style::default().fg(self.palette.accent_red).add_modifier(Modifier::BOLD));
+                let inner = block.inner(popup_area);
+                frame.render_widget(block, popup_area);
+
+                // Message line
+                let msg_style = Style::default().fg(self.palette.fg_primary);
+                frame.buffer_mut().set_string(inner.x + 1, inner.y, &msg, msg_style);
+
+                // Buttons line
+                let btn_y = inner.y + 2;
+                let cancel_label = " Cancel ";
+                let ok_label = "  OK  ";
+                let total_btn_width = cancel_label.len() + 2 + ok_label.len();
+                let btn_x = inner.x + (inner.width.saturating_sub(total_btn_width as u16)) / 2;
+
+                let cancel_style = if !ok_selected {
+                    Style::default().fg(self.palette.bg_primary).bg(self.palette.accent_blue).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(self.palette.fg_secondary).bg(self.palette.bg_tertiary)
+                };
+                let ok_style = if *ok_selected {
+                    Style::default().fg(self.palette.bg_primary).bg(self.palette.accent_red).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(self.palette.fg_secondary).bg(self.palette.bg_tertiary)
+                };
+
+                frame.buffer_mut().set_string(btn_x, btn_y, cancel_label, cancel_style);
+                frame.buffer_mut().set_string(btn_x + cancel_label.len() as u16 + 2, btn_y, ok_label, ok_style);
+            }
         }
     }
 
@@ -2120,6 +2248,28 @@ impl App {
                     let osc = format!("\x1b]52;c;{}\x07", encoded);
                     let _ = stdout().write_all(osc.as_bytes());
                     let _ = stdout().flush();
+                }
+            }
+
+            Action::NewFile => {
+                self.popup = PopupState::ExplorerNewEntry {
+                    is_dir: false,
+                    value: String::new(),
+                };
+            }
+
+            Action::NewDir => {
+                self.popup = PopupState::ExplorerNewEntry {
+                    is_dir: true,
+                    value: String::new(),
+                };
+            }
+
+            Action::DeleteEntry => {
+                if let Some(entry) = self.explorer_state.selected_entry() {
+                    let path = entry.path.clone();
+                    let name = entry.name.clone();
+                    self.popup = PopupState::ExplorerDeleteConfirm { path, name, ok_selected: false };
                 }
             }
 
@@ -3076,6 +3226,13 @@ impl App {
             self.popup = PopupState::NotificationTokenInput { field, value };
             return;
         }
+        if let PopupState::ExplorerNewEntry { is_dir, value } = &self.popup {
+            let is_dir = *is_dir;
+            let mut value = value.clone();
+            value.push_str(text);
+            self.popup = PopupState::ExplorerNewEntry { is_dir, value };
+            return;
+        }
         if let PopupState::FloatingPane { pane_id, .. } = &self.popup {
             let pane_id = *pane_id;
             if let Some(pane) = self.panes.get_mut(&pane_id) {
@@ -3803,6 +3960,47 @@ impl App {
         let (cols, rows) = (fp.width.saturating_sub(2), fp.height.saturating_sub(2));
         if let Some(id) = self.spawn_command("sh", &args, &cwd, "_diff", cols, rows) {
             self.popup = PopupState::FloatingPane { pane_id: id, title };
+        }
+    }
+
+    /// Create a new file or directory in the explorer's current directory context.
+    fn explorer_create_entry(&mut self, is_dir: bool, name: &str) {
+        let parent = if let Some(entry) = self.explorer_state.selected_entry() {
+            if entry.kind == humu::explorer::FileKind::Directory {
+                entry.path.clone()
+            } else {
+                entry.path.parent().unwrap_or(&self.explorer_state.root).to_path_buf()
+            }
+        } else {
+            self.explorer_state.root.clone()
+        };
+        let target = parent.join(name);
+        let result = if is_dir {
+            std::fs::create_dir_all(&target)
+        } else {
+            if let Some(p) = target.parent() {
+                let _ = std::fs::create_dir_all(p);
+            }
+            std::fs::File::create(&target).map(|_| ())
+        };
+        if let Err(e) = result {
+            self.show_error(format!("Failed to create: {e}"));
+        } else {
+            self.explorer_state.scan();
+        }
+    }
+
+    /// Delete a file or directory from the explorer.
+    fn explorer_delete_entry(&mut self, path: &std::path::Path) {
+        let result = if path.is_dir() {
+            std::fs::remove_dir_all(path)
+        } else {
+            std::fs::remove_file(path)
+        };
+        if let Err(e) = result {
+            self.show_error(format!("Failed to delete: {e}"));
+        } else {
+            self.explorer_state.scan();
         }
     }
 

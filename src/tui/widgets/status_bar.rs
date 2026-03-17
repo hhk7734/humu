@@ -54,6 +54,9 @@ pub fn mode_hints(mode: Mode) -> Vec<(&'static str, &'static str)> {
         Mode::Explorer => vec![
             ("\u{2191}\u{2193}", "Navigate"),
             ("Enter", "Open"),
+            ("n", "New"),
+            ("S+N", "Mkdir"),
+            ("d", "Delete"),
             ("S+Enter", "Diff"),
             ("S+C", "Copy"),
             ("S+I", "Ignored"),

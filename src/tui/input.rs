@@ -51,6 +51,9 @@ pub enum Action {
     DiffFile,
     ToggleIgnored,
     CopyPath,
+    NewFile,
+    NewDir,
+    DeleteEntry,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,6 +194,7 @@ fn handle_explorer(key: KeyEvent) -> Action {
             KeyCode::Enter => return Action::DiffFile,
             KeyCode::Char('I') => return Action::ToggleIgnored,
             KeyCode::Char('C') => return Action::CopyPath,
+            KeyCode::Char('N') => return Action::NewDir,
             _ => {}
         }
     }
@@ -198,6 +202,8 @@ fn handle_explorer(key: KeyEvent) -> Action {
         KeyCode::Down => Action::NavigateDown,
         KeyCode::Up => Action::NavigateUp,
         KeyCode::Enter => Action::Select,
+        KeyCode::Char('n') => Action::NewFile,
+        KeyCode::Char('d') => Action::DeleteEntry,
         KeyCode::Esc => Action::EnterMode(Mode::Terminal),
         _ => Action::None,
     }
@@ -294,11 +300,14 @@ pub fn hint_click_action(mode: Mode, hint_index: usize) -> Option<Action> {
         Mode::Explorer => match hint_index {
             0 => None,                                        // ↑↓ Navigate
             1 => Some(Action::Select),                        // Enter Open
-            2 => Some(Action::DiffFile),                      // S+Enter Diff
-            3 => Some(Action::CopyPath),                      // S+C Copy
-            4 => Some(Action::ToggleIgnored),                 // S+I Ignored
-            5 => None,                                        // S+←→ Resize
-            6 => Some(Action::EnterMode(Mode::Terminal)),     // Esc Back
+            2 => Some(Action::NewFile),                       // n New
+            3 => Some(Action::NewDir),                        // S+N Mkdir
+            4 => Some(Action::DeleteEntry),                   // d Delete
+            5 => Some(Action::DiffFile),                      // S+Enter Diff
+            6 => Some(Action::CopyPath),                      // S+C Copy
+            7 => Some(Action::ToggleIgnored),                 // S+I Ignored
+            8 => None,                                        // S+←→ Resize
+            9 => Some(Action::EnterMode(Mode::Terminal)),     // Esc Back
             _ => None,
         },
         Mode::Search => match hint_index {
