@@ -6,6 +6,13 @@ TUI-based multi-task manager built on git concepts. Workspaces = repos, rooms = 
 
 Design documents live in `docs/PRDs/`. When any behavioral or architectural change is made, update the relevant PRD to keep documentation in sync with the implementation.
 
+## Release Checklist
+
+When tagging a new version:
+1. Update `version` in `Cargo.toml`
+2. Commit as `chore: bump version to vX.Y.Z`
+3. Tag, push, and create GitHub release with handwritten notes (compare `git log <prev-tag>..HEAD` to summarize features, fixes, and breaking changes — do NOT use `--generate-notes`)
+
 ## Build & Test
 
 ```bash
