@@ -2,7 +2,7 @@
 
 ## Overview
 
-Notification system that alerts the user via OS desktop notifications and Telegram when Claude Code agents need input or finish their task. Configurable through the Settings menu.
+Notification system that alerts the user via OS desktop notifications, sound, and Telegram when Claude Code agents need input or finish their task. Each channel has independent focus-aware control. Configurable through the Settings menu.
 
 ## Trigger Events
 
@@ -15,23 +15,33 @@ Two agent state transitions fire notifications:
 
 Detected in `process_hook_events()` by comparing previous `AgentStateEntry.state` against the incoming event before overwriting. Events are drained into a local `Vec<HookEvent>` first to avoid borrow conflicts with `hook_rx`.
 
-**Name resolution:** `HookEvent` carries `workspace_id` and `room_id` as UUID strings. Resolved to human-readable names via `self.state.ws_by_id(WorkspaceId(uuid))` → `.name` and `ws.room_by_id(RoomId(uuid))` → `.name`. Falls back to `"unknown"` if unparseable or not found. Works for both active and suspended rooms.
+**Name resolution:** `HookEvent` carries `workspace_id` and `room_id` as UUID strings. Resolved to human-readable names via `self.state.ws_by_id(WorkspaceId(uuid))` → `.name` and `ws.room_by_id(RoomId(uuid))` → `.name`. Falls back to `"unknown"` if unparseable or not found.
 
 **Idle transition semantics:** Claude Code emits `Stop` (→ `Idle`) at the end of each agent turn, including intermediate stops. `AgentFinished` may fire on intermediate completions. This is intentional — over-notification is preferred over missing a real completion.
 
-## Notification Providers
+## Notification Channels
 
-### OS (notify-send + paplay)
+Three independent channels, each with `enabled` and `only_unfocused` toggles:
 
-- `notify-send "Humu" "<message>"` — spawned detached, failure ignored
-- `paplay /usr/share/sounds/freedesktop/stereo/complete.oga` — spawned detached when `sound: true`
-- **Default:** enabled
+### OS (notify-send)
+
+- `notify-send --app-name=HuMu "Humu" "<message>"` — spawned detached, failure ignored
+- **Default:** enabled, only_unfocused: true (skip popup when humu is focused)
+
+### Sound (paplay)
+
+- `paplay /usr/share/sounds/freedesktop/stereo/complete.oga` — spawned detached
+- **Default:** enabled, only_unfocused: false (always play chime)
 
 ### Telegram Bot API
 
 - HTTP POST to `https://api.telegram.org/bot{token}/sendMessage` with `chat_id`, `text`, and `parse_mode: Markdown`
 - Uses `ureq` v2 (blocking, with `json` feature) in a spawned thread — never blocks the event loop
-- **Default:** disabled until bot_token and chat_id are configured
+- **Default:** disabled, only_unfocused: false (always send when enabled)
+
+## Focus Tracking
+
+Terminal focus is tracked via crossterm's `EnableFocusChange` / `Event::FocusGained` / `Event::FocusLost`. The `is_focused: bool` field on `App` is passed to `NotificationManager::notify()`. Each channel's `only_unfocused` flag determines whether to suppress notifications when humu is focused.
 
 ## Configuration
 
@@ -41,14 +51,18 @@ Detected in `process_hook_events()` by comparing previous `AgentStateEntry.state
 notifications:
   os:
     enabled: true
-    sound: true
+    only_unfocused: true
+  sound:
+    enabled: true
+    only_unfocused: false
   telegram:
     enabled: false
+    only_unfocused: false
     bot_token_encrypted: "base64(salt + nonce + ciphertext + tag)"
     chat_id_encrypted: "base64(salt + nonce + ciphertext + tag)"
 ```
 
-Existing configs without a `notifications` section get OS notifications enabled by default via `#[serde(default)]` with `default_true()` helper functions.
+Existing configs without a `notifications` section get defaults via `#[serde(default)]` with `default_true()` helper functions.
 
 ### Encryption
 
@@ -63,41 +77,32 @@ Telegram credentials are encrypted at rest:
 
 ```
 src/notification/
-├── mod.rs        # NotificationManager, NotificationEvent enum
+├── mod.rs        # NotificationManager, NotificationEvent, Channel<T>
 ├── crypto.rs     # AES-256-GCM encrypt/decrypt with machine-derived key
-├── os.rs         # OsNotifier (notify-send + paplay)
+├── os.rs         # OsNotifier (notify-send) + SoundNotifier (paplay)
 └── telegram.rs   # TelegramNotifier (Bot API via ureq)
 ```
 
-`NotificationManager::notify(event)` formats a human-readable `(title, body)` from `NotificationEvent`, then passes it to each enabled provider. Providers only receive `(&str, &str)` — no formatting duplication.
+`NotificationManager` holds `Option<Channel<T>>` for each provider, where `Channel<T>` wraps the notifier with its `only_unfocused` flag.
 
-`NotificationManager::from_config(config)` constructs the manager from `NotificationsConfig`, decrypting Telegram credentials if enabled.
-
-## App Integration
-
-`App` holds:
-- `notification_manager: NotificationManager` — constructed at startup, reconstructed on settings change
-- `config_path: PathBuf` — cached path to `config.yaml` for immediate persistence on settings change
+`NotificationManager::notify(event, focused)` checks each channel: if the channel is enabled and (`!focused || !only_unfocused`), the notification fires.
 
 ## Settings Menu
 
 ```
-Settings (top level)
-├── Notifications        (index 0)
-└── View Logs            (index 1)
-
 Settings > Notifications
-├── OS Notifications: ON/OFF     (toggle with Enter or Space)  [index 0]
-├── OS Sound: ON/OFF             (toggle with Enter or Space)  [index 1]
-├── Telegram: ON/OFF             (toggle with Enter or Space)  [index 2]
-├── Telegram Bot Token: ****     (Enter opens text input)      [index 3]
-└── Telegram Chat ID: ****       (Enter opens text input)      [index 4]
+├── OS Notifications: ON/OFF         [index 0]
+├── OS Only Unfocused: ON/OFF        [index 1]
+├── Sound: ON/OFF                    [index 2]
+├── Sound Only Unfocused: ON/OFF     [index 3]
+├── Telegram: ON/OFF                 [index 4]
+├── Telegram Only Unfocused: ON/OFF  [index 5]
+├── Telegram Bot Token: ****         [index 6]
+└── Telegram Chat ID: ****           [index 7]
 ```
 
-- `PopupState::NotificationSettings` — list rendered with `PresetSelector`
-- `PopupState::NotificationTokenInput` — text input rendered with `Dialog`
-- Token/chat_id masked (`****`) in the list, visible only while editing
-- Ctrl+V paste supported in token input (via `handle_paste_event` dispatch)
+- Toggle items: Enter or Space flips the boolean
+- Token/chat_id: Enter opens text input dialog, Ctrl+V paste supported
 - On any change: rebuild `NotificationManager`, encrypt secrets, save `config.yaml`
 
 ## Dependencies
@@ -114,5 +119,5 @@ Settings > Notifications
 
 - **crypto.rs:** Round-trip encrypt/decrypt, different plaintexts differ, same plaintext differs (random salt), tampered ciphertext rejected, empty string round-trips
 - **NotificationEvent:** Message formatting assertions
-- **NotificationManager:** All-disabled does not panic
-- **OsNotifier:** Manual testing (requires desktop environment)
+- **NotificationManager:** All-disabled does not panic (with focus parameter)
+- **OsNotifier / SoundNotifier:** Manual testing (requires desktop environment)
