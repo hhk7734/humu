@@ -139,6 +139,9 @@ pub enum PopupState {
         pane_id: PaneId,
         title: String,
     },
+    ErrorDialog {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -163,8 +166,6 @@ pub struct App {
     pub pane_presets: HashMap<PaneId, String>,
     /// Active popup (None when no popup is showing).
     pub popup: PopupState,
-    /// Last error message to display (cleared on next action).
-    pub last_error: Option<String>,
     /// Per-pane agent state from the HTTP hook server.
     pub agent_states: HashMap<PaneId, AgentStateEntry>,
     /// Receiver for hook events forwarded from the background tokio thread.
@@ -292,7 +293,6 @@ impl App {
             focused_pane: None,
             pane_presets,
             popup: PopupState::None,
-            last_error: None,
             agent_states: HashMap::new(),
             hook_rx: Some(hook_rx),
             hook_port,
@@ -393,7 +393,7 @@ impl App {
             while event::poll(Duration::from_millis(0))? {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        self.last_error = None;
+        
                         // Ctrl+Q is a global quit — bypass popups.
                         if key.modifiers.contains(KeyModifiers::CONTROL)
                             && key.code == KeyCode::Char('q')
@@ -417,7 +417,7 @@ impl App {
             if event::poll(Duration::from_millis(50))? {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        self.last_error = None;
+        
                         // Ctrl+Q is a global quit — bypass popups.
                         if key.modifiers.contains(KeyModifiers::CONTROL)
                             && key.code == KeyCode::Char('q')
@@ -530,6 +530,12 @@ impl App {
             PopupState::FloatingPane { pane_id, .. } => {
                 let pane_id = *pane_id;
                 self.handle_floating_pane_key(pane_id, key);
+                true
+            }
+            PopupState::ErrorDialog { .. } => {
+                if matches!(key.code, KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ')) {
+                    self.popup = PopupState::None;
+                }
                 true
             }
         }
@@ -823,6 +829,10 @@ impl App {
         };
         let _ = pane.write_input(seq.as_bytes());
         true
+    }
+
+    fn show_error(&mut self, message: impl Into<String>) {
+        self.popup = PopupState::ErrorDialog { message: message.into() };
     }
 
     fn rebuild_notification_manager(&mut self) {
@@ -1265,7 +1275,7 @@ impl App {
             _ => String::new(),
         };
         if path_str.is_empty() {
-            self.last_error = Some("Path is required".to_string());
+            self.show_error("Path is required".to_string());
             return;
         }
         // Expand ~ to the user's home directory (Rust's Path doesn't do this).
@@ -1290,7 +1300,7 @@ impl App {
                     _ => String::new(),
                 };
                 if url.is_empty() {
-                    self.last_error = Some("URL is required for Clone".to_string());
+                    self.show_error("URL is required for Clone".to_string());
                     return;
                 }
                 mgr.clone_remote(&mut self.state, &url, path)
@@ -1306,7 +1316,7 @@ impl App {
         };
         match result {
             Ok(name) => {
-                self.last_error = None;
+
                 // Auto-select the new workspace and its default room.
                 if let Some(ws) = self.state.ws_by_name(&name) {
                     self.workspace_selected = Some(ws.id);
@@ -1317,7 +1327,7 @@ impl App {
                 }
             }
             Err(e) => {
-                self.last_error = Some(e.to_string());
+                self.show_error(e.to_string());
             }
         }
     }
@@ -1334,21 +1344,21 @@ impl App {
             _ => String::new(),
         };
         if branch.is_empty() {
-            self.last_error = Some("Branch name is required".to_string());
+            self.show_error("Branch name is required".to_string());
             return;
         }
 
         let ws_name = match self.active_workspace_name() {
             Some(w) => w,
             None => {
-                self.last_error = Some("No active workspace".to_string());
+                self.show_error("No active workspace".to_string());
                 return;
             }
         };
         let ws_path = match self.state.ws_by_name(&ws_name) {
             Some(e) => e.path.clone(),
             None => {
-                self.last_error = Some("Workspace not found".to_string());
+                self.show_error("Workspace not found".to_string());
                 return;
             }
         };
@@ -1360,10 +1370,10 @@ impl App {
         let mgr = RoomManager::new();
         match mgr.create(&ws_path, &branch, base, &worktree_path) {
             Ok(()) => {
-                self.last_error = None;
+
             }
             Err(e) => {
-                self.last_error = Some(e.to_string());
+                self.show_error(e.to_string());
             }
         }
     }
@@ -1419,10 +1429,10 @@ impl App {
                 } else {
                     self.save_state();
                 }
-                self.last_error = None;
+
             }
             Err(e) => {
-                self.last_error = Some(e.to_string());
+                self.show_error(e.to_string());
             }
         }
     }
@@ -1438,14 +1448,14 @@ impl App {
         let ws_name = match self.active_workspace_name() {
             Some(w) => w,
             None => {
-                self.last_error = Some("No active workspace".to_string());
+                self.show_error("No active workspace".to_string());
                 return;
             }
         };
         let ws_path = match self.state.ws_by_name(&ws_name) {
             Some(e) => e.path.clone(),
             None => {
-                self.last_error = Some("Workspace not found".to_string());
+                self.show_error("Workspace not found".to_string());
                 return;
             }
         };
@@ -1456,10 +1466,10 @@ impl App {
         let mgr = RoomManager::new();
         match mgr.delete(&ws_path, &branch, &worktree_path) {
             Ok(()) => {
-                self.last_error = None;
+
             }
             Err(e) => {
-                self.last_error = Some(e.to_string());
+                self.show_error(e.to_string());
             }
         }
     }
@@ -1532,7 +1542,7 @@ impl App {
 
         // Status bar
         let mut status = StatusBar::new(self.mode, &self.palette, &self.ui_config)
-            .error(self.last_error.as_deref());
+;
         if let Some(ref state) = self.search_state {
             status = status
                 .search_query(Some(&state.query))
@@ -1733,6 +1743,33 @@ impl App {
                         }
                     }
                 }
+            }
+            PopupState::ErrorDialog { message } => {
+                use ratatui::style::{Modifier, Style};
+                use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+
+                let lines: Vec<&str> = message.lines().collect();
+                let max_line_len = lines.iter().map(|l| l.chars().count()).max().unwrap_or(10);
+                let width = (max_line_len as u16 + 6).min(area.width - 4).max(20);
+                let height = (lines.len() as u16 + 4).min(area.height - 2).max(5);
+                let x = area.x + (area.width.saturating_sub(width)) / 2;
+                let y = area.y + (area.height.saturating_sub(height)) / 2;
+                let popup_area = Rect::new(x, y, width, height);
+
+                frame.render_widget(Clear, popup_area);
+
+                let block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(self.palette.accent_red))
+                    .title(" Error ")
+                    .title_style(Style::default().fg(self.palette.accent_red).add_modifier(Modifier::BOLD));
+
+                let paragraph = Paragraph::new(message.as_str())
+                    .style(Style::default().fg(self.palette.fg_primary))
+                    .block(block)
+                    .wrap(Wrap { trim: false });
+
+                frame.render_widget(paragraph, popup_area);
             }
         }
     }
@@ -2589,7 +2626,7 @@ impl App {
     /// Build and display the preset selector popup.
     fn show_preset_selector(&mut self, action: PresetAction) {
         if self.state.active_room_id.is_none() {
-            self.last_error = Some("Select a room first".to_string());
+            self.show_error("Select a room first".to_string());
             return;
         }
         let mut presets: Vec<String> = self.config.presets.keys().cloned().collect();
@@ -3108,8 +3145,8 @@ impl App {
         match self.focus {
             FocusedPanel::Workspace => {
                 self.switch_to_selected_room();
-                self.mode = Mode::Room;
-                self.focus = FocusedPanel::Room;
+                self.mode = Mode::Terminal;
+                self.focus = FocusedPanel::Terminal;
             }
             FocusedPanel::Room => {
                 self.switch_to_selected_room();
@@ -3679,7 +3716,7 @@ impl App {
             _ => return,
         };
         if !self.explorer_state.check_delta() {
-            self.last_error = Some(
+            self.show_error(
                 "delta not installed — install from https://github.com/dandavison/delta".to_string(),
             );
             return;

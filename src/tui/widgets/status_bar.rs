@@ -85,7 +85,6 @@ pub fn hint_segment_width(key: &str, label: &str) -> u16 {
 
 pub struct StatusBar<'a> {
     mode: Mode,
-    error: Option<&'a str>,
     palette: &'a Palette,
     ui_config: &'a UiConfig,
     search_query: Option<&'a str>,
@@ -98,18 +97,12 @@ impl<'a> StatusBar<'a> {
     pub fn new(mode: Mode, palette: &'a Palette, ui_config: &'a UiConfig) -> Self {
         Self {
             mode,
-            error: None,
             palette,
             ui_config,
             search_query: None,
             search_info: None,
             search_valid: true,
         }
-    }
-
-    pub fn error(mut self, error: Option<&'a str>) -> Self {
-        self.error = error;
-        self
     }
 
     pub fn search_query(mut self, query: Option<&'a str>) -> Self {
@@ -212,22 +205,6 @@ impl Widget for StatusBar<'_> {
             buf[(bx, area.y)]
                 .set_char(' ')
                 .set_style(Style::default().bg(self.palette.bg_secondary));
-        }
-
-        // If error, show error message and return
-        if let Some(err) = self.error {
-            let err_style = Style::default()
-                .fg(self.palette.accent_red)
-                .bg(self.palette.bg_secondary)
-                .add_modifier(Modifier::BOLD);
-            let msg = format!(" ERROR: {} ", err);
-            for (i, ch) in msg.chars().enumerate() {
-                if area.x + i as u16 >= area.x + area.width {
-                    break;
-                }
-                buf[(area.x + i as u16, area.y)].set_char(ch).set_style(err_style);
-            }
-            return;
         }
 
         let sep = self.ui_config.tab_chars().separator;
