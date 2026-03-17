@@ -159,12 +159,6 @@ fn handle_tab(key: KeyEvent) -> Action {
 }
 
 fn handle_workspace(key: KeyEvent) -> Action {
-    if let Some(action) = check_mode_switch(Mode::Workspace, key) {
-        return action;
-    }
-    if let Some(action) = check_shared_alt(key) {
-        return action;
-    }
     if key.modifiers.contains(KeyModifiers::SHIFT) {
         match key.code {
             KeyCode::Left => return Action::Resize(Direction::Left),
@@ -178,6 +172,7 @@ fn handle_workspace(key: KeyEvent) -> Action {
         KeyCode::Enter => Action::Select,
         KeyCode::Char('n') => Action::Create,
         KeyCode::Char('d') => Action::Delete,
+        KeyCode::Esc => Action::EnterMode(Mode::Terminal),
         _ => Action::None,
     }
 }
@@ -293,6 +288,7 @@ pub fn hint_click_action(mode: Mode, hint_index: usize) -> Option<Action> {
             2 => Some(Action::Create),                        // n New
             3 => Some(Action::Delete),                        // d Delete
             4 => None,                                        // S+←→ Resize
+            5 => Some(Action::EnterMode(Mode::Terminal)),     // Esc Back
             _ => None,
         },
         Mode::Explorer => match hint_index {

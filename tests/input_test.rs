@@ -277,10 +277,10 @@ fn workspace_shift_arrows_resize() {
 }
 
 #[test]
-fn workspace_ctrl_w_stays() {
+fn workspace_esc_exits() {
     assert!(matches!(
-        handle_key(Mode::Workspace, ctrl('w')),
-        Action::EnterMode(Mode::Workspace)
+        handle_key(Mode::Workspace, key(KeyCode::Esc)),
+        Action::EnterMode(Mode::Terminal)
     ));
 }
 
@@ -295,17 +295,13 @@ fn cross_mode_switching() {
     // From Tab: Ctrl+w → Workspace, Ctrl+p → Pane
     assert!(matches!(handle_key(Mode::Tab, ctrl('w')), Action::EnterMode(Mode::Workspace)));
     assert!(matches!(handle_key(Mode::Tab, ctrl('p')), Action::EnterMode(Mode::Pane)));
-
-    // From Workspace: Ctrl+t → Terminal, Ctrl+p → Pane
-    assert!(matches!(handle_key(Mode::Workspace, ctrl('t')), Action::EnterMode(Mode::Terminal)));
-    assert!(matches!(handle_key(Mode::Workspace, ctrl('p')), Action::EnterMode(Mode::Pane)));
 }
 
 // ── Shared Alt bindings across sub-modes ────────────────────────────────────
 
 #[test]
 fn alt_overrides_in_submodes() {
-    for mode in [Mode::Pane, Mode::Tab, Mode::Workspace] {
+    for mode in [Mode::Pane, Mode::Tab] {
         assert!(
             matches!(handle_key(mode, alt_arrow(KeyCode::Left)), Action::MoveFocus(Direction::Left)),
             "Alt+Left should move focus left in {:?}",
