@@ -38,6 +38,7 @@ pub enum FocusedPanel {
     Workspace,
     Room,
     Terminal,
+    Explorer,
 }
 
 /// Tracks the last-rendered rects for each major panel so mouse clicks can be
@@ -47,6 +48,7 @@ pub struct PanelRects {
     pub workspace: Rect,
     pub room: Rect,
     pub terminal: Rect,
+    pub explorer: Rect,
     pub tab_bar: Rect,
     pub status_bar: Rect,
 }
@@ -167,8 +169,8 @@ pub struct App {
     pub hook_port: Option<u16>,
     /// Last-rendered panel rects used for mouse hit-testing.
     pub panel_rects: PanelRects,
-    /// Panel widths: [workspace, room]. Used in the layout constraints.
-    pub panel_widths: [u16; 2],
+    /// Panel widths: [workspace, room, explorer]. Used in the layout constraints.
+    pub panel_widths: [u16; 3],
     /// True when a mouse-down was forwarded to the focused PTY (not humu UI).
     pub pty_mouse_active: bool,
     /// Active text selection in a terminal pane (when child has no mouse tracking).
@@ -184,6 +186,8 @@ pub struct App {
     pub suspended_rooms: HashMap<(WorkspaceId, RoomId), RoomState>,
     /// Active search state (None when not searching).
     pub search_state: Option<SearchState>,
+    /// File explorer state for the right-side panel.
+    pub explorer_state: humu::explorer::ExplorerState,
     /// Cached path to state.yaml.
     state_path: std::path::PathBuf,
     /// Notification manager for OS/Telegram alerts.
@@ -265,7 +269,7 @@ impl App {
             rounded_corners: config.ui.rounded_corners,
         };
 
-        let saved_panel_widths = state.panel_widths.unwrap_or([20, 18]);
+        let saved_panel_widths = state.panel_widths.unwrap_or([20, 18, 25]);
 
         Ok(Self {
             config,
@@ -294,6 +298,7 @@ impl App {
             spin_tick: 0,
             suspended_rooms: HashMap::new(),
             search_state: None,
+            explorer_state: humu::explorer::ExplorerState::new(std::path::PathBuf::new()),
             state_path: humu_dir().join("state.yaml"),
             notification_manager,
             config_path,
@@ -1320,6 +1325,7 @@ impl App {
                 Constraint::Length(self.panel_widths[0]),
                 Constraint::Length(self.panel_widths[1]),
                 Constraint::Min(1),
+                Constraint::Length(self.panel_widths[2]),
             ])
             .split(main_chunks[0]);
 
@@ -1329,6 +1335,7 @@ impl App {
             workspace: panel_chunks[0],
             room: panel_chunks[1],
             terminal: panel_chunks[2],
+            explorer: panel_chunks[3],
             tab_bar: tab_bar_rect,
             status_bar: main_chunks[1],
         };
@@ -1360,6 +1367,14 @@ impl App {
 
         // Terminal area: tab bar (1 line) + pane area
         self.render_terminal_area(frame, panel_chunks[2]);
+
+        // Explorer panel
+        let explorer_widget = humu::tui::widgets::explorer_panel::ExplorerPanel::new(
+            &self.explorer_state,
+            &self.palette,
+            &self.ui_config,
+        ).focus(self.focus == FocusedPanel::Explorer);
+        frame.render_widget(explorer_widget, panel_chunks[3]);
 
         // Status bar
         let mut status = StatusBar::new(self.mode, &self.palette, &self.ui_config)
@@ -1708,6 +1723,15 @@ impl App {
                 match mode {
                     Mode::Workspace => self.focus = FocusedPanel::Workspace,
                     Mode::Room => self.focus = FocusedPanel::Room,
+                    Mode::Explorer => {
+                        self.focus = FocusedPanel::Explorer;
+                        if let Some(path) = self.current_room_path() {
+                            if self.explorer_state.root != path {
+                                self.explorer_state = humu::explorer::ExplorerState::new(path);
+                            }
+                            self.explorer_state.scan();
+                        }
+                    }
                     _ => self.focus = FocusedPanel::Terminal,
                 }
             }
@@ -1868,6 +1892,14 @@ impl App {
                 if self.search_state.is_some() {
                     self.run_search();
                 }
+            }
+
+            Action::DiffFile => {
+                self.explorer_diff_file();
+            }
+            Action::ToggleIgnored => {
+                self.explorer_state.show_ignored = !self.explorer_state.show_ignored;
+                self.explorer_state.scan();
             }
 
             _ => {}
@@ -2038,6 +2070,9 @@ impl App {
         } else if self.panel_rects.tab_bar.contains(pos) {
             // Determine which tab or "+" was clicked.
             self.handle_tab_bar_click(x);
+        } else if self.panel_rects.explorer.contains(pos) {
+            self.mode = Mode::Explorer;
+            self.focus = FocusedPanel::Explorer;
         } else if self.panel_rects.terminal.contains(pos) {
             self.mode = Mode::Terminal;
             self.focus = FocusedPanel::Terminal;
@@ -2314,6 +2349,15 @@ impl App {
                 self.panel_widths[1] =
                     (self.panel_widths[1] as i16 + delta).clamp(5, 60) as u16;
             }
+            FocusedPanel::Explorer => {
+                let delta: i16 = match dir {
+                    NavDirection::Right => 1,
+                    NavDirection::Left => -1,
+                    _ => 0,
+                };
+                self.panel_widths[2] =
+                    (self.panel_widths[2] as i16 + delta).clamp(5, 60) as u16;
+            }
         }
     }
 
@@ -2400,6 +2444,7 @@ impl App {
                 self.popup = PopupState::RoomCreate { fields, focused_field: 0 };
             }
             FocusedPanel::Terminal => {}
+            FocusedPanel::Explorer => {}
         }
     }
 
@@ -2441,6 +2486,7 @@ impl App {
                 };
             }
             FocusedPanel::Terminal => {}
+            FocusedPanel::Explorer => {}
         }
     }
 
@@ -2828,6 +2874,13 @@ impl App {
                 }
             }
             FocusedPanel::Terminal => {}
+            FocusedPanel::Explorer => {
+                if delta < 0 {
+                    self.explorer_state.move_up();
+                } else {
+                    self.explorer_state.move_down();
+                }
+            }
         }
     }
 
@@ -2844,6 +2897,9 @@ impl App {
                 self.focus = FocusedPanel::Terminal;
             }
             FocusedPanel::Terminal => {}
+            FocusedPanel::Explorer => {
+                self.explorer_select();
+            }
         }
     }
 
@@ -3322,6 +3378,94 @@ impl App {
         }
     }
 
+    /// Spawn an arbitrary command in a new PTY pane without going through presets.
+    fn spawn_command(&mut self, cmd: &str, args: &[String], cwd: &std::path::Path, preset_name: &str) -> Option<PaneId> {
+        let id = PaneId::new();
+        let pane = PtyPane::spawn_with_envs(cmd, args, Some(cwd), 80, 24, &[]).ok()?;
+        self.panes.insert(id, pane);
+        self.pane_presets.insert(id, preset_name.to_string());
+        Some(id)
+    }
+
+    /// Open the selected explorer entry: toggle directories, open files in $EDITOR.
+    fn explorer_select(&mut self) {
+        let entry = match self.explorer_state.selected_entry() {
+            Some(e) => e.clone(),
+            None => return,
+        };
+        if entry.kind == humu::explorer::FileKind::Directory {
+            self.explorer_state.toggle_dir();
+            return;
+        }
+        // Open file in $EDITOR
+        let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+        let cwd = self.explorer_state.root.clone();
+        let filepath = entry.path.clone();
+        let args = vec![filepath.to_string_lossy().into_owned()];
+        if let Some(id) = self.spawn_command(&editor, &args, &cwd, "_editor") {
+            if let Some(tree) = self.tabs.active_tree_mut() {
+                if let Some(focused) = self.focused_pane {
+                    tree.split_horizontal(focused, id);
+                } else {
+                    // No focused pane — add as new tab
+                    self.tabs.add_tab("editor".to_string(), SplitTree::leaf(id));
+                    let last = self.tabs.len() - 1;
+                    self.tabs.set_active(last);
+                }
+            } else {
+                self.tabs.add_tab("editor".to_string(), SplitTree::leaf(id));
+                let last = self.tabs.len() - 1;
+                self.tabs.set_active(last);
+            }
+            self.focused_pane = Some(id);
+            self.mode = Mode::Terminal;
+            self.focus = FocusedPanel::Terminal;
+            self.persist_layout();
+        }
+    }
+
+    /// Open a git diff view for the selected modified file using delta.
+    fn explorer_diff_file(&mut self) {
+        let entry = match self.explorer_state.selected_entry() {
+            Some(e)
+                if e.kind == humu::explorer::FileKind::File
+                    && e.git_status == Some(humu::explorer::GitStatus::Modified) =>
+            {
+                e.clone()
+            }
+            _ => return,
+        };
+        if !self.explorer_state.check_delta() {
+            self.last_error = Some(
+                "delta not installed — install from https://github.com/dandavison/delta".to_string(),
+            );
+            return;
+        }
+        let cwd = self.explorer_state.root.clone();
+        let rel_path = entry.path.strip_prefix(&cwd).unwrap_or(&entry.path);
+        let diff_cmd = format!("git diff {} | delta --paging=always", rel_path.display());
+        let args = vec!["-c".to_string(), diff_cmd];
+        if let Some(id) = self.spawn_command("sh", &args, &cwd, "_diff") {
+            if let Some(tree) = self.tabs.active_tree_mut() {
+                if let Some(focused) = self.focused_pane {
+                    tree.split_horizontal(focused, id);
+                } else {
+                    self.tabs.add_tab("diff".to_string(), SplitTree::leaf(id));
+                    let last = self.tabs.len() - 1;
+                    self.tabs.set_active(last);
+                }
+            } else {
+                self.tabs.add_tab("diff".to_string(), SplitTree::leaf(id));
+                let last = self.tabs.len() - 1;
+                self.tabs.set_active(last);
+            }
+            self.focused_pane = Some(id);
+            self.mode = Mode::Terminal;
+            self.focus = FocusedPanel::Terminal;
+            self.persist_layout();
+        }
+    }
+
     /// Switch to the room identified by the current workspace/room selection,
     /// suspending the current room and restoring the target room.
     fn switch_to_selected_room(&mut self) {
@@ -3387,6 +3531,11 @@ impl App {
 
         // Restore target room (hot if suspended, cold otherwise).
         self.restore_room(target_ws_id, target_room_id);
+
+        // Reset explorer to the new room's path.
+        if let Some(path) = self.current_room_path() {
+            self.explorer_state = humu::explorer::ExplorerState::new(path);
+        }
 
         self.save_state();
     }

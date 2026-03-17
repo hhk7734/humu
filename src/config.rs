@@ -1,5 +1,5 @@
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -234,9 +234,21 @@ pub struct HumuState {
     pub active_room_id: Option<RoomId>,
     #[serde(default)]
     pub workspaces: Vec<WorkspaceEntry>,
-    /// Panel widths: [workspace_panel, room_panel]. Persisted across restarts.
-    #[serde(default)]
-    pub panel_widths: Option<[u16; 2]>,
+    /// Panel widths: [workspace_panel, room_panel, explorer_panel]. Persisted across restarts.
+    #[serde(default, deserialize_with = "deserialize_panel_widths")]
+    pub panel_widths: Option<[u16; 3]>,
+}
+
+fn deserialize_panel_widths<'de, D>(deserializer: D) -> Result<Option<[u16; 3]>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let opt: Option<Vec<u16>> = Option::deserialize(deserializer)?;
+    Ok(opt.map(|v| match v.len() {
+        2 => [v[0], v[1], 25],
+        3 => [v[0], v[1], v[2]],
+        _ => [20, 18, 25],
+    }))
 }
 
 impl HumuState {
