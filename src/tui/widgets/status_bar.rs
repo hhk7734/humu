@@ -46,7 +46,8 @@ pub fn mode_hints(mode: Mode) -> Vec<(&'static str, &'static str)> {
         Mode::Workspace => vec![
             ("\u{2191}\u{2193}", "Navigate"),
             ("Enter", "Select"),
-            ("n", "New"),
+            ("n", "Room"),
+            ("S+N", "Workspace"),
             ("d", "Delete"),
             ("S+\u{2190}\u{2192}", "Resize"),
             ("Esc", "Back"),

@@ -2146,6 +2146,7 @@ impl App {
 
             // Workspace/room actions
             Action::Create => self.show_create_dialog(),
+            Action::CreateWorkspace => self.show_create_workspace_dialog(),
             Action::Delete => self.show_delete_dialog(),
 
             // Settings
@@ -2813,66 +2814,58 @@ impl App {
         self.popup = PopupState::PresetSelector { presets, selected: 0, action };
     }
 
-    /// Show the appropriate create dialog based on focused panel and tree selection.
+    /// Show create room dialog (n in workspace mode).
     fn show_create_dialog(&mut self) {
         match self.focus {
             FocusedPanel::Workspace => {
-                // Determine whether to create workspace or room based on tree selection.
-                let tree = self.build_workspace_tree();
-                let on_room_or_expanded_ws = if self.selected_tree_index < tree.len() {
-                    match &tree[self.selected_tree_index].kind {
-                        TreeItemKind::Room => true,
-                        TreeItemKind::Workspace { expanded } => *expanded,
-                    }
-                } else {
-                    false
-                };
-
-                if on_room_or_expanded_ws && self.state.active_workspace_id.is_some() {
-                    // Create room
-                    let fields = vec![
-                        DialogField::TextInput {
-                            label: "Branch name".to_string(),
-                            value: String::new(),
-                        },
-                        DialogField::TextInput {
-                            label: "Base branch".to_string(),
-                            value: String::new(),
-                        },
-                    ];
-                    self.popup = PopupState::RoomCreate { fields, focused_field: 0 };
-                } else {
-                    // Create workspace
-                    let fields = vec![
-                        DialogField::Select {
-                            label: "Mode".to_string(),
-                            options: vec![
-                                "Clone".to_string(),
-                                "Existing".to_string(),
-                                "New".to_string(),
-                            ],
-                            selected: 0,
-                        },
-                        DialogField::TextInput {
-                            label: "Path".to_string(),
-                            value: String::new(),
-                        },
-                        DialogField::TextInput {
-                            label: "URL (Clone only)".to_string(),
-                            value: String::new(),
-                        },
-                    ];
-                    self.popup = PopupState::WorkspaceCreate {
-                        fields,
-                        focused_field: 0,
-                        completions: vec![],
-                        completion_selected: None,
-                    };
+                if self.state.active_workspace_id.is_none() {
+                    self.show_error("No active workspace — create a workspace first (Shift+N)");
+                    return;
                 }
+                let fields = vec![
+                    DialogField::TextInput {
+                        label: "Branch name".to_string(),
+                        value: String::new(),
+                    },
+                    DialogField::TextInput {
+                        label: "Base branch".to_string(),
+                        value: String::new(),
+                    },
+                ];
+                self.popup = PopupState::RoomCreate { fields, focused_field: 0 };
             }
             FocusedPanel::Terminal => {}
             FocusedPanel::Explorer => {}
         }
+    }
+
+    /// Show create workspace dialog (Shift+N in workspace mode).
+    fn show_create_workspace_dialog(&mut self) {
+        let fields = vec![
+            DialogField::Select {
+                label: "Mode".to_string(),
+                options: vec![
+                    "Clone".to_string(),
+                    "Existing".to_string(),
+                    "New".to_string(),
+                ],
+                selected: 0,
+            },
+            DialogField::TextInput {
+                label: "Path".to_string(),
+                value: String::new(),
+            },
+            DialogField::TextInput {
+                label: "URL (Clone only)".to_string(),
+                value: String::new(),
+            },
+        ];
+        self.popup = PopupState::WorkspaceCreate {
+            fields,
+            focused_field: 0,
+            completions: vec![],
+            completion_selected: None,
+        };
     }
 
     /// Show the appropriate delete dialog based on focused panel and tree selection.

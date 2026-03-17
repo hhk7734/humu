@@ -32,6 +32,7 @@ pub enum Action {
     NavigateDown,
     Select,
     Create,
+    CreateWorkspace,
     Delete,
     Resize(Direction),
     PassThrough(KeyEvent),
@@ -166,6 +167,7 @@ fn handle_workspace(key: KeyEvent) -> Action {
         match key.code {
             KeyCode::Left => return Action::Resize(Direction::Left),
             KeyCode::Right => return Action::Resize(Direction::Right),
+            KeyCode::Char('N') => return Action::CreateWorkspace,
             _ => {}
         }
     }
@@ -291,10 +293,11 @@ pub fn hint_click_action(mode: Mode, hint_index: usize) -> Option<Action> {
         Mode::Workspace => match hint_index {
             0 => None,                                        // ↑↓ Navigate
             1 => Some(Action::Select),                        // Enter Select
-            2 => Some(Action::Create),                        // n New
-            3 => Some(Action::Delete),                        // d Delete
-            4 => None,                                        // S+←→ Resize
-            5 => Some(Action::EnterMode(Mode::Terminal)),     // Esc Back
+            2 => Some(Action::Create),                        // n Room
+            3 => Some(Action::CreateWorkspace),               // S+N Workspace
+            4 => Some(Action::Delete),                        // d Delete
+            5 => None,                                        // S+←→ Resize
+            6 => Some(Action::EnterMode(Mode::Terminal)),     // Esc Back
             _ => None,
         },
         Mode::Explorer => match hint_index {
