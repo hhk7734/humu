@@ -228,6 +228,8 @@ pub struct App {
     expanded_workspaces: HashSet<WorkspaceId>,
     /// Cursor position in the flat workspace tree (for keyboard navigation).
     selected_tree_index: usize,
+    /// When workspace mode was entered (for auto-return to terminal after timeout).
+    workspace_mode_entered: Option<std::time::Instant>,
     /// Cached path to state.yaml.
     state_path: std::path::PathBuf,
     /// Notification manager for OS/Telegram alerts.
@@ -343,6 +345,7 @@ impl App {
             room_cache: HashMap::new(),
             expanded_workspaces: all_ws_ids,
             selected_tree_index: 0,
+            workspace_mode_entered: None,
             state_path: humu_dir().join("state.yaml"),
             notification_manager,
             config_path,
@@ -411,6 +414,15 @@ impl App {
                 }
             }
 
+            // Auto-return from workspace mode to terminal after 5s of inactivity.
+            if let Some(entered) = self.workspace_mode_entered {
+                if self.mode == Mode::Workspace && entered.elapsed().as_secs() >= 5 {
+                    self.mode = Mode::Terminal;
+                    self.focus = FocusedPanel::Terminal;
+                    self.workspace_mode_entered = None;
+                }
+            }
+
             // Periodic rescan (~3s) to pick up git status changes.
             if self.spin_tick % 60 == 0 {
                 if !self.explorer_state.root.as_os_str().is_empty() {
@@ -427,6 +439,10 @@ impl App {
             while event::poll(Duration::from_millis(0))? {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
+                        // Reset workspace auto-return timer on any keypress.
+                        if self.mode == Mode::Workspace {
+                            self.workspace_mode_entered = Some(std::time::Instant::now());
+                        }
                         // Ctrl+Q is a global quit — bypass popups.
                         if key.modifiers.contains(KeyModifiers::CONTROL)
                             && key.code == KeyCode::Char('q')
@@ -450,6 +466,10 @@ impl App {
             if event::poll(Duration::from_millis(50))? {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
+                        // Reset workspace auto-return timer on any keypress.
+                        if self.mode == Mode::Workspace {
+                            self.workspace_mode_entered = Some(std::time::Instant::now());
+                        }
                         // Ctrl+Q is a global quit — bypass popups.
                         if key.modifiers.contains(KeyModifiers::CONTROL)
                             && key.code == KeyCode::Char('q')
@@ -2060,6 +2080,12 @@ impl App {
                     self.search_state = Some(SearchState::new());
                 }
                 self.mode = mode;
+                // Track workspace mode entry for auto-timeout.
+                if mode == Mode::Workspace {
+                    self.workspace_mode_entered = Some(std::time::Instant::now());
+                } else {
+                    self.workspace_mode_entered = None;
+                }
                 match mode {
                     Mode::Workspace => self.focus = FocusedPanel::Workspace,
                     Mode::Explorer => {
@@ -2425,6 +2451,7 @@ impl App {
     fn handle_click(&mut self, x: u16, y: u16) {
         let pos = Position::new(x, y);
         if self.panel_rects.workspace.contains(pos) {
+            self.handle_action(Action::EnterMode(Mode::Workspace));
             let visual_row = y.saturating_sub(self.panel_rects.workspace.y + 1) as usize;
             let tree = self.build_workspace_tree();
             if let Some(idx) = Self::visual_row_to_tree_index(&tree, visual_row) {
@@ -2445,11 +2472,9 @@ impl App {
                         self.switch_to_selected_room();
                         self.mode = Mode::Terminal;
                         self.focus = FocusedPanel::Terminal;
+                        self.workspace_mode_entered = None;
                     }
                 }
-            } else {
-                self.mode = Mode::Workspace;
-                self.focus = FocusedPanel::Workspace;
             }
         } else if self.panel_rects.tab_bar.contains(pos) {
             // Determine which tab or "+" was clicked.
