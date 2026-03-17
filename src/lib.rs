@@ -1,5 +1,6 @@
 pub mod id;
 pub mod config;
+pub mod explorer;
 pub mod git;
 pub mod hook;
 pub mod log;
