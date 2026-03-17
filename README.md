@@ -4,20 +4,7 @@
 
 HuMu organizes your terminal workflow around git concepts: **workspaces** map to repositories, **rooms** map to worktrees, and each room contains tabbed terminal panes running your tools. Switch between projects instantly without losing state.
 
-```
-+------------+----------+--------------------------------------+--------------+
-|            |          | claude ...  shell  [+]               |              |
-| WORKSPACES |  ROOMS   | +----------------------------------+ |   EXPLORER   |
-|            |          | | $ claude                         | |              |
-|  > humu    |   main   | | > Working on feature...          | |  > src       |
-|    infra   | > feat/x | |                                  | |    app.rs    |
-|    docs    |   fix/y  | +----------------------------------+ |    main.rs   |
-|            |          | | $ cargo test                     | |   Cargo.toml |
-|            |          | | running 12 tests ... ok          | |              |
-|            |          | | $                                | |              |
-+------------+----------+--------------------------------------+--------------+
- TERMINAL >> Ctrl+ >> g LOCK >> p PANE >> t TAB >> w WS >> r ROOM
-```
+![HuMu Screenshot](assets/humu.png)
 
 ## Features
 
