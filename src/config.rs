@@ -66,12 +66,26 @@ pub struct OsNotificationConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default = "default_true")]
-    pub sound: bool,
+    pub only_unfocused: bool,
 }
 
 impl Default for OsNotificationConfig {
     fn default() -> Self {
-        Self { enabled: true, sound: true }
+        Self { enabled: true, only_unfocused: true }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoundNotificationConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub only_unfocused: bool,
+}
+
+impl Default for SoundNotificationConfig {
+    fn default() -> Self {
+        Self { enabled: true, only_unfocused: false }
     }
 }
 
@@ -79,6 +93,8 @@ impl Default for OsNotificationConfig {
 pub struct TelegramNotificationConfig {
     #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
+    pub only_unfocused: bool,
     #[serde(default)]
     pub bot_token_encrypted: String,
     #[serde(default)]
@@ -89,6 +105,8 @@ pub struct TelegramNotificationConfig {
 pub struct NotificationsConfig {
     #[serde(default)]
     pub os: OsNotificationConfig,
+    #[serde(default)]
+    pub sound: SoundNotificationConfig,
     #[serde(default)]
     pub telegram: TelegramNotificationConfig,
 }

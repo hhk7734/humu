@@ -177,6 +177,8 @@ pub struct App {
     pub panel_widths: [u16; 3],
     /// True when a mouse-down was forwarded to the focused PTY (not humu UI).
     pub pty_mouse_active: bool,
+    /// Whether the terminal window is focused (for focus-aware notifications).
+    pub is_focused: bool,
     /// Active text selection in a terminal pane (when child has no mouse tracking).
     pub selection: Option<TextSelection>,
     /// When Some(id), only that pane is rendered filling the full terminal area.
@@ -295,6 +297,7 @@ impl App {
             panel_rects: PanelRects::default(),
             panel_widths: saved_panel_widths,
             pty_mouse_active: false,
+            is_focused: true,
             selection: None,
             fullscreen_pane: None,
             palette: humu::tui::theme::Palette::GITHUB_DARK,
@@ -316,6 +319,7 @@ impl App {
             stdout(),
             crossterm::event::EnableMouseCapture,
             crossterm::event::EnableBracketedPaste,
+            crossterm::event::EnableFocusChange,
         )?;
         // Enable Kitty keyboard protocol for modifier-aware keys (Shift+Enter, etc.).
         // Silently ignored on terminals that don't support it.
@@ -392,6 +396,8 @@ impl App {
                     }
                     Event::Mouse(mouse) => self.handle_mouse(mouse),
                     Event::Paste(text) => self.handle_paste_event(&text),
+                    Event::FocusGained => { self.is_focused = true; }
+                    Event::FocusLost => { self.is_focused = false; }
                     Event::Resize(_, _) => {}
                     _ => {}
                 }
@@ -414,6 +420,8 @@ impl App {
                     }
                     Event::Mouse(mouse) => self.handle_mouse(mouse),
                     Event::Paste(text) => self.handle_paste_event(&text),
+                    Event::FocusGained => { self.is_focused = true; }
+                    Event::FocusLost => { self.is_focused = false; }
                     Event::Resize(_, _) => {}
                     _ => {}
                 }
@@ -434,6 +442,7 @@ impl App {
             stdout(),
             crossterm::event::DisableBracketedPaste,
             crossterm::event::DisableMouseCapture,
+            crossterm::event::DisableFocusChange,
         )?;
         stdout().execute(LeaveAlternateScreen)?;
         disable_raw_mode()?;
@@ -590,32 +599,16 @@ impl App {
 
     fn notification_settings_items(&self) -> Vec<String> {
         let cfg = &self.config.notifications;
+        let on_off = |b: bool| if b { "ON" } else { "OFF" };
         vec![
-            format!(
-                "OS Notifications: {}",
-                if cfg.os.enabled { "ON" } else { "OFF" }
-            ),
-            format!("OS Sound: {}", if cfg.os.sound { "ON" } else { "OFF" }),
-            format!(
-                "Telegram: {}",
-                if cfg.telegram.enabled { "ON" } else { "OFF" }
-            ),
-            format!(
-                "Telegram Bot Token: {}",
-                if cfg.telegram.bot_token_encrypted.is_empty() {
-                    "(not set)"
-                } else {
-                    "****"
-                }
-            ),
-            format!(
-                "Telegram Chat ID: {}",
-                if cfg.telegram.chat_id_encrypted.is_empty() {
-                    "(not set)"
-                } else {
-                    "****"
-                }
-            ),
+            format!("OS Notifications: {}", on_off(cfg.os.enabled)),
+            format!("OS Only Unfocused: {}", on_off(cfg.os.only_unfocused)),
+            format!("Sound: {}", on_off(cfg.sound.enabled)),
+            format!("Sound Only Unfocused: {}", on_off(cfg.sound.only_unfocused)),
+            format!("Telegram: {}", on_off(cfg.telegram.enabled)),
+            format!("Telegram Only Unfocused: {}", on_off(cfg.telegram.only_unfocused)),
+            format!("Telegram Bot Token: {}", if cfg.telegram.bot_token_encrypted.is_empty() { "(not set)" } else { "****" }),
+            format!("Telegram Chat ID: {}", if cfg.telegram.chat_id_encrypted.is_empty() { "(not set)" } else { "****" }),
         ]
     }
 
@@ -624,7 +617,7 @@ impl App {
             return;
         };
         let mut selected = *selected;
-        let item_count = 5;
+        let item_count = 8;
 
         match key.code {
             KeyCode::Down => {
@@ -644,23 +637,38 @@ impl App {
                     self.rebuild_notification_manager();
                 }
                 1 => {
-                    self.config.notifications.os.sound =
-                        !self.config.notifications.os.sound;
+                    self.config.notifications.os.only_unfocused =
+                        !self.config.notifications.os.only_unfocused;
                     self.rebuild_notification_manager();
                 }
                 2 => {
+                    self.config.notifications.sound.enabled =
+                        !self.config.notifications.sound.enabled;
+                    self.rebuild_notification_manager();
+                }
+                3 => {
+                    self.config.notifications.sound.only_unfocused =
+                        !self.config.notifications.sound.only_unfocused;
+                    self.rebuild_notification_manager();
+                }
+                4 => {
                     self.config.notifications.telegram.enabled =
                         !self.config.notifications.telegram.enabled;
                     self.rebuild_notification_manager();
                 }
-                3 => {
+                5 => {
+                    self.config.notifications.telegram.only_unfocused =
+                        !self.config.notifications.telegram.only_unfocused;
+                    self.rebuild_notification_manager();
+                }
+                6 => {
                     self.popup = PopupState::NotificationTokenInput {
                         field: NotificationField::BotToken,
                         value: String::new(),
                     };
                     return;
                 }
-                4 => {
+                7 => {
                     self.popup = PopupState::NotificationTokenInput {
                         field: NotificationField::ChatId,
                         value: String::new(),
@@ -3227,7 +3235,7 @@ impl App {
                     }
                     _ => continue,
                 };
-                self.notification_manager.notify(notification_event);
+                self.notification_manager.notify(notification_event, self.is_focused);
             }
         }
     }

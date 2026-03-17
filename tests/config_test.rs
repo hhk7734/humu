@@ -260,7 +260,9 @@ fn prune_removes_stale_rooms() {
 fn default_config_has_notifications_enabled() {
     let config = HumuConfig::default();
     assert!(config.notifications.os.enabled);
-    assert!(config.notifications.os.sound);
+    assert!(config.notifications.os.only_unfocused);
+    assert!(config.notifications.sound.enabled);
+    assert!(!config.notifications.sound.only_unfocused);
     assert!(!config.notifications.telegram.enabled);
     assert!(config.notifications.telegram.bot_token_encrypted.is_empty());
 }
@@ -274,7 +276,8 @@ presets:
 "#;
     let config: HumuConfig = serde_yaml::from_str(yaml).unwrap();
     assert!(config.notifications.os.enabled);
-    assert!(config.notifications.os.sound);
+    assert!(config.notifications.os.only_unfocused);
+    assert!(config.notifications.sound.enabled);
     assert!(!config.notifications.telegram.enabled);
 }
 
@@ -287,15 +290,22 @@ presets:
 notifications:
   os:
     enabled: false
-    sound: false
+    only_unfocused: false
+  sound:
+    enabled: false
+    only_unfocused: true
   telegram:
     enabled: true
+    only_unfocused: true
     bot_token_encrypted: "abc123"
     chat_id_encrypted: "def456"
 "#;
     let config: HumuConfig = serde_yaml::from_str(yaml).unwrap();
     assert!(!config.notifications.os.enabled);
-    assert!(!config.notifications.os.sound);
+    assert!(!config.notifications.os.only_unfocused);
+    assert!(!config.notifications.sound.enabled);
+    assert!(config.notifications.sound.only_unfocused);
     assert!(config.notifications.telegram.enabled);
+    assert!(config.notifications.telegram.only_unfocused);
     assert_eq!(config.notifications.telegram.bot_token_encrypted, "abc123");
 }
