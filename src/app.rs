@@ -41,6 +41,16 @@ pub enum FocusedPanel {
     Explorer,
 }
 
+/// Cached room info with git stats, refreshed periodically.
+#[allow(dead_code)]
+struct CachedRoomInfo {
+    branch: String,
+    path: std::path::PathBuf,
+    is_default: bool,
+    diff_stat: Option<(usize, usize)>,
+    ahead_behind: Option<(usize, usize)>,
+}
+
 /// Tracks the last-rendered rects for each major panel so mouse clicks can be
 /// hit-tested without re-running the layout computation.
 #[derive(Debug, Clone, Copy, Default)]
@@ -195,8 +205,8 @@ pub struct App {
     pub search_state: Option<SearchState>,
     /// File explorer state for the right-side panel.
     pub explorer_state: humu::explorer::ExplorerState,
-    /// Cached git stats per room path: (diff_stat, ahead_behind), refreshed periodically.
-    room_git_cache: HashMap<std::path::PathBuf, (Option<(usize, usize)>, Option<(usize, usize)>)>,
+    /// Cached room list + git stats, refreshed periodically (~3s).
+    room_cache: Vec<CachedRoomInfo>,
     /// Cached path to state.yaml.
     state_path: std::path::PathBuf,
     /// Notification manager for OS/Telegram alerts.
@@ -308,7 +318,7 @@ impl App {
             suspended_rooms: HashMap::new(),
             search_state: None,
             explorer_state: humu::explorer::ExplorerState::new(std::path::PathBuf::new()),
-            room_git_cache: HashMap::new(),
+            room_cache: Vec::new(),
             state_path: humu_dir().join("state.yaml"),
             notification_manager,
             config_path,
@@ -382,7 +392,7 @@ impl App {
                 if !self.explorer_state.root.as_os_str().is_empty() {
                     self.explorer_state.scan();
                 }
-                self.refresh_room_git_cache();
+                self.refresh_room_cache();
             }
 
             terminal.draw(|frame| self.render(frame))?;
@@ -393,7 +403,6 @@ impl App {
             while event::poll(Duration::from_millis(0))? {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
-        
                         // Ctrl+Q is a global quit — bypass popups.
                         if key.modifiers.contains(KeyModifiers::CONTROL)
                             && key.code == KeyCode::Char('q')
@@ -417,7 +426,6 @@ impl App {
             if event::poll(Duration::from_millis(50))? {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
-        
                         // Ctrl+Q is a global quit — bypass popups.
                         if key.modifiers.contains(KeyModifiers::CONTROL)
                             && key.code == KeyCode::Char('q')
@@ -1275,7 +1283,7 @@ impl App {
             _ => String::new(),
         };
         if path_str.is_empty() {
-            self.show_error("Path is required".to_string());
+            self.show_error("Path is required");
             return;
         }
         // Expand ~ to the user's home directory (Rust's Path doesn't do this).
@@ -1300,7 +1308,7 @@ impl App {
                     _ => String::new(),
                 };
                 if url.is_empty() {
-                    self.show_error("URL is required for Clone".to_string());
+                    self.show_error("URL is required for Clone");
                     return;
                 }
                 mgr.clone_remote(&mut self.state, &url, path)
@@ -1316,7 +1324,6 @@ impl App {
         };
         match result {
             Ok(name) => {
-
                 // Auto-select the new workspace and its default room.
                 if let Some(ws) = self.state.ws_by_name(&name) {
                     self.workspace_selected = Some(ws.id);
@@ -1344,21 +1351,21 @@ impl App {
             _ => String::new(),
         };
         if branch.is_empty() {
-            self.show_error("Branch name is required".to_string());
+            self.show_error("Branch name is required");
             return;
         }
 
         let ws_name = match self.active_workspace_name() {
             Some(w) => w,
             None => {
-                self.show_error("No active workspace".to_string());
+                self.show_error("No active workspace");
                 return;
             }
         };
         let ws_path = match self.state.ws_by_name(&ws_name) {
             Some(e) => e.path.clone(),
             None => {
-                self.show_error("Workspace not found".to_string());
+                self.show_error("Workspace not found");
                 return;
             }
         };
@@ -1368,13 +1375,8 @@ impl App {
             .join(&ws_name)
             .join(&branch);
         let mgr = RoomManager::new();
-        match mgr.create(&ws_path, &branch, base, &worktree_path) {
-            Ok(()) => {
-
-            }
-            Err(e) => {
-                self.show_error(e.to_string());
-            }
+        if let Err(e) = mgr.create(&ws_path, &branch, base, &worktree_path) {
+            self.show_error(e.to_string());
         }
     }
 
@@ -1429,7 +1431,6 @@ impl App {
                 } else {
                     self.save_state();
                 }
-
             }
             Err(e) => {
                 self.show_error(e.to_string());
@@ -1448,14 +1449,14 @@ impl App {
         let ws_name = match self.active_workspace_name() {
             Some(w) => w,
             None => {
-                self.show_error("No active workspace".to_string());
+                self.show_error("No active workspace");
                 return;
             }
         };
         let ws_path = match self.state.ws_by_name(&ws_name) {
             Some(e) => e.path.clone(),
             None => {
-                self.show_error("Workspace not found".to_string());
+                self.show_error("Workspace not found");
                 return;
             }
         };
@@ -1464,13 +1465,8 @@ impl App {
             .join(&ws_name)
             .join(&branch);
         let mgr = RoomManager::new();
-        match mgr.delete(&ws_path, &branch, &worktree_path) {
-            Ok(()) => {
-
-            }
-            Err(e) => {
-                self.show_error(e.to_string());
-            }
+        if let Err(e) = mgr.delete(&ws_path, &branch, &worktree_path) {
+            self.show_error(e.to_string());
         }
     }
 
@@ -1541,8 +1537,7 @@ impl App {
         frame.render_widget(explorer_widget, panel_chunks[3]);
 
         // Status bar
-        let mut status = StatusBar::new(self.mode, &self.palette, &self.ui_config)
-;
+        let mut status = StatusBar::new(self.mode, &self.palette, &self.ui_config);
         if let Some(ref state) = self.search_state {
             status = status
                 .search_query(Some(&state.query))
@@ -2626,7 +2621,7 @@ impl App {
     /// Build and display the preset selector popup.
     fn show_preset_selector(&mut self, action: PresetAction) {
         if self.state.active_room_id.is_none() {
-            self.show_error("Select a room first".to_string());
+            self.show_error("Select a room first");
             return;
         }
         let mut presets: Vec<String> = self.config.presets.keys().cloned().collect();
@@ -3351,8 +3346,8 @@ impl App {
         ids
     }
 
-    /// Refresh cached git stats (diff + ahead/behind) for all rooms in the active workspace.
-    fn refresh_room_git_cache(&mut self) {
+    /// Refresh cached room list + git stats for the active workspace.
+    fn refresh_room_cache(&mut self) {
         let ws_id = match self.state.active_workspace_id {
             Some(id) => id,
             None => return,
@@ -3363,46 +3358,47 @@ impl App {
         };
         let mgr = RoomManager::new();
         if let Ok(rooms) = mgr.list(&ws.path) {
-            self.room_git_cache.clear();
-            for r in &rooms {
-                let diff = mgr.diff_stat(&r.path);
-                let ab = mgr.ahead_behind(&r.path);
-                self.room_git_cache.insert(r.path.clone(), (diff, ab));
-            }
+            self.room_cache = rooms
+                .into_iter()
+                .map(|r| {
+                    let diff = mgr.diff_stat(&r.path);
+                    let ab = mgr.ahead_behind(&r.path);
+                    CachedRoomInfo {
+                        branch: r.branch,
+                        path: r.path,
+                        is_default: r.is_default,
+                        diff_stat: diff,
+                        ahead_behind: ab,
+                    }
+                })
+                .collect();
         }
     }
 
     /// List rooms for a specific workspace by ID, with agent activity flags.
+    /// Uses the cached room list — no git subprocesses.
     fn room_items_for_workspace(&self, ws_id: WorkspaceId) -> Vec<RoomItem> {
         let ws = match self.state.ws_by_id(ws_id) {
             Some(ws) => ws,
             None => return vec![],
         };
-        let mgr = RoomManager::new();
-        match mgr.list(&ws.path) {
-            Ok(rooms) => rooms
-                .into_iter()
-                .map(|r| {
-                    let room_id = ws.room_by_name(&r.branch).map(|e| e.id);
-                    let active = room_id
-                        .map(|rid| self.has_active_agent(&self.pane_ids_for_room(ws_id, rid)))
-                        .unwrap_or(false);
-                    let (diff_stat, ahead_behind) = self.room_git_cache
-                        .get(&r.path)
-                        .copied()
-                        .unwrap_or((None, None));
-                    RoomItem {
-                        id: room_id,
-                        name: r.branch,
-                        is_default: r.is_default,
-                        active,
-                        diff_stat,
-                        ahead_behind,
-                    }
-                })
-                .collect(),
-            Err(_) => vec![],
-        }
+        self.room_cache
+            .iter()
+            .map(|r| {
+                let room_id = ws.room_by_name(&r.branch).map(|e| e.id);
+                let active = room_id
+                    .map(|rid| self.has_active_agent(&self.pane_ids_for_room(ws_id, rid)))
+                    .unwrap_or(false);
+                RoomItem {
+                    id: room_id,
+                    name: r.branch.clone(),
+                    is_default: r.is_default,
+                    active,
+                    diff_stat: r.diff_stat,
+                    ahead_behind: r.ahead_behind,
+                }
+            })
+            .collect()
     }
 
     /// Convert the current runtime TabContainer into layout data for persistence.
@@ -3716,9 +3712,7 @@ impl App {
             _ => return,
         };
         if !self.explorer_state.check_delta() {
-            self.show_error(
-                "delta not installed — install from https://github.com/dandavison/delta".to_string(),
-            );
+            self.show_error("delta not installed — install from https://github.com/dandavison/delta");
             return;
         }
         let cwd = self.explorer_state.root.clone();
@@ -3807,7 +3801,7 @@ impl App {
         }
 
         // Refresh room git stats immediately so the panel doesn't show stale/empty data.
-        self.refresh_room_git_cache();
+        self.refresh_room_cache();
 
         self.save_state();
     }
