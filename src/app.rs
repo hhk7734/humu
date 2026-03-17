@@ -3769,6 +3769,9 @@ impl App {
             self.explorer_state.scan();
         }
 
+        // Refresh room git stats immediately so the panel doesn't show stale/empty data.
+        self.refresh_room_git_cache();
+
         self.save_state();
     }
 
