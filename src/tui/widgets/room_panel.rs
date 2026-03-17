@@ -128,7 +128,7 @@ impl Widget for RoomPanel<'_> {
                 if ahead > 0 {
                     let text = format!("\u{2191}{}", ahead); // ↑N
                     buf.set_string(x, y, &text, Style::default().fg(self.palette.accent_cyan));
-                    x += text.len() as u16;
+                    x += text.chars().count() as u16;
                     need_space = true;
                 }
 
@@ -136,7 +136,7 @@ impl Widget for RoomPanel<'_> {
                     if need_space { buf.set_string(x, y, " ", Style::default()); x += 1; }
                     let text = format!("\u{2193}{}", behind); // ↓N
                     buf.set_string(x, y, &text, Style::default().fg(self.palette.accent_orange));
-                    x += text.len() as u16;
+                    x += text.chars().count() as u16;
                     need_space = true;
                 }
 
