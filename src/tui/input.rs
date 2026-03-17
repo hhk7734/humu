@@ -271,6 +271,7 @@ fn check_mode_switch(current: Mode, key: KeyEvent) -> Option<Action> {
         return None;
     }
     match key.code {
+        KeyCode::Char('q') => Some(Action::Quit),
         KeyCode::Char('w') => Some(Action::EnterMode(Mode::Workspace)),
         KeyCode::Char('r') => Some(Action::EnterMode(Mode::Room)),
         KeyCode::Char('e') => Some(Action::EnterMode(Mode::Explorer)),

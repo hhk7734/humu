@@ -379,7 +379,13 @@ impl App {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         self.last_error = None;
-                        if self.handle_popup_key(key) {
+                        // Ctrl+Q is a global quit — bypass popups.
+                        if key.modifiers.contains(KeyModifiers::CONTROL)
+                            && key.code == KeyCode::Char('q')
+                            && !matches!(self.popup, PopupState::FloatingPane { .. })
+                        {
+                            self.handle_action(Action::Quit);
+                        } else if self.handle_popup_key(key) {
                         } else {
                             self.handle_action(handle_key(self.mode, key));
                         }
@@ -395,7 +401,13 @@ impl App {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         self.last_error = None;
-                        if self.handle_popup_key(key) {
+                        // Ctrl+Q is a global quit — bypass popups.
+                        if key.modifiers.contains(KeyModifiers::CONTROL)
+                            && key.code == KeyCode::Char('q')
+                            && !matches!(self.popup, PopupState::FloatingPane { .. })
+                        {
+                            self.handle_action(Action::Quit);
+                        } else if self.handle_popup_key(key) {
                         } else {
                             self.handle_action(handle_key(self.mode, key));
                         }
@@ -705,8 +717,10 @@ impl App {
     }
 
     fn handle_floating_pane_key(&mut self, pane_id: PaneId, key: KeyEvent) {
-        // Ctrl+G closes the floating pane (same as Lock toggle, unlikely to conflict with editors)
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('g') {
+        // Ctrl+Q or Ctrl+G closes the floating pane.
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('g'))
+        {
             self.panes.remove(&pane_id);
             self.pane_presets.remove(&pane_id);
             self.popup = PopupState::None;
