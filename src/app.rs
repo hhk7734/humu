@@ -2180,6 +2180,10 @@ impl App {
             let to = if row == end_row { end_col } else { cols.saturating_sub(1) };
             for col in from..=to {
                 if let Some(cell) = screen.cell(row, col) {
+                    // Skip continuation cells of wide characters (e.g., CJK)
+                    if cell.is_wide_continuation() {
+                        continue;
+                    }
                     let contents = cell.contents();
                     if contents.is_empty() {
                         text.push(' ');
