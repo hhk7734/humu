@@ -108,7 +108,6 @@ impl ExplorerState {
         let git_status = self.read_git_status();
         let mut entries = Vec::new();
         self.build_tree(&self.root.clone(), 0, &git_status, &mut entries);
-        propagate_git_status(&mut entries);
         self.entries = entries;
 
         // Clamp selected index
@@ -234,7 +233,8 @@ impl ExplorerState {
             let expanded = is_dir && self.expanded_dirs.contains(&child);
 
             let file_git_status = if is_dir {
-                None // will be propagated later
+                // Compute status from all git entries under this directory.
+                dir_git_status(&rel_path, git_status)
             } else {
                 git_status.get(&rel_path).copied()
             };
@@ -286,19 +286,21 @@ impl ExplorerState {
     fn list_children_git(&self, dir: &Path) -> Vec<PathBuf> {
         let rel_dir = dir.strip_prefix(&self.root).unwrap_or(dir);
 
-        // Get tracked files
-        let tracked = Command::new("git")
-            .args(["ls-files"])
-            .arg(rel_dir)
-            .current_dir(&self.root)
-            .output();
+        // Get tracked files — don't pass empty arg when at root
+        let mut tracked_cmd = Command::new("git");
+        tracked_cmd.args(["ls-files"]).current_dir(&self.root);
+        if rel_dir != Path::new("") {
+            tracked_cmd.arg(rel_dir);
+        }
+        let tracked = tracked_cmd.output();
 
         // Get untracked (non-ignored) files
-        let untracked = Command::new("git")
-            .args(["ls-files", "--others", "--exclude-standard"])
-            .arg(rel_dir)
-            .current_dir(&self.root)
-            .output();
+        let mut untracked_cmd = Command::new("git");
+        untracked_cmd.args(["ls-files", "--others", "--exclude-standard"]).current_dir(&self.root);
+        if rel_dir != Path::new("") {
+            untracked_cmd.arg(rel_dir);
+        }
+        let untracked = untracked_cmd.output();
 
         let mut allowed: HashSet<PathBuf> = HashSet::new();
 
@@ -323,36 +325,22 @@ impl ExplorerState {
     }
 }
 
-/// Propagate git status from files upward to parent directories.
-fn propagate_git_status(entries: &mut Vec<FileEntry>) {
-    // Walk backwards so children are processed before parents in collapsed trees.
-    // For expanded trees, we need to propagate from deeper entries to shallower ones.
-    let len = entries.len();
-    for i in (0..len).rev() {
-        if entries[i].kind == FileKind::Directory && entries[i].git_status.is_none() {
-            // Look at all subsequent entries that are deeper (children of this dir)
-            let dir_depth = entries[i].depth;
-            let dir_path = entries[i].path.clone();
-            let mut status: Option<GitStatus> = None;
-
-            for j in (i + 1)..len {
-                if entries[j].depth <= dir_depth {
-                    break;
-                }
-                // Only consider direct and indirect children under this directory
-                if entries[j].path.starts_with(&dir_path) {
-                    if let Some(s) = entries[j].git_status {
-                        status = Some(match (status, s) {
-                            (None, s) => s,
-                            (Some(GitStatus::Modified), _) => GitStatus::Modified,
-                            (_, GitStatus::Modified) => GitStatus::Modified,
-                            (Some(GitStatus::Added), GitStatus::Added) => GitStatus::Added,
-                        });
-                    }
-                }
+/// Compute git status for a directory by checking all entries under its relative path.
+/// Modified takes priority over Added.
+fn dir_git_status(dir_rel: &Path, git_status: &HashMap<PathBuf, GitStatus>) -> Option<GitStatus> {
+    let mut result = None;
+    for (path, status) in git_status {
+        if path.starts_with(dir_rel) {
+            result = Some(match (result, status) {
+                (None, s) => *s,
+                (Some(GitStatus::Modified), _) | (_, GitStatus::Modified) => GitStatus::Modified,
+                (Some(GitStatus::Added), GitStatus::Added) => GitStatus::Added,
+            });
+            // Short-circuit: Modified is the highest priority.
+            if result == Some(GitStatus::Modified) {
+                return result;
             }
-
-            entries[i].git_status = status;
         }
     }
+    result
 }
