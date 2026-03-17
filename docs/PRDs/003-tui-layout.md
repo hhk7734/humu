@@ -3,28 +3,29 @@
 ## Main Layout
 
 ```
-╭──────────────╮╭───────────╮╭──────────────────────────────────────────╮
-│              ││           ││ claude ⠋▸▸ shell ▸ [+]                 │
-│  WORKSPACES  ││   ROOMS   ││ ╭──────────────────────────────────────╮ │
-│              ││           ││ │ $ claude                             │ │
-│  ▸ humu ⠋   ││   main    ││ │ ⏵ Claude is working...              │ │
-│    infra     ││ ▸ feat/x ⠋││ │                                     │ │
-│    docs      ││   fix/y   ││ ├──────────────────────────────────────┤ │
-│              ││           ││ │ $ cargo test                         │ │
-│              ││           ││ │ running 12 tests ... ok              │ │
-│              ││           ││ │ $  ▋                                 │ │
-│              ││           ││ ╰──────────────────────────────────────╯ │
-╰──────────────╯╰───────────╯╰──────────────────────────────────────────╯
+╭──────────╮╭────────╮╭───────────────────────────────────╮╭──────────────╮
+│          ││        ││ claude ⠋▸▸ shell ▸ [+]            ││              │
+│WORKSPACES││ ROOMS  ││ ╭─────────────────────────────────╮││  EXPLORER    │
+│          ││        ││ │ $ claude                        ││├──────────────┤
+│ ▸ humu ⠋ ││  main  ││ │ ⏵ Claude is working...         │││ ▸  src ✗   │
+│   infra  ││▸feat/x⠋││ │                                │││    app.rs ✗ │
+│   docs   ││  fix/y ││ ├─────────────────────────────────┤││    main.rs  │
+│          ││        ││ │ $ cargo test                    │││   Cargo.toml │
+│          ││        ││ │ running 12 tests ... ok         │││              │
+│          ││        ││ │ $  ▋                            │││              │
+│          ││        ││ ╰─────────────────────────────────╯││              │
+╰──────────╯╰────────╯╰───────────────────────────────────╯╰──────────────╯
  TERMINAL ▸▸ Ctrl + ▸▸ g LOCK ▸▸ p PANE ▸▸ t TAB ▸▸ w WS ▸▸ r ROOM ▸
 ```
 
-Three panels separated by draggable resize handles, plus a status bar.
+Four panels separated by resize handles, plus a status bar.
 
 ## Panels
 
 - **WorkspacePanel**: Lists workspaces (repo names). Rounded border, `accent_blue` when focused, `fg_muted` when unfocused. Selected item: `▸` prefix, bold. Spinner `⠋` when Claude is active.
 - **RoomPanel**: Lists rooms in the selected workspace. Same styling as WorkspacePanel. Default room always first.
 - **Terminal Area**: Tab bar (Powerline-style) at top with `+` button. Each tab is a Powerline segment with entry/exit arrows (first tab has no entry arrow, second+ tabs do). Animated spinner on tabs with active Claude agents. Each tab contains one or more split panes (vertical/horizontal) with rounded borders and preset title. Panes run presets with `cwd` set to the room's working directory.
+- **ExplorerPanel**: File tree of the active room's directory. Nerd Font icons per file extension, git status indicators (`✗` modified, `★` added). Navigate with `↑/↓`, `Enter` opens files in `$EDITOR` (floating pane), `Shift+Enter` opens delta diff (floating pane). `Shift+I` toggles gitignored files.
 - **StatusBar**: Borderless ribbon with Powerline mode badge (color-coded per mode), `Ctrl +` segment (Powerline arrows, orange text, `bg_tertiary`), and key hint segments (Powerline arrows, dark red bold keys, black labels on light gray `#8B949E` background). Errors displayed in red, auto-clear on next keypress.
 
 ## Terminal Area
@@ -43,16 +44,17 @@ Modal approach. Terminal mode passes all input to the active terminal pane. Pres
 
 ### Mode Switching
 
-From any sub-mode, `Ctrl+w/r/t/p` switches directly to that mode. `Ctrl+w` and `Ctrl+r` are idempotent — pressing them while already in that mode keeps focus there. `Ctrl+t` always returns to Terminal mode, focusing the last active pane. `Ctrl+p` toggles between Pane and Terminal.
+From any sub-mode, `Ctrl+w/r/e/t/p` switches directly to that mode. `Ctrl+q` quits from any mode or popup (except Locked mode and floating panes — in floating panes it closes the pane). `Ctrl+w`, `Ctrl+r`, and `Ctrl+e` are idempotent. `Ctrl+t` always returns to Terminal mode. `Ctrl+p` toggles between Pane and Terminal.
 
 | Key | Target Mode |
 | --- | ----------- |
+| `Ctrl+q` | Quit (global — from any mode/popup; closes floating pane) |
 | `Ctrl+g` | Locked (toggle from Terminal) |
 | `Ctrl+p` | Pane (toggle with Terminal) |
 | `Ctrl+w` | Workspace (idempotent) |
 | `Ctrl+r` | Room (idempotent) |
+| `Ctrl+e` | Explorer (idempotent) |
 | `Ctrl+t` | Terminal (always) |
-| `Ctrl+q` | Quit (from Terminal only) |
 | `Ctrl+f` | EnterSearch (from Terminal) |
 | `Ctrl+,` | Settings popup (from Terminal) |
 
@@ -104,6 +106,23 @@ Manages tabs within the terminal area. Enter via `Ctrl+t` from Terminal mode.
 | `n` | New room |
 | `d` | Delete room |
 | `Shift+←/→` | Resize room panel |
+
+### Explorer Mode
+
+| Key | Action |
+| --- | ------ |
+| `↑/↓` | Navigate tree |
+| `Enter` | Toggle dir expand/collapse, or open file in `$EDITOR` (floating pane) |
+| `Shift+Enter` | Open `git diff` via delta (floating pane, modified files only) |
+| `Shift+←/→` | Resize explorer panel |
+| `Shift+I` | Toggle show/hide gitignored files |
+| `Esc` | Return to Terminal mode |
+
+Click behavior: first click focuses panel + selects item, second click on same item opens it.
+
+### Floating Pane
+
+A centered overlay (90% of terminal panel area) that runs a PTY process (`$EDITOR` or `delta`). All keys forwarded to the PTY. Mouse scroll sends `j`/`k` to `less`/`delta` when no mouse reporting. Closes on `Ctrl+Q`, `Ctrl+G`, or when the process exits.
 
 ### EnterSearch Mode
 
@@ -183,4 +202,5 @@ In Terminal mode, left-aligned hints show `Ctrl+` shortcuts (right-pointing arro
 | TAB | orange (#d29922) |
 | WORKSPACE | purple (#bc8cff) |
 | ROOM | magenta (#f778ba) |
+| EXPLORER | yellow (#e3b341) |
 | SEARCH | cyan (#56d4dd) |
