@@ -16,7 +16,7 @@ A file explorer panel on the right side of the layout showing the workspace dire
 
 - `Mode::Explorer` entered via `Ctrl+E` (available from any mode via `check_mode_switch`)
 - `FocusedPanel::Explorer` for focus tracking, border turns `accent_blue` when focused
-- Explorer rescans the tree on mode enter and on workspace/room switch
+- Explorer rescans the tree on mode enter, workspace/room switch, and automatically every ~3 seconds (periodic git status refresh)
 - Click on explorer panel: first click focuses + selects, second click on same item opens
 
 ## Keybindings (Explorer Mode)
@@ -42,9 +42,10 @@ A file explorer panel on the right side of the layout showing the workspace dire
 
 ## Rendering
 
-- Nerd Font icons per file extension (nvim-web-devicons style, 40+ extensions)
-- Directory icons: `` collapsed, `` expanded
-- Git status: `✗` in `accent_orange` for Modified, `★` in `accent_green` for Added
+- Nerd Font icons per file extension (nvim-web-devicons style, 40+ extensions) with per-type colors (e.g., Rust brown, Python blue, JS yellow, Go cyan)
+- Directory icons: `` collapsed, `` expanded — cyan `#56B6C2`
+- Each line segment rendered independently: selector (`accent_blue`), indent, icon (per-type color), filename (git-aware color), git indicator
+- Git status: `✗` in `accent_orange` for Modified, `★` in `accent_green` for Added — filenames also colored to match
 - Selected line: `▸` indicator + `bg_tertiary` highlight
 - Panel title: `" Explorer "` or `" Explorer [+ignored] "`
 
@@ -72,7 +73,7 @@ Editor and diff views open in a floating pane overlay (90% of terminal panel are
 ```
 src/explorer/
 ├── mod.rs       # ExplorerState, FileEntry, tree scan/toggle, git status parsing
-└── icons.rs     # Nerd Font file extension icon lookup
+└── icons.rs     # Nerd Font file extension icon lookup with per-type colors
 
 src/tui/widgets/explorer_panel.rs  # ExplorerPanel widget (rendering)
 ```

@@ -374,6 +374,11 @@ impl App {
                 }
             }
 
+            // Periodic explorer rescan (~3s) to pick up git status changes.
+            if self.spin_tick % 60 == 0 && !self.explorer_state.root.as_os_str().is_empty() {
+                self.explorer_state.scan();
+            }
+
             terminal.draw(|frame| self.render(frame))?;
             self.spin_tick = self.spin_tick.wrapping_add(1);
 

@@ -61,7 +61,6 @@ impl Widget for ExplorerPanel<'_> {
         }
 
         let viewport_height = inner.height as usize;
-        let max_width = inner.width as usize;
 
         for (vi, entry_idx) in (self.state.scroll_offset..)
             .take(viewport_height)
@@ -73,60 +72,78 @@ impl Widget for ExplorerPanel<'_> {
 
             let y = inner.y + vi as u16;
             let is_selected = entry_idx == self.state.selected;
+            let line_bg = if is_selected { self.palette.bg_tertiary } else { self.palette.bg_primary };
 
-            // Build the line: selector + indent + icon + space + name + git indicator
-            let selector = if is_selected { "\u{25b8} " } else { "  " };
-            let indent = " ".repeat(entry.depth * 2);
-            let icon = match entry.kind {
-                FileKind::Directory => icons::dir_icon(entry.expanded),
-                FileKind::File => icons::file_icon(&entry.name),
-            };
-            let git_suffix = match entry.git_status {
-                Some(GitStatus::Modified) => " \u{2717}",
-                Some(GitStatus::Added) => " \u{2605}",
-                None => "",
-            };
-
-            let text = format!("{selector}{indent}{icon} {}{git_suffix}", entry.name);
-
-            // Truncate to fit within max_width
-            let display: String = text.chars().take(max_width).collect();
-
-            // Background for selected line
+            // Fill background for selected line
             if is_selected {
-                let bg_style = Style::default().bg(self.palette.bg_tertiary);
+                let bg_style = Style::default().bg(line_bg);
                 for x in inner.x..inner.x + inner.width {
                     buf[(x, y)].set_style(bg_style);
                 }
             }
 
-            // Render the text with default foreground
-            let base_style = Style::default().fg(self.palette.fg_primary);
-            buf.set_string(inner.x, y, &display, base_style);
+            let mut x = inner.x;
+            let x_end = inner.x + inner.width;
 
-            // Overlay git status indicator color
-            if entry.git_status.is_some() {
-                let git_color = match entry.git_status {
-                    Some(GitStatus::Modified) => self.palette.accent_orange,
-                    Some(GitStatus::Added) => self.palette.accent_green,
-                    None => unreachable!(),
+            // Selector
+            let selector = if is_selected { "\u{25b8} " } else { "  " };
+            let sel_style = Style::default().fg(self.palette.accent_blue).bg(line_bg);
+            for ch in selector.chars() {
+                if x >= x_end { break; }
+                buf[(x, y)].set_char(ch).set_style(sel_style);
+                x += 1;
+            }
+
+            // Indent
+            let indent_width = entry.depth * 2;
+            for _ in 0..indent_width {
+                if x >= x_end { break; }
+                buf[(x, y)].set_char(' ').set_style(Style::default().bg(line_bg));
+                x += 1;
+            }
+
+            // Icon with color
+            let (icon, icon_color) = match entry.kind {
+                FileKind::Directory => icons::dir_icon(entry.expanded),
+                FileKind::File => icons::file_icon(&entry.name),
+            };
+            let icon_style = Style::default().fg(icon_color).bg(line_bg);
+            for ch in icon.chars() {
+                if x >= x_end { break; }
+                buf[(x, y)].set_char(ch).set_style(icon_style);
+                x += 1;
+            }
+
+            // Space after icon
+            if x < x_end {
+                buf[(x, y)].set_char(' ').set_style(Style::default().bg(line_bg));
+                x += 1;
+            }
+
+            // Filename — color based on git status
+            let name_color = match entry.git_status {
+                Some(GitStatus::Modified) => self.palette.accent_orange,
+                Some(GitStatus::Added) => self.palette.accent_green,
+                None => self.palette.fg_primary,
+            };
+            let name_style = Style::default().fg(name_color).bg(line_bg);
+            for ch in entry.name.chars() {
+                if x >= x_end { break; }
+                buf[(x, y)].set_char(ch).set_style(name_style);
+                x += unicode_width(ch);
+            }
+
+            // Git status indicator
+            if let Some(status) = entry.git_status {
+                let (indicator, color) = match status {
+                    GitStatus::Modified => (" \u{2717}", self.palette.accent_orange),
+                    GitStatus::Added => (" \u{2605}", self.palette.accent_green),
                 };
-                // The git suffix is the last 2 characters (" " + indicator)
-                // Find where the git suffix starts in the rendered text
-                let text_char_count = display.chars().count();
-                if text_char_count >= 2 {
-                    let suffix_start = text_char_count - 2;
-                    // Calculate the byte offset for the suffix start position
-                    let mut col = 0u16;
-                    for (ci, ch) in display.chars().enumerate() {
-                        if ci == suffix_start {
-                            let git_style = Style::default().fg(git_color);
-                            let suffix_str: String = display.chars().skip(suffix_start).collect();
-                            buf.set_string(inner.x + col, y, &suffix_str, git_style);
-                            break;
-                        }
-                        col += unicode_width(ch);
-                    }
+                let git_style = Style::default().fg(color).bg(line_bg);
+                for ch in indicator.chars() {
+                    if x >= x_end { break; }
+                    buf[(x, y)].set_char(ch).set_style(git_style);
+                    x += 1;
                 }
             }
         }
