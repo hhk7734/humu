@@ -283,6 +283,7 @@ impl ExplorerState {
     }
 
     /// List children using git ls-files to respect .gitignore.
+    /// Directories are always included (git doesn't track them); only files are filtered.
     fn list_children_git(&self, dir: &Path) -> Vec<PathBuf> {
         let rel_dir = dir.strip_prefix(&self.root).unwrap_or(dir);
 
@@ -309,14 +310,22 @@ impl ExplorerState {
                 let stdout = String::from_utf8_lossy(&o.stdout);
                 for line in stdout.lines() {
                     let p = self.root.join(line);
-                    // Collect direct children: either the file itself, or the
-                    // first directory component relative to `dir`.
                     if let Ok(rel) = p.strip_prefix(dir) {
                         let mut components = rel.components();
                         if let Some(first) = components.next() {
                             allowed.insert(dir.join(first));
                         }
                     }
+                }
+            }
+        }
+
+        // Always include directories from disk (git doesn't track empty dirs)
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() && path.file_name().map(|n| n != ".git").unwrap_or(false) {
+                    allowed.insert(path);
                 }
             }
         }
