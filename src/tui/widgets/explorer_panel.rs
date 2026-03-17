@@ -72,11 +72,10 @@ impl Widget for ExplorerPanel<'_> {
 
             let y = inner.y + vi as u16;
             let is_selected = entry_idx == self.state.selected;
-            let line_bg = if is_selected { self.palette.bg_tertiary } else { self.palette.bg_primary };
 
-            // Fill background for selected line
+            // Only fill background for selected line
             if is_selected {
-                let bg_style = Style::default().bg(line_bg);
+                let bg_style = Style::default().bg(self.palette.bg_tertiary);
                 for x in inner.x..inner.x + inner.width {
                     buf[(x, y)].set_style(bg_style);
                 }
@@ -87,7 +86,7 @@ impl Widget for ExplorerPanel<'_> {
 
             // Selector
             let selector = if is_selected { "\u{25b8} " } else { "  " };
-            let sel_style = Style::default().fg(self.palette.accent_blue).bg(line_bg);
+            let sel_style = Style::default().fg(self.palette.accent_blue);
             for ch in selector.chars() {
                 if x >= x_end { break; }
                 buf[(x, y)].set_char(ch).set_style(sel_style);
@@ -98,7 +97,7 @@ impl Widget for ExplorerPanel<'_> {
             let indent_width = entry.depth * 2;
             for _ in 0..indent_width {
                 if x >= x_end { break; }
-                buf[(x, y)].set_char(' ').set_style(Style::default().bg(line_bg));
+                buf[(x, y)].set_char(' ');
                 x += 1;
             }
 
@@ -107,7 +106,7 @@ impl Widget for ExplorerPanel<'_> {
                 FileKind::Directory => icons::dir_icon(entry.expanded),
                 FileKind::File => icons::file_icon(&entry.name),
             };
-            let icon_style = Style::default().fg(icon_color).bg(line_bg);
+            let icon_style = Style::default().fg(icon_color);
             for ch in icon.chars() {
                 if x >= x_end { break; }
                 buf[(x, y)].set_char(ch).set_style(icon_style);
@@ -116,7 +115,7 @@ impl Widget for ExplorerPanel<'_> {
 
             // Space after icon
             if x < x_end {
-                buf[(x, y)].set_char(' ').set_style(Style::default().bg(line_bg));
+                buf[(x, y)].set_char(' ');
                 x += 1;
             }
 
@@ -126,7 +125,7 @@ impl Widget for ExplorerPanel<'_> {
                 Some(GitStatus::Added) => self.palette.accent_green,
                 None => self.palette.fg_primary,
             };
-            let name_style = Style::default().fg(name_color).bg(line_bg);
+            let name_style = Style::default().fg(name_color);
             for ch in entry.name.chars() {
                 if x >= x_end { break; }
                 buf[(x, y)].set_char(ch).set_style(name_style);
@@ -139,7 +138,7 @@ impl Widget for ExplorerPanel<'_> {
                     GitStatus::Modified => (" \u{2717}", self.palette.accent_orange),
                     GitStatus::Added => (" \u{2605}", self.palette.accent_green),
                 };
-                let git_style = Style::default().fg(color).bg(line_bg);
+                let git_style = Style::default().fg(color);
                 for ch in indicator.chars() {
                     if x >= x_end { break; }
                     buf[(x, y)].set_char(ch).set_style(git_style);
