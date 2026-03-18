@@ -1,3 +1,4 @@
+use crate::git::room::RoomGitStatus;
 use crate::id::{RoomId, WorkspaceId};
 use crate::tui::theme::{Palette, UiConfig};
 use ratatui::buffer::Buffer;
@@ -20,10 +21,7 @@ pub struct WorkspaceTreeItem {
     pub active: bool,
     pub workspace_id: WorkspaceId,
     pub room_id: Option<RoomId>,
-    /// (insertions, deletions) from `git diff --shortstat`
-    pub diff_stat: Option<(usize, usize)>,
-    /// (ahead, behind) commits relative to upstream
-    pub ahead_behind: Option<(usize, usize)>,
+    pub git_status: RoomGitStatus,
 }
 
 pub struct WorkspacePanel<'a> {
@@ -234,10 +232,11 @@ impl Widget for WorkspacePanel<'_> {
                     buf.set_string(inner.x, y, &text, style);
                     y += 1;
 
-                    // Git stats line below room: " ↑N ↓N +N -N"
-                    let (ahead, behind) = item.ahead_behind.unwrap_or((0, 0));
-                    let (ins, del) = item.diff_stat.unwrap_or((0, 0));
-                    let has_changes = ahead > 0 || behind > 0 || ins > 0 || del > 0;
+                    // Git stats line below room: " ↑N ↓N ?N +N -N"
+                    let (ahead, behind) = item.git_status.ahead_behind.unwrap_or((0, 0));
+                    let (ins, del) = item.git_status.diff_stat.unwrap_or((0, 0));
+                    let untracked = item.git_status.untracked_count;
+                    let has_changes = ahead > 0 || behind > 0 || untracked > 0 || ins > 0 || del > 0;
 
                     if y < inner.y + inner.height {
                         // Fill background for active room stats line
@@ -283,6 +282,22 @@ impl Widget for WorkspacePanel<'_> {
                                 y,
                                 &text,
                                 Style::default().fg(self.palette.accent_orange),
+                            );
+                            x += text.chars().count() as u16;
+                            need_space = true;
+                        }
+
+                        if untracked > 0 {
+                            if need_space {
+                                buf.set_string(x, y, " ", Style::default());
+                                x += 1;
+                            }
+                            let text = format!("?{}", untracked);
+                            buf.set_string(
+                                x,
+                                y,
+                                &text,
+                                Style::default().fg(self.palette.accent_green),
                             );
                             x += text.chars().count() as u16;
                             need_space = true;

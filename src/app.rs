@@ -1,7 +1,7 @@
 use humu::codex::CodexTracker;
 use humu::config::{humu_dir, HumuConfig, HumuState, SplitDirection as CfgDir, SplitNode, TabLayout};
 use humu::id::{RoomId, TabId, WorkspaceId};
-use humu::git::room::RoomManager;
+use humu::git::room::{RoomGitStatus, RoomManager};
 use humu::git::workspace::WorkspaceManager;
 use humu::hook::http::{generate_hook_files, AgentState, HookEvent, HookServer};
 use humu::pty::pane::PtyPane;
@@ -46,8 +46,7 @@ struct CachedRoomInfo {
     branch: String,
     path: std::path::PathBuf,
     is_default: bool,
-    diff_stat: Option<(usize, usize)>,
-    ahead_behind: Option<(usize, usize)>,
+    git_status: RoomGitStatus,
 }
 
 /// Internal room item with resolved ID and agent activity flag.
@@ -57,8 +56,7 @@ struct CachedRoomItem {
     #[allow(dead_code)]
     is_default: bool,
     active: bool,
-    diff_stat: Option<(usize, usize)>,
-    ahead_behind: Option<(usize, usize)>,
+    git_status: RoomGitStatus,
 }
 
 /// Tracks the last-rendered rects for each major panel so mouse clicks can be
@@ -3573,8 +3571,7 @@ impl App {
                 active: ws_active,
                 workspace_id: ws.id,
                 room_id: None,
-                diff_stat: None,
-                ahead_behind: None,
+                git_status: RoomGitStatus::default(),
             });
 
             let room_items = self.room_items_for_workspace(ws.id);
@@ -3585,8 +3582,7 @@ impl App {
                     active: r.active,
                     workspace_id: ws.id,
                     room_id: r.id,
-                    diff_stat: r.diff_stat,
-                    ahead_behind: r.ahead_behind,
+                    git_status: r.git_status,
                 });
             }
         }
@@ -3643,14 +3639,12 @@ impl App {
                 let cached: Vec<CachedRoomInfo> = rooms
                     .into_iter()
                     .map(|r| {
-                        let diff = mgr.diff_stat(&r.path);
-                        let ab = mgr.ahead_behind(&r.path);
+                        let git_status = mgr.status(&r.path);
                         CachedRoomInfo {
                             branch: r.branch,
                             path: r.path,
                             is_default: r.is_default,
-                            diff_stat: diff,
-                            ahead_behind: ab,
+                            git_status,
                         }
                     })
                     .collect();
@@ -3680,8 +3674,7 @@ impl App {
                     name: r.branch.clone(),
                     is_default: r.is_default,
                     active,
-                    diff_stat: r.diff_stat,
-                    ahead_behind: r.ahead_behind,
+                    git_status: r.git_status,
                 }
             })
             .collect()

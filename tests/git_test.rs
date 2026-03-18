@@ -158,3 +158,59 @@ fn test_delete_room() {
     let rooms = mgr.list(&repo).unwrap();
     assert_eq!(rooms.len(), 1); // only default remains
 }
+
+#[test]
+fn test_untracked_count_detects_new_files() {
+    let dir = TempDir::new().unwrap();
+    let repo = dir.path().join("repo");
+    git_init_with_commit(&repo);
+
+    std::fs::write(repo.join("new.txt"), "hello\n").unwrap();
+    std::fs::create_dir_all(repo.join("nested")).unwrap();
+    std::fs::write(repo.join("nested").join("another.txt"), "world\n").unwrap();
+
+    let mgr = RoomManager::new();
+    assert_eq!(mgr.untracked_count(&repo), Some(2));
+}
+
+#[test]
+fn test_untracked_count_ignores_gitignored_files() {
+    let dir = TempDir::new().unwrap();
+    let repo = dir.path().join("repo");
+    git_init_with_commit(&repo);
+
+    std::fs::write(repo.join(".gitignore"), "ignored.log\n").unwrap();
+    std::process::Command::new("git")
+        .args([
+            "-C",
+            repo.to_str().unwrap(),
+            "-c",
+            "user.email=test@test.com",
+            "-c",
+            "user.name=Test",
+            "add",
+            ".gitignore",
+        ])
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .args([
+            "-C",
+            repo.to_str().unwrap(),
+            "-c",
+            "user.email=test@test.com",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "-m",
+            "add ignore",
+        ])
+        .output()
+        .unwrap();
+
+    std::fs::write(repo.join("ignored.log"), "ignore me\n").unwrap();
+    std::fs::write(repo.join("visible.txt"), "keep me\n").unwrap();
+
+    let mgr = RoomManager::new();
+    assert_eq!(mgr.untracked_count(&repo), Some(1));
+}

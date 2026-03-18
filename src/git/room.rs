@@ -9,6 +9,13 @@ pub struct RoomInfo {
     pub is_default: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RoomGitStatus {
+    pub diff_stat: Option<(usize, usize)>,
+    pub untracked_count: usize,
+    pub ahead_behind: Option<(usize, usize)>,
+}
+
 #[derive(Default)]
 pub struct RoomManager;
 
@@ -97,8 +104,16 @@ impl RoomManager {
         Ok(rooms)
     }
 
-    /// Get (insertions, deletions) from `git diff --shortstat` for a worktree path.
-    pub fn diff_stat(&self, worktree_path: &Path) -> Option<(usize, usize)> {
+    /// Get git status summary for a worktree path.
+    pub fn status(&self, worktree_path: &Path) -> RoomGitStatus {
+        RoomGitStatus {
+            diff_stat: self.diff_stat(worktree_path),
+            untracked_count: self.untracked_count(worktree_path).unwrap_or(0),
+            ahead_behind: self.ahead_behind(worktree_path),
+        }
+    }
+
+    fn diff_stat(&self, worktree_path: &Path) -> Option<(usize, usize)> {
         let output = Command::new("git")
             .args(["diff", "--shortstat"])
             .current_dir(worktree_path)
@@ -106,6 +121,19 @@ impl RoomManager {
             .ok()?;
         let text = String::from_utf8_lossy(&output.stdout);
         parse_shortstat(&text)
+    }
+
+    /// Count untracked, non-ignored files for a worktree path.
+    pub fn untracked_count(&self, worktree_path: &Path) -> Option<usize> {
+        let output = Command::new("git")
+            .args(["ls-files", "--others", "--exclude-standard"])
+            .current_dir(worktree_path)
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&output.stdout).lines().count())
     }
 
     /// Get (ahead, behind) commit counts relative to the upstream tracking branch.
