@@ -23,7 +23,7 @@ pub struct Palette {
 
 impl Palette {
     pub const GITHUB_DARK: Self = Self {
-        bg_primary: Color::Rgb(13, 17, 23),
+        bg_primary: Color::Rgb(36, 41, 46),
         bg_secondary: Color::Rgb(22, 27, 34),
         bg_tertiary: Color::Rgb(33, 38, 45),
         bg_selected: Color::Rgb(56, 62, 71),
