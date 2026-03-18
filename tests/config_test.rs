@@ -10,9 +10,10 @@ use tempfile::tempdir;
 // ── Task 2: Config Parsing ────────────────────────────────────────────────────
 
 #[test]
-fn default_config_has_claude_and_shell_presets() {
+fn default_config_has_built_in_presets() {
     let config = HumuConfig::default();
     assert!(config.presets.contains_key("claude"), "missing 'claude' preset");
+    assert!(config.presets.contains_key("codex"), "missing 'codex' preset");
     assert!(config.presets.contains_key("shell"), "missing 'shell' preset");
 }
 
@@ -30,6 +31,26 @@ presets:
     let preset = config.presets.get("my_tool").expect("preset missing");
     assert_eq!(preset.command, "my_tool");
     assert_eq!(preset.args, vec!["--flag", "value"]);
+}
+
+#[test]
+fn load_merges_builtin_presets_into_existing_config() {
+    let dir = tempdir().expect("tempdir failed");
+    let path = dir.path().join("config.yaml");
+    std::fs::write(
+        &path,
+        r#"
+presets:
+  shell:
+    command: /bin/sh
+"#,
+    )
+    .expect("write failed");
+
+    let config = HumuConfig::load(&path).expect("load failed");
+    assert!(config.presets.contains_key("shell"));
+    assert!(config.presets.contains_key("claude"));
+    assert!(config.presets.contains_key("codex"));
 }
 
 #[test]

@@ -21,7 +21,7 @@ HuMu organizes your terminal workflow around git concepts: **workspaces** map to
 **Terminal Panes & Tabs**
 - Split panes horizontally/vertically with configurable ratios
 - Multiple tabs per room with Powerline-style tab bar
-- Presets for quick spawning (e.g., `claude`, `shell`, custom commands)
+- Presets for quick spawning (e.g., `claude`, `codex`, `shell`, custom commands)
 - Full terminal emulation via vt100 with 10,000-line scrollback
 
 **File Explorer**
@@ -40,6 +40,12 @@ HuMu organizes your terminal workflow around git concepts: **workspaces** map to
 - HTTP hook server receives agent state events (Working, NeedsInput, Idle)
 - Animated spinners on workspaces, rooms, and tabs with active agents
 - Session persistence across restarts
+
+**Codex Integration**
+- Built-in `codex` preset
+- Session persistence across restarts via `codex resume SESSION_ID`
+- Agent state inferred from Codex session JSONL files (`task_started` -> Working, `task_complete` -> Idle)
+- `NeedsInput` is not currently available for Codex
 
 ## Installation
 
@@ -115,6 +121,8 @@ Config lives at `~/.humu/config.yaml`:
 presets:
   claude:
     command: claude
+  codex:
+    command: codex
   shell:
     command: $SHELL
 

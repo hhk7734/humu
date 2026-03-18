@@ -134,6 +134,13 @@ impl Default for HumuConfig {
             },
         );
         presets.insert(
+            "codex".to_string(),
+            Preset {
+                command: "codex".to_string(),
+                args: vec![],
+            },
+        );
+        presets.insert(
             "shell".to_string(),
             Preset {
                 command: std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string()),
@@ -149,16 +156,25 @@ impl Default for HumuConfig {
 }
 
 impl HumuConfig {
+    pub fn apply_builtin_presets(&mut self) {
+        let defaults = Self::default();
+        for (name, preset) in defaults.presets {
+            self.presets.entry(name).or_insert(preset);
+        }
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let contents = std::fs::read_to_string(path)?;
-        let config = serde_yaml::from_str(&contents)?;
+        let mut config: Self = serde_yaml::from_str(&contents)?;
+        config.apply_builtin_presets();
         Ok(config)
     }
 
     /// Load from TOML format (migration from old config.toml).
     pub fn load_toml(path: &Path) -> Result<Self> {
         let contents = std::fs::read_to_string(path)?;
-        let config = toml::from_str(&contents)?;
+        let mut config: Self = toml::from_str(&contents)?;
+        config.apply_builtin_presets();
         Ok(config)
     }
 

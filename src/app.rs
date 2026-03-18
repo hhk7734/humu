@@ -1,3 +1,4 @@
+use humu::codex::CodexTracker;
 use humu::config::{humu_dir, HumuConfig, HumuState, SplitDirection as CfgDir, SplitNode, TabLayout};
 use humu::id::{RoomId, TabId, WorkspaceId};
 use humu::git::room::RoomManager;
@@ -27,7 +28,7 @@ use std::io::stdout;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tokio::runtime::Runtime;
 
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -234,6 +235,8 @@ pub struct App {
     notification_manager: humu::notification::NotificationManager,
     /// Path to config.yaml for persisting changes.
     config_path: std::path::PathBuf,
+    /// Tracks Codex session files for panes spawned with the "codex" preset.
+    codex_tracker: CodexTracker,
 }
 
 impl App {
@@ -345,6 +348,12 @@ impl App {
             state_path: humu_dir().join("state.yaml"),
             notification_manager,
             config_path,
+            codex_tracker: CodexTracker::new(
+                dirs::home_dir()
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join(".codex")
+                    .join("sessions"),
+            ),
         })
     }
 
@@ -488,6 +497,7 @@ impl App {
 
             // Process hook events each tick.
             self.process_hook_events();
+            self.poll_codex_states();
 
             // Refresh log viewer if open.
             self.refresh_log_viewer();
@@ -2986,6 +2996,12 @@ impl App {
             envs.push(("HUMU_TAB_ID".to_string(), TabId::new().to_string()));
             envs.push(("HUMU_PANE_ID".to_string(), id.to_string()));
             envs
+        } else if preset_name == "codex" {
+            if let Some(sid) = session_id {
+                extra_args.push("resume".to_string());
+                extra_args.push(sid);
+            }
+            vec![]
         } else {
             vec![]
         };
@@ -3003,10 +3019,16 @@ impl App {
                 id,
                 AgentStateEntry {
                     state: AgentState::Idle,
-                    session_id: restored_session_id,
+                    session_id: restored_session_id.clone(),
 
                 },
             );
+        }
+        if preset_name == "codex"
+            && let Some(cwd) = cwd
+        {
+            self.codex_tracker
+                .track_pane(id, cwd, restored_session_id, SystemTime::now());
         }
         Some(id)
     }
@@ -3103,6 +3125,7 @@ impl App {
             self.panes.remove(id);
             self.pane_presets.remove(id);
             self.agent_states.remove(id);
+            self.codex_tracker.remove_pane(*id);
         }
         // Remove dead panes from trees and remove empty tabs.
         let mut i = self.tabs.len();
@@ -3473,6 +3496,26 @@ impl App {
                 };
                 self.notification_manager.notify(notification_event, self.is_focused);
             }
+        }
+    }
+
+    fn poll_codex_states(&mut self) {
+        if self.spin_tick % 20 != 0 {
+            return;
+        }
+
+        for update in self.codex_tracker.poll() {
+            let existing_session_id = self
+                .agent_states
+                .get(&update.pane_id)
+                .and_then(|e| e.session_id.clone());
+            self.agent_states.insert(
+                update.pane_id,
+                AgentStateEntry {
+                    state: update.state,
+                    session_id: update.session_id.or(existing_session_id),
+                },
+            );
         }
     }
 
