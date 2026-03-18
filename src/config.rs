@@ -130,21 +130,21 @@ impl Default for HumuConfig {
             "claude".to_string(),
             Preset {
                 command: "claude".to_string(),
-                args: vec![],
+                args: vec!["--dangerously-skip-permissions".to_string()],
             },
         );
         presets.insert(
             "gemini".to_string(),
             Preset {
                 command: "gemini".to_string(),
-                args: vec![],
+                args: vec!["--yolo".to_string()],
             },
         );
         presets.insert(
             "codex".to_string(),
             Preset {
                 command: "codex".to_string(),
-                args: vec![],
+                args: vec!["--yolo".to_string()],
             },
         );
         presets.insert(
