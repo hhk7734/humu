@@ -2,7 +2,7 @@
 
 ## Overview
 
-Notification system that alerts the user via OS desktop notifications, sound, and Telegram when Claude Code agents need input or finish their task. Each channel has independent focus-aware control. Configurable through the Settings menu.
+Notification system that alerts the user via OS desktop notifications, sound, and Telegram when AI agents (Claude, Gemini) need input or finish their task. Each channel has independent focus-aware control. Configurable through the Settings menu.
 
 ## Trigger Events
 
@@ -17,7 +17,7 @@ Detected in `process_hook_events()` by comparing previous `AgentStateEntry.state
 
 **Name resolution:** `HookEvent` carries `workspace_id` and `room_id` as UUID strings. Resolved to human-readable names via `self.state.ws_by_id(WorkspaceId(uuid))` → `.name` and `ws.room_by_id(RoomId(uuid))` → `.name`. Falls back to `"unknown"` if unparseable or not found.
 
-**Idle transition semantics:** Claude Code emits `Stop` (→ `Idle`) at the end of each agent turn, including intermediate stops. `AgentFinished` may fire on intermediate completions. This is intentional — over-notification is preferred over missing a real completion.
+**Idle transition semantics:** AI agents (Claude, Gemini) emit events that map to `Idle` at the end of each agent turn, including intermediate stops. `AgentFinished` may fire on intermediate completions. This is intentional — over-notification is preferred over missing a real completion.
 
 ## Notification Channels
 

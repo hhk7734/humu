@@ -21,7 +21,7 @@ HuMu organizes your terminal workflow around git concepts: **workspaces** map to
 **Terminal Panes & Tabs**
 - Split panes horizontally/vertically with configurable ratios
 - Multiple tabs per room with Powerline-style tab bar
-- Presets for quick spawning (e.g., `claude`, `codex`, `shell`, custom commands)
+- Presets for quick spawning (e.g., `claude`, `gemini`, `shell`, custom commands)
 - Full terminal emulation via vt100 with 10,000-line scrollback
 
 **File Explorer**
@@ -31,12 +31,12 @@ HuMu organizes your terminal workflow around git concepts: **workspaces** map to
 - Auto-refreshes git status every ~3 seconds
 
 **Notifications**
-- Desktop notifications (`notify-send`) and sound (`paplay`) when Claude Code agents need input or finish
+- Desktop notifications (`notify-send`) and sound (`paplay`) when Claude or Gemini agents need input or finish
 - Telegram Bot API integration for remote alerts
 - Per-channel focus-aware control: suppress notifications when HuMu is focused
 - Credentials encrypted at rest (AES-256-GCM)
 
-**Claude Code Integration**
+**AI Agent Integration (Claude, Gemini)**
 - HTTP hook server receives agent state events (Working, NeedsInput, Idle)
 - Animated spinners on workspaces, rooms, and tabs with active agents
 - Session persistence across restarts
@@ -121,6 +121,8 @@ Config lives at `~/.humu/config.yaml`:
 presets:
   claude:
     command: claude
+  gemini:
+    command: gemini
   codex:
     command: codex
   shell:

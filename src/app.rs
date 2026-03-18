@@ -2970,10 +2970,12 @@ impl App {
         let arg_refs: Vec<&str> = shell_args.iter().map(String::as_str).collect();
         let (cmd, args) = humu::preset::resolve_preset(&shell_cmd, &arg_refs);
 
-        // Set HUMU_* env vars when spawning the "claude" preset.
+        // Set HUMU_* env vars when spawning the "claude" or "gemini" preset.
         let mut extra_args: Vec<String> = vec![];
         let id = PaneId::new();
-        let envs: Vec<(String, String)> = if preset_name == "claude" {
+        let mut envs: Vec<(String, String)> = vec![];
+
+        if preset_name == "claude" {
             let settings_path = humu_dir().join("hooks/claude-settings.json");
             extra_args.push("--settings".to_string());
             extra_args.push(settings_path.to_string_lossy().into_owned());
@@ -2982,8 +2984,26 @@ impl App {
                 extra_args.push("--resume".to_string());
                 extra_args.push(sid);
             }
+        } else if preset_name == "gemini" {
+            let settings_path = humu_dir().join("hooks/gemini-settings.json");
+            // Gemini CLI uses env var for custom settings path
+            envs.push((
+                "GEMINI_CLI_SYSTEM_SETTINGS_PATH".to_string(),
+                settings_path.to_string_lossy().into_owned(),
+            ));
 
-            let mut envs = vec![];
+            if let Some(sid) = session_id {
+                extra_args.push("--resume".to_string());
+                extra_args.push(sid);
+            }
+        } else if preset_name == "codex" {
+            if let Some(sid) = session_id {
+                extra_args.push("resume".to_string());
+                extra_args.push(sid);
+            }
+        }
+
+        if preset_name == "claude" || preset_name == "gemini" {
             if let Some(port) = self.hook_port {
                 envs.push(("HUMU_PORT".to_string(), port.to_string()));
             }
@@ -2995,16 +3015,7 @@ impl App {
             }
             envs.push(("HUMU_TAB_ID".to_string(), TabId::new().to_string()));
             envs.push(("HUMU_PANE_ID".to_string(), id.to_string()));
-            envs
-        } else if preset_name == "codex" {
-            if let Some(sid) = session_id {
-                extra_args.push("resume".to_string());
-                extra_args.push(sid);
-            }
-            vec![]
-        } else {
-            vec![]
-        };
+        }
 
         let cwd = self.current_room_path();
         let mut all_args = args;

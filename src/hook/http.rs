@@ -34,12 +34,25 @@ pub fn generate_hook_files(base_dir: &Path) -> anyhow::Result<()> {
     std::fs::write(&notify_path, r#"#!/bin/bash
 command -v curl &>/dev/null || exit 0
 INPUT=$(cat)
+# Try Claude's event name
 EVENT=$(echo "$INPUT" | grep -oE '"hook_event_name"\s*:\s*"[^"]*"' | grep -oE '"[^"]*"$' | tr -d '"')
+# If empty, try Gemini's notification_type
+if [ -z "$EVENT" ]; then
+  EVENT=$(echo "$INPUT" | grep -oE '"notification_type"\s*:\s*"[^"]*"' | grep -oE '"[^"]*"$' | tr -d '"')
+fi
+# If still empty, try Gemini's event (for BeforeAgent/AfterAgent which might not have notification_type)
+if [ -z "$EVENT" ]; then
+  EVENT=$(echo "$INPUT" | grep -oE '"event"\s*:\s*"[^"]*"' | grep -oE '"[^"]*"$' | tr -d '"')
+fi
+
 SESSION=$(echo "$INPUT" | grep -oE '"session_id"\s*:\s*"[^"]*"' | head -1 | grep -oE '"[^"]*"$' | tr -d '"')
 [ -z "$HUMU_PORT" ] && exit 0
 curl -s --connect-timeout 1 --max-time 2 -X POST \
   "http://127.0.0.1:${HUMU_PORT}/hook?workspaceId=${HUMU_WORKSPACE_ID}&roomId=${HUMU_ROOM_ID}&tabId=${HUMU_TAB_ID}&paneId=${HUMU_PANE_ID}&eventType=${EVENT}&sessionId=${SESSION}" \
   >/dev/null 2>&1 || true
+
+# Gemini hooks MUST return JSON
+echo '{"status":"ok"}'
 "#)?;
 
     // Make executable
@@ -49,10 +62,11 @@ curl -s --connect-timeout 1 --max-time 2 -X POST \
         std::fs::set_permissions(&notify_path, std::fs::Permissions::from_mode(0o755))?;
     }
 
-    // Generate claude-settings.json
-    let settings_path = hooks_dir.join("claude-settings.json");
     let notify_abs = notify_path.to_string_lossy();
-    let settings = serde_json::json!({
+
+    // Generate claude-settings.json
+    let claude_settings_path = hooks_dir.join("claude-settings.json");
+    let claude_settings = serde_json::json!({
         "hooks": {
             "UserPromptSubmit": [{"hooks": [{"type": "command", "command": notify_abs}]}],
             "Stop": [{"hooks": [{"type": "command", "command": notify_abs}]}],
@@ -61,7 +75,20 @@ curl -s --connect-timeout 1 --max-time 2 -X POST \
             "PermissionRequest": [{"matcher": "*", "hooks": [{"type": "command", "command": notify_abs}]}]
         }
     });
-    std::fs::write(&settings_path, serde_json::to_string_pretty(&settings)?)?;
+    std::fs::write(&claude_settings_path, serde_json::to_string_pretty(&claude_settings)?)?;
+
+    // Generate gemini-settings.json
+    let gemini_settings_path = hooks_dir.join("gemini-settings.json");
+    let gemini_settings = serde_json::json!({
+        "hooks": {
+            "BeforeAgent": [{"hooks": [{"type": "command", "command": notify_abs}]}],
+            "AfterAgent": [{"hooks": [{"type": "command", "command": notify_abs}]}],
+            "Notification": [{"matcher": "*", "hooks": [{"type": "command", "command": notify_abs}]}],
+            "BeforeTool": [{"matcher": "*", "hooks": [{"type": "command", "command": notify_abs}]}],
+            "AfterTool": [{"matcher": "*", "hooks": [{"type": "command", "command": notify_abs}]}]
+        }
+    });
+    std::fs::write(&gemini_settings_path, serde_json::to_string_pretty(&gemini_settings)?)?;
 
     Ok(())
 }
@@ -84,9 +111,16 @@ struct HookParams {
 
 fn map_event_type(raw: &str) -> Option<AgentState> {
     match raw {
+        // Claude Code
         "UserPromptSubmit" | "PostToolUse" | "PostToolUseFailure" => Some(AgentState::Working),
         "PermissionRequest" => Some(AgentState::NeedsInput),
         "Stop" => Some(AgentState::Idle),
+
+        // Gemini CLI
+        "BeforeAgent" | "BeforeTool" | "AfterTool" => Some(AgentState::Working),
+        "ActionRequired" | "ToolPermission" => Some(AgentState::NeedsInput),
+        "AfterAgent" | "SessionComplete" => Some(AgentState::Idle),
+
         _ => None,
     }
 }

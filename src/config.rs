@@ -134,6 +134,13 @@ impl Default for HumuConfig {
             },
         );
         presets.insert(
+            "gemini".to_string(),
+            Preset {
+                command: "gemini".to_string(),
+                args: vec![],
+            },
+        );
+        presets.insert(
             "codex".to_string(),
             Preset {
                 command: "codex".to_string(),
