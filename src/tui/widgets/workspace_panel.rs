@@ -99,11 +99,54 @@ impl Widget for WorkspacePanel<'_> {
         let inner = block.inner(area);
         block.render(area, buf);
 
+        let viewport_height = inner.height as usize;
+
+        // Compute visual row offset for each item (workspace=1 row, room=2 rows).
+        let mut item_visual_rows: Vec<(usize, usize)> = Vec::new(); // (item_index, visual_start_row)
+        let mut total_rows = 0usize;
+        for (i, item) in self.items.iter().enumerate() {
+            item_visual_rows.push((i, total_rows));
+            total_rows += match item.kind {
+                TreeItemKind::Workspace { .. } => 1,
+                TreeItemKind::Room => 2, // name + git stats
+            };
+        }
+
+        // Find scroll offset so selected item is visible.
+        let scroll_offset = if let Some(selected_idx) = self.selected {
+            let sel_start = item_visual_rows.get(selected_idx).map(|r| r.1).unwrap_or(0);
+            let sel_height = self.items.get(selected_idx).map(|item| match item.kind {
+                TreeItemKind::Workspace { .. } => 1,
+                TreeItemKind::Room => 2,
+            }).unwrap_or(1);
+            let sel_end = sel_start + sel_height;
+            if sel_end > viewport_height {
+                sel_end.saturating_sub(viewport_height)
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        let mut visual_row = 0usize;
         let mut y = inner.y;
         for (i, item) in self.items.iter().enumerate() {
+            let item_height: usize = match item.kind {
+                TreeItemKind::Workspace { .. } => 1,
+                TreeItemKind::Room => 2,
+            };
+
+            // Skip items above the scroll offset
+            if visual_row + item_height <= scroll_offset {
+                visual_row += item_height;
+                continue;
+            }
+
             if y >= inner.y + inner.height {
                 break;
             }
+
             let is_selected = self.selected == Some(i);
             let max_width = inner.width as usize;
 
@@ -274,6 +317,7 @@ impl Widget for WorkspacePanel<'_> {
                     }
                 }
             }
+            visual_row += item_height;
         }
     }
 }
