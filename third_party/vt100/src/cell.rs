@@ -135,6 +135,13 @@ impl Cell {
         self.attrs.bold()
     }
 
+    /// Returns whether the cell should be rendered with the dim text
+    /// attribute.
+    #[must_use]
+    pub fn dim(&self) -> bool {
+        self.attrs.dim()
+    }
+
     /// Returns whether the cell should be rendered with the italic text
     /// attribute.
     #[must_use]
@@ -154,5 +161,19 @@ impl Cell {
     #[must_use]
     pub fn inverse(&self) -> bool {
         self.attrs.inverse()
+    }
+
+    /// Returns whether the cell should be rendered with the hidden text
+    /// attribute.
+    #[must_use]
+    pub fn hidden(&self) -> bool {
+        self.attrs.hidden()
+    }
+
+    /// Returns whether the cell should be rendered with the crossed-out text
+    /// attribute.
+    #[must_use]
+    pub fn strike(&self) -> bool {
+        self.attrs.strike()
     }
 }

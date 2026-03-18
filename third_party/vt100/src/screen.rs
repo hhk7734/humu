@@ -718,6 +718,13 @@ impl Screen {
         self.attrs.bold()
     }
 
+    /// Returns whether newly drawn text should be rendered with the dim text
+    /// attribute.
+    #[must_use]
+    pub fn dim(&self) -> bool {
+        self.attrs.dim()
+    }
+
     /// Returns whether newly drawn text should be rendered with the italic
     /// text attribute.
     #[must_use]
@@ -737,6 +744,20 @@ impl Screen {
     #[must_use]
     pub fn inverse(&self) -> bool {
         self.attrs.inverse()
+    }
+
+    /// Returns whether newly drawn text should be rendered with the hidden
+    /// text attribute.
+    #[must_use]
+    pub fn hidden(&self) -> bool {
+        self.attrs.hidden()
+    }
+
+    /// Returns whether newly drawn text should be rendered with the
+    /// crossed-out text attribute.
+    #[must_use]
+    pub fn strike(&self) -> bool {
+        self.attrs.strike()
     }
 
     fn grid(&self) -> &crate::grid::Grid {
@@ -1399,18 +1420,26 @@ impl Screen {
             match next_param!() {
                 &[0] => self.attrs = crate::attrs::Attrs::default(),
                 &[1] => self.attrs.set_bold(true),
+                &[2] => self.attrs.set_dim(true),
                 &[3] => self.attrs.set_italic(true),
                 &[4] => self.attrs.set_underline(true),
                 &[7] => self.attrs.set_inverse(true),
-                &[22] => self.attrs.set_bold(false),
+                &[8] => self.attrs.set_hidden(true),
+                &[9] => self.attrs.set_strike(true),
+                &[22] => {
+                    self.attrs.set_bold(false);
+                    self.attrs.set_dim(false);
+                }
                 &[23] => self.attrs.set_italic(false),
                 &[24] => self.attrs.set_underline(false),
+                &[28] => self.attrs.set_hidden(false),
+                &[29] => self.attrs.set_strike(false),
                 &[27] => self.attrs.set_inverse(false),
                 &[n] if (30..=37).contains(&n) => {
                     self.attrs.fgcolor =
                         crate::attrs::Color::Idx(to_u8!(n) - 30);
                 }
-                &[38, 2, r, g, b] => {
+                &[38, 2, r, g, b] | &[38, 2, 0, r, g, b] => {
                     self.attrs.fgcolor = crate::attrs::Color::Rgb(
                         to_u8!(r),
                         to_u8!(g),
@@ -1422,9 +1451,14 @@ impl Screen {
                 }
                 &[38] => match next_param!() {
                     &[2] => {
-                        let r = next_param_u8!();
-                        let g = next_param_u8!();
-                        let b = next_param_u8!();
+                        let mut r = next_param_u8!();
+                        let mut g = next_param_u8!();
+                        let mut b = next_param_u8!();
+                        if r == 0 {
+                            r = g;
+                            g = b;
+                            b = next_param_u8!();
+                        }
                         self.attrs.fgcolor =
                             crate::attrs::Color::Rgb(r, g, b);
                     }
@@ -1456,7 +1490,7 @@ impl Screen {
                     self.attrs.bgcolor =
                         crate::attrs::Color::Idx(to_u8!(n) - 40);
                 }
-                &[48, 2, r, g, b] => {
+                &[48, 2, r, g, b] | &[48, 2, 0, r, g, b] => {
                     self.attrs.bgcolor = crate::attrs::Color::Rgb(
                         to_u8!(r),
                         to_u8!(g),
@@ -1468,9 +1502,14 @@ impl Screen {
                 }
                 &[48] => match next_param!() {
                     &[2] => {
-                        let r = next_param_u8!();
-                        let g = next_param_u8!();
-                        let b = next_param_u8!();
+                        let mut r = next_param_u8!();
+                        let mut g = next_param_u8!();
+                        let mut b = next_param_u8!();
+                        if r == 0 {
+                            r = g;
+                            g = b;
+                            b = next_param_u8!();
+                        }
                         self.attrs.bgcolor =
                             crate::attrs::Color::Rgb(r, g, b);
                     }

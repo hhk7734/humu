@@ -110,9 +110,12 @@ pub struct Attrs {
     fgcolor: Option<crate::attrs::Color>,
     bgcolor: Option<crate::attrs::Color>,
     bold: Option<bool>,
+    dim: Option<bool>,
     italic: Option<bool>,
     underline: Option<bool>,
     inverse: Option<bool>,
+    hidden: Option<bool>,
+    strike: Option<bool>,
 }
 
 impl Attrs {
@@ -131,6 +134,11 @@ impl Attrs {
         self
     }
 
+    pub fn dim(mut self, dim: bool) -> Self {
+        self.dim = Some(dim);
+        self
+    }
+
     pub fn italic(mut self, italic: bool) -> Self {
         self.italic = Some(italic);
         self
@@ -145,6 +153,16 @@ impl Attrs {
         self.inverse = Some(inverse);
         self
     }
+
+    pub fn hidden(mut self, hidden: bool) -> Self {
+        self.hidden = Some(hidden);
+        self
+    }
+
+    pub fn strike(mut self, strike: bool) -> Self {
+        self.strike = Some(strike);
+        self
+    }
 }
 
 impl BufWrite for Attrs {
@@ -154,9 +172,12 @@ impl BufWrite for Attrs {
         if self.fgcolor.is_none()
             && self.bgcolor.is_none()
             && self.bold.is_none()
+            && self.dim.is_none()
             && self.italic.is_none()
             && self.underline.is_none()
             && self.inverse.is_none()
+            && self.hidden.is_none()
+            && self.strike.is_none()
         {
             return;
         }
@@ -235,6 +256,14 @@ impl BufWrite for Attrs {
             }
         }
 
+        if let Some(dim) = self.dim {
+            if dim {
+                write_param!(2);
+            } else {
+                write_param!(22);
+            }
+        }
+
         if let Some(italic) = self.italic {
             if italic {
                 write_param!(3);
@@ -256,6 +285,22 @@ impl BufWrite for Attrs {
                 write_param!(7);
             } else {
                 write_param!(27);
+            }
+        }
+
+        if let Some(hidden) = self.hidden {
+            if hidden {
+                write_param!(8);
+            } else {
+                write_param!(28);
+            }
+        }
+
+        if let Some(strike) = self.strike {
+            if strike {
+                write_param!(9);
+            } else {
+                write_param!(29);
             }
         }
 

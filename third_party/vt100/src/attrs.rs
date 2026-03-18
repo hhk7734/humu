@@ -20,9 +20,12 @@ impl Default for Color {
 }
 
 const TEXT_MODE_BOLD: u8 = 0b0000_0001;
-const TEXT_MODE_ITALIC: u8 = 0b0000_0010;
-const TEXT_MODE_UNDERLINE: u8 = 0b0000_0100;
-const TEXT_MODE_INVERSE: u8 = 0b0000_1000;
+const TEXT_MODE_DIM: u8 = 0b0000_0010;
+const TEXT_MODE_ITALIC: u8 = 0b0000_0100;
+const TEXT_MODE_UNDERLINE: u8 = 0b0000_1000;
+const TEXT_MODE_INVERSE: u8 = 0b0001_0000;
+const TEXT_MODE_HIDDEN: u8 = 0b0010_0000;
+const TEXT_MODE_STRIKE: u8 = 0b0100_0000;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Attrs {
@@ -41,6 +44,18 @@ impl Attrs {
             self.mode |= TEXT_MODE_BOLD;
         } else {
             self.mode &= !TEXT_MODE_BOLD;
+        }
+    }
+
+    pub fn dim(&self) -> bool {
+        self.mode & TEXT_MODE_DIM != 0
+    }
+
+    pub fn set_dim(&mut self, dim: bool) {
+        if dim {
+            self.mode |= TEXT_MODE_DIM;
+        } else {
+            self.mode &= !TEXT_MODE_DIM;
         }
     }
 
@@ -80,6 +95,30 @@ impl Attrs {
         }
     }
 
+    pub fn hidden(&self) -> bool {
+        self.mode & TEXT_MODE_HIDDEN != 0
+    }
+
+    pub fn set_hidden(&mut self, hidden: bool) {
+        if hidden {
+            self.mode |= TEXT_MODE_HIDDEN;
+        } else {
+            self.mode &= !TEXT_MODE_HIDDEN;
+        }
+    }
+
+    pub fn strike(&self) -> bool {
+        self.mode & TEXT_MODE_STRIKE != 0
+    }
+
+    pub fn set_strike(&mut self, strike: bool) {
+        if strike {
+            self.mode |= TEXT_MODE_STRIKE;
+        } else {
+            self.mode &= !TEXT_MODE_STRIKE;
+        }
+    }
+
     pub fn write_escape_code_diff(
         &self,
         contents: &mut Vec<u8>,
@@ -107,6 +146,11 @@ impl Attrs {
         } else {
             attrs.bold(self.bold())
         };
+        let attrs = if self.dim() == other.dim() {
+            attrs
+        } else {
+            attrs.dim(self.dim())
+        };
         let attrs = if self.italic() == other.italic() {
             attrs
         } else {
@@ -121,6 +165,16 @@ impl Attrs {
             attrs
         } else {
             attrs.inverse(self.inverse())
+        };
+        let attrs = if self.hidden() == other.hidden() {
+            attrs
+        } else {
+            attrs.hidden(self.hidden())
+        };
+        let attrs = if self.strike() == other.strike() {
+            attrs
+        } else {
+            attrs.strike(self.strike())
         };
 
         attrs.write_buf(contents);
