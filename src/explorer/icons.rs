@@ -56,3 +56,13 @@ pub fn dir_icon(expanded: bool) -> (&'static str, Color) {
         ("\u{f024b}", Color::Rgb(86, 182, 194))   //  closed folder cyan
     }
 }
+
+/// Returns the Nerd Font icon and its color for a symlink file.
+pub fn symlink_file_icon() -> (&'static str, Color) {
+    ("\u{f481}", Color::Rgb(188, 140, 255))   //  symlink-file purple
+}
+
+/// Returns the Nerd Font icon and its color for a symlink directory.
+pub fn symlink_dir_icon() -> (&'static str, Color) {
+    ("\u{f482}", Color::Rgb(188, 140, 255))   //  symlink-dir purple
+}

@@ -101,10 +101,17 @@ impl Widget for ExplorerPanel<'_> {
                 x += 1;
             }
 
-            // Icon with color
-            let (icon, icon_color) = match entry.kind {
-                FileKind::Directory => icons::dir_icon(entry.expanded),
-                FileKind::File => icons::file_icon(&entry.name),
+            // Icon with color — symlinks get their own icon
+            let (icon, icon_color) = if entry.is_symlink {
+                match entry.kind {
+                    FileKind::Directory => icons::symlink_dir_icon(),
+                    FileKind::File => icons::symlink_file_icon(),
+                }
+            } else {
+                match entry.kind {
+                    FileKind::Directory => icons::dir_icon(entry.expanded),
+                    FileKind::File => icons::file_icon(&entry.name),
+                }
             };
             let icon_style = Style::default().fg(icon_color);
             for ch in icon.chars() {

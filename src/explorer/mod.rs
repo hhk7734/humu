@@ -27,6 +27,7 @@ pub struct FileEntry {
     pub git_status: Option<GitStatus>,
     pub depth: usize,
     pub expanded: bool,
+    pub is_symlink: bool,
 }
 
 /// Parses `git status --porcelain` output into a map of path -> GitStatus.
@@ -228,12 +229,14 @@ impl ExplorerState {
                 continue;
             }
 
+            let is_symlink = child.symlink_metadata()
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false);
             let is_dir = child.is_dir();
             let rel_path = child.strip_prefix(&self.root).unwrap_or(&child).to_path_buf();
             let expanded = is_dir && self.expanded_dirs.contains(&child);
 
             let file_git_status = if is_dir {
-                // Compute status from all git entries under this directory.
                 dir_git_status(&rel_path, git_status)
             } else {
                 git_status.get(&rel_path).copied()
@@ -250,6 +253,7 @@ impl ExplorerState {
                 git_status: file_git_status,
                 depth,
                 expanded,
+                is_symlink,
             });
 
             if is_dir && expanded {
