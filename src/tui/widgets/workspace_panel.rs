@@ -159,8 +159,14 @@ impl Widget for WorkspacePanel<'_> {
                         && self.active_room == item.room_id
                 }
             };
-            if is_active {
+            if is_selected {
                 let bg = Style::default().bg(self.palette.bg_tertiary);
+                for bx in inner.x..inner.x + inner.width {
+                    buf[(bx, y)].set_style(bg);
+                }
+            }
+            if is_active {
+                let bg = Style::default().bg(self.palette.bg_selected);
                 for bx in inner.x..inner.x + inner.width {
                     buf[(bx, y)].set_style(bg);
                 }
@@ -237,7 +243,7 @@ impl Widget for WorkspacePanel<'_> {
                     if y < inner.y + inner.height {
                         // Fill background for active room stats line
                         if is_active {
-                            let bg = Style::default().bg(self.palette.bg_tertiary);
+                            let bg = Style::default().bg(self.palette.bg_selected);
                             for bx in inner.x..inner.x + inner.width {
                                 buf[(bx, y)].set_style(bg);
                             }
