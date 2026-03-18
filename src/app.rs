@@ -22,7 +22,7 @@ use crossterm::terminal::{
 use crossterm::ExecutableCommand;
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use ratatui::Terminal;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::stdout;
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -224,8 +224,6 @@ pub struct App {
     pub explorer_state: humu::explorer::ExplorerState,
     /// Cached room list + git stats per workspace, refreshed periodically (~3s).
     room_cache: HashMap<WorkspaceId, Vec<CachedRoomInfo>>,
-    /// Which workspace IDs are expanded in the workspace tree.
-    expanded_workspaces: HashSet<WorkspaceId>,
     /// Cursor position in the flat workspace tree (for keyboard navigation).
     selected_tree_index: usize,
     /// When workspace mode was entered (for auto-return to terminal after timeout).
@@ -312,7 +310,6 @@ impl App {
         };
 
         let saved_panel_widths = state.panel_widths.unwrap_or([25, 25]);
-        let all_ws_ids: HashSet<WorkspaceId> = state.workspaces.iter().map(|w| w.id).collect();
 
         Ok(Self {
             config,
@@ -343,7 +340,6 @@ impl App {
             search_state: None,
             explorer_state: humu::explorer::ExplorerState::new(std::path::PathBuf::new()),
             room_cache: HashMap::new(),
-            expanded_workspaces: all_ws_ids,
             selected_tree_index: 0,
             workspace_mode_entered: None,
             state_path: humu_dir().join("state.yaml"),
@@ -2459,12 +2455,14 @@ impl App {
                 self.selected_tree_index = idx;
                 let item = &tree[idx];
                 match &item.kind {
-                    TreeItemKind::Workspace { expanded } => {
-                        if *expanded {
-                            self.expanded_workspaces.remove(&item.workspace_id);
-                        } else {
-                            self.expanded_workspaces.insert(item.workspace_id);
-                        }
+                    TreeItemKind::Workspace => {
+                        // Click on workspace: select it and switch to its last room
+                        self.workspace_selected = Some(item.workspace_id);
+                        self.room_selected = None;
+                        self.switch_to_selected_room();
+                        self.mode = Mode::Terminal;
+                        self.focus = FocusedPanel::Terminal;
+                        self.workspace_mode_entered = None;
                     }
                     TreeItemKind::Room => {
                         // Click on a room: switch to it
@@ -2876,7 +2874,7 @@ impl App {
                 if self.selected_tree_index >= tree.len() { return; }
                 let item = &tree[self.selected_tree_index];
                 match &item.kind {
-                    TreeItemKind::Workspace { .. } => {
+                    TreeItemKind::Workspace => {
                         let ws_name = match self.state.ws_by_id(item.workspace_id) {
                             Some(w) => w.name.clone(),
                             None => return,
@@ -3325,18 +3323,13 @@ impl App {
                 if self.selected_tree_index >= tree.len() { return; }
                 let item = tree[self.selected_tree_index].clone();
                 match &item.kind {
-                    TreeItemKind::Workspace { expanded } => {
-                        // Toggle expand/collapse
-                        if *expanded {
-                            self.expanded_workspaces.remove(&item.workspace_id);
-                        } else {
-                            self.expanded_workspaces.insert(item.workspace_id);
-                        }
-                        // Re-clamp index after tree shape change
-                        let new_tree = self.build_workspace_tree();
-                        if !new_tree.is_empty() {
-                            self.selected_tree_index = self.selected_tree_index.min(new_tree.len() - 1);
-                        }
+                    TreeItemKind::Workspace => {
+                        // Select workspace and switch to its last room
+                        self.workspace_selected = Some(item.workspace_id);
+                        self.room_selected = None;
+                        self.switch_to_selected_room();
+                        self.mode = Mode::Terminal;
+                        self.focus = FocusedPanel::Terminal;
                     }
                     TreeItemKind::Room => {
                         // Switch to this room
@@ -3515,16 +3508,13 @@ impl App {
         let mut ws_list: Vec<_> = self.state.workspaces.iter().collect();
         ws_list.sort_by(|a, b| a.name.cmp(&b.name));
 
-        let active_ws_id = self.state.active_workspace_id;
         let mut items = Vec::new();
 
         for ws in ws_list {
             let ws_active = self.has_active_agent(&self.pane_ids_for_workspace(ws.id));
-            let expanded = self.expanded_workspaces.contains(&ws.id)
-                || active_ws_id == Some(ws.id);
 
             items.push(WorkspaceTreeItem {
-                kind: TreeItemKind::Workspace { expanded },
+                kind: TreeItemKind::Workspace,
                 name: ws.name.clone(),
                 active: ws_active,
                 workspace_id: ws.id,
@@ -3533,19 +3523,17 @@ impl App {
                 ahead_behind: None,
             });
 
-            if expanded {
-                let room_items = self.room_items_for_workspace(ws.id);
-                for r in room_items {
-                    items.push(WorkspaceTreeItem {
-                        kind: TreeItemKind::Room,
-                        name: r.name.clone(),
-                        active: r.active,
-                        workspace_id: ws.id,
-                        room_id: r.id,
-                        diff_stat: r.diff_stat,
-                        ahead_behind: r.ahead_behind,
-                    });
-                }
+            let room_items = self.room_items_for_workspace(ws.id);
+            for r in room_items {
+                items.push(WorkspaceTreeItem {
+                    kind: TreeItemKind::Room,
+                    name: r.name.clone(),
+                    active: r.active,
+                    workspace_id: ws.id,
+                    room_id: r.id,
+                    diff_stat: r.diff_stat,
+                    ahead_behind: r.ahead_behind,
+                });
             }
         }
 
@@ -3588,15 +3576,10 @@ impl App {
         ids
     }
 
-    /// Refresh cached room list + git stats for the active workspace and all
-    /// expanded workspaces (so the tree panel can display room data).
+    /// Refresh cached room list + git stats for all workspaces.
     fn refresh_room_cache(&mut self) {
         let mgr = RoomManager::new();
-        // Collect workspace IDs that need refreshing: active + expanded.
-        let mut ws_ids: HashSet<WorkspaceId> = self.expanded_workspaces.clone();
-        if let Some(id) = self.state.active_workspace_id {
-            ws_ids.insert(id);
-        }
+        let ws_ids: Vec<WorkspaceId> = self.state.workspaces.iter().map(|w| w.id).collect();
         for ws_id in ws_ids {
             let ws = match self.state.ws_by_id(ws_id) {
                 Some(ws) => ws,

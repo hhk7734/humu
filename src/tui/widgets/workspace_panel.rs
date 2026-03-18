@@ -8,7 +8,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Widget};
 /// Kinds of items in the workspace tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TreeItemKind {
-    Workspace { expanded: bool },
+    Workspace,
     Room,
 }
 
@@ -107,7 +107,7 @@ impl Widget for WorkspacePanel<'_> {
         for (i, item) in self.items.iter().enumerate() {
             item_visual_rows.push((i, total_rows));
             total_rows += match item.kind {
-                TreeItemKind::Workspace { .. } => 1,
+                TreeItemKind::Workspace => 1,
                 TreeItemKind::Room => 2, // name + git stats
             };
         }
@@ -116,7 +116,7 @@ impl Widget for WorkspacePanel<'_> {
         let scroll_offset = if let Some(selected_idx) = self.selected {
             let sel_start = item_visual_rows.get(selected_idx).map(|r| r.1).unwrap_or(0);
             let sel_height = self.items.get(selected_idx).map(|item| match item.kind {
-                TreeItemKind::Workspace { .. } => 1,
+                TreeItemKind::Workspace => 1,
                 TreeItemKind::Room => 2,
             }).unwrap_or(1);
             let sel_end = sel_start + sel_height;
@@ -133,7 +133,7 @@ impl Widget for WorkspacePanel<'_> {
         let mut y = inner.y;
         for (i, item) in self.items.iter().enumerate() {
             let item_height: usize = match item.kind {
-                TreeItemKind::Workspace { .. } => 1,
+                TreeItemKind::Workspace => 1,
                 TreeItemKind::Room => 2,
             };
 
@@ -152,7 +152,7 @@ impl Widget for WorkspacePanel<'_> {
 
             // Highlight the active workspace/room with bg_tertiary
             let is_active = match &item.kind {
-                TreeItemKind::Workspace { .. } => self.active_ws == Some(item.workspace_id),
+                TreeItemKind::Workspace => self.active_ws == Some(item.workspace_id),
                 TreeItemKind::Room => {
                     self.active_ws == Some(item.workspace_id)
                         && self.active_room.is_some()
@@ -173,17 +173,15 @@ impl Widget for WorkspacePanel<'_> {
             }
 
             match &item.kind {
-                TreeItemKind::Workspace { expanded } => {
-                    // Workspace row: "▸ name" (collapsed) or "▾ name" (expanded)
-                    let chevron = if *expanded { "\u{25be} " } else { "\u{25b8} " };
+                TreeItemKind::Workspace => {
                     let suffix = if item.active {
                         format!(" {}", self.spinner_frame)
                     } else {
                         String::new()
                     };
-                    let chevron_len = 2; // "▸ " or "▾ "
+                    let prefix_len = 2; // "▸ " selector
                     let suffix_len = if item.active { 2 } else { 0 };
-                    let name_budget = max_width.saturating_sub(chevron_len + suffix_len);
+                    let name_budget = max_width.saturating_sub(prefix_len + suffix_len);
 
                     let display_name = if item.name.chars().count() > name_budget && name_budget >= 3 {
                         let truncated: String = item.name.chars().take(name_budget - 3).collect();
@@ -191,7 +189,8 @@ impl Widget for WorkspacePanel<'_> {
                     } else {
                         item.name.clone()
                     };
-                    let text = format!("{chevron}{display_name}{suffix}");
+                    let prefix = if is_selected { "\u{25b8} " } else { "  " };
+                    let text = format!("{prefix}{display_name}{suffix}");
 
                     let style = if is_selected {
                         Style::default()
