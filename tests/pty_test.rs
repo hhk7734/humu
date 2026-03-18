@@ -25,3 +25,25 @@ fn test_pane_detects_exit() {
 
     assert!(pane.exit_status().is_some());
 }
+
+#[test]
+fn test_pane_replies_to_cursor_position_request() {
+    let script = r#"printf '\033[6n'; IFS='[;' read -r -d R _ row col; printf 'ROW=%s COL=%s' "$row" "$col""#;
+    let mut pane =
+        PtyPane::spawn("bash", &["-lc".into(), script.into()], None, 80, 24).unwrap();
+
+    for _ in 0..10 {
+        std::thread::sleep(Duration::from_millis(100));
+        pane.process_output().unwrap();
+        if pane.exit_status().is_some() {
+            break;
+        }
+    }
+
+    let screen = pane.screen();
+    assert!(
+        screen.contents().contains("ROW=1 COL=1"),
+        "screen contents: {:?}",
+        screen.contents()
+    );
+}

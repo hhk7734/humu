@@ -13,6 +13,7 @@ pub struct PtyPane {
     writer: Box<dyn std::io::Write + Send>,
     output_rx: mpsc::Receiver<Vec<u8>>,
     parser: Arc<Mutex<vt100::Parser>>,
+    output_tail: Vec<u8>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     exit_code: Option<i32>,
     cols: u16,
@@ -84,6 +85,7 @@ impl PtyPane {
             writer,
             output_rx,
             parser,
+            output_tail: Vec::new(),
             child,
             exit_code: None,
             cols,
@@ -93,11 +95,22 @@ impl PtyPane {
 
     /// Drain any PTY output received from the background reader thread.
     pub fn process_output(&mut self) -> Result<()> {
-        let mut parser = self.parser.lock().unwrap();
         while let Ok(data) = self.output_rx.try_recv() {
-            parser.process(&data);
+            let cpr_requests = count_cursor_position_requests(&self.output_tail, &data);
+            {
+                let mut parser = self.parser.lock().unwrap();
+                parser.process(&data);
+                if cpr_requests > 0 {
+                    let (row, col) = parser.screen().cursor_position();
+                    let response = format!("\x1b[{};{}R", row + 1, col + 1);
+                    use std::io::Write;
+                    for _ in 0..cpr_requests {
+                        self.writer.write_all(response.as_bytes())?;
+                    }
+                }
+            }
+            update_output_tail(&mut self.output_tail, &data);
         }
-        drop(parser);
         self.check_exit();
         Ok(())
     }
@@ -181,4 +194,18 @@ impl PtyPane {
     pub fn rows(&self) -> u16 {
         self.rows
     }
+}
+
+fn count_cursor_position_requests(tail: &[u8], data: &[u8]) -> usize {
+    let mut combined = Vec::with_capacity(tail.len() + data.len());
+    combined.extend_from_slice(tail);
+    combined.extend_from_slice(data);
+    combined.windows(4).filter(|w| *w == b"\x1b[6n").count()
+}
+
+fn update_output_tail(tail: &mut Vec<u8>, data: &[u8]) {
+    const MAX_TAIL_LEN: usize = 3;
+    tail.clear();
+    let keep = data.len().min(MAX_TAIL_LEN);
+    tail.extend_from_slice(&data[data.len() - keep..]);
 }
