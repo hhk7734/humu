@@ -45,7 +45,7 @@ src/
 │   ├── os.rs        # OsNotifier (notify-send) + SoundNotifier (paplay)
 │   └── telegram.rs  # TelegramNotifier (Bot API via ureq)
 ├── hook/
-│   └── http.rs      # HTTP hook server (axum) for Claude Code events
+│   └── http.rs      # HTTP hook server (axum) for AI agent events (Claude, Gemini)
 └── tui/
     ├── mod.rs
     ├── input.rs       # Modal keybinding dispatch (Terminal/Locked/Pane/Tab/Workspace/Room/Explorer/Search)
