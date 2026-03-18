@@ -210,6 +210,9 @@ impl Widget for TerminalWidget<'_> {
                         if cell.bold() {
                             style = style.add_modifier(Modifier::BOLD);
                         }
+                        if cell.dim() {
+                            style = style.add_modifier(Modifier::DIM);
+                        }
                         if cell.italic() {
                             style = style.add_modifier(Modifier::ITALIC);
                         }
@@ -220,6 +223,12 @@ impl Widget for TerminalWidget<'_> {
                             let real_fg = if fg == Color::Reset { self.palette.fg_primary } else { fg };
                             let real_bg = if bg == Color::Reset { self.palette.bg_primary } else { bg };
                             style = style.fg(real_bg).bg(real_fg);
+                        }
+                        if cell.hidden() {
+                            style = style.add_modifier(Modifier::HIDDEN);
+                        }
+                        if cell.strike() {
+                            style = style.add_modifier(Modifier::CROSSED_OUT);
                         }
                         let ch = cell.contents();
                         let display_char = if ch.is_empty() { " " } else { &ch };
