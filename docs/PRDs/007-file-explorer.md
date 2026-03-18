@@ -2,15 +2,15 @@
 
 ## Overview
 
-A file explorer panel on the right side of the layout showing the workspace directory tree with Nerd Font icons and git status indicators. Enter opens files in `$EDITOR`, Shift+Enter shows diffs via `delta`. Both open in a floating pane overlay.
+A file explorer panel on the right side of the layout showing the active room's directory tree with Nerd Font icons and git status indicators. Enter opens files in `$EDITOR`, Shift+Enter shows diffs via `delta`. Both open in a floating pane overlay.
 
 ## Layout
 
-`[Workspace | Room | Terminal | Explorer]`
+`[WorkspaceTree | Terminal | Explorer]`
 
-- Explorer is the rightmost panel with `panel_widths[2]` (default: 25 columns, clamped 5-60)
+- Explorer is the rightmost panel with `panel_widths[1]` (default: 25 columns, clamped 5-60)
 - Resizable with `Shift+←/→` in Explorer mode
-- `panel_widths` in `state.yaml` uses `[u16; 3]` with backward-compatible deserialization (legacy 2-element arrays get 25 appended)
+- `panel_widths` in `state.yaml` uses `[u16; 2]` for `[workspace_panel, explorer_panel]`
 
 ## Mode & Focus
 
@@ -26,6 +26,10 @@ A file explorer panel on the right side of the layout showing the workspace dire
 | `↑/↓` | Navigate tree |
 | `Enter` | Toggle dir expand/collapse, or open file in `$EDITOR` (floating pane) |
 | `Shift+Enter` | Open `git diff \| delta --side-by-side` in floating pane (modified files only) |
+| `n` | Create new file in the selected directory |
+| `Shift+N` | Create new directory in the selected directory |
+| `d` | Delete selected file/directory (with confirm popup) |
+| `Shift+C` | Copy selected relative path |
 | `Shift+←/→` | Resize explorer panel |
 | `Shift+I` | Toggle show/hide gitignored files |
 | `Esc` | Return to Terminal mode |
@@ -44,6 +48,7 @@ A file explorer panel on the right side of the layout showing the workspace dire
 
 - Nerd Font icons per file extension (nvim-web-devicons style, 40+ extensions) with per-type colors (e.g., Rust brown, Python blue, JS yellow, Go cyan)
 - Directory icons: `` collapsed, `` expanded — cyan `#56B6C2`
+- Symlink files and symlink directories have distinct purple icons
 - Each line segment rendered independently: selector (`accent_blue`), indent, icon (per-type color), filename (git-aware color), git indicator
 - Git status: `✗` in `accent_orange` for Modified, `★` in `accent_green` for Added — filenames also colored to match
 - Selected line: `▸` indicator + `bg_tertiary` highlight
@@ -66,6 +71,9 @@ Editor and diff views open in a floating pane overlay (90% of terminal panel are
 - **Enter on file**: `$EDITOR <filepath>` (falls back to `vi`) in floating pane
 - **Enter on directory**: toggle expand/collapse
 - **Shift+Enter on modified file**: `sh -c "git diff '<path>' | delta --side-by-side --paging=always"` in floating pane (path shell-escaped)
+- **`n` / `Shift+N`**: open popup to create a file or directory relative to the selected directory (or the selected entry's parent when a file is highlighted)
+- **`d`**: open confirmation popup, then delete the selected file/directory from disk
+- **`Shift+C`**: copy the selected path to the clipboard
 - **Shift+I**: toggle `show_ignored`, rescan tree (session-only)
 
 ## Module Architecture

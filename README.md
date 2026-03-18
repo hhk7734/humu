@@ -12,6 +12,7 @@ HuMu organizes your terminal workflow around git concepts: **workspaces** map to
 - Register, clone, or init git repositories as workspaces
 - Each workspace tracks its rooms (worktrees) independently
 - Switch between workspaces with state preserved
+- Workspace tree always shows rooms inline with per-room git summaries, including untracked-file counts
 
 **Room Management**
 - Rooms are git worktrees -- work on multiple branches simultaneously
@@ -26,8 +27,10 @@ HuMu organizes your terminal workflow around git concepts: **workspaces** map to
 
 **File Explorer**
 - Directory tree with Nerd Font icons (40+ file types with per-type colors)
+- Distinct icons for symlink files and symlink directories
 - Live git status indicators on files and directories (even collapsed ones)
 - Open files in `$EDITOR` or view diffs with [delta](https://github.com/dandavison/delta) -- both in a floating pane overlay
+- Create/delete files and directories directly from the explorer
 - Auto-refreshes git status every ~3 seconds
 
 **Notifications**

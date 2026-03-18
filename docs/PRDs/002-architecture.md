@@ -5,19 +5,21 @@ Single Rust binary. No client-server, no database.
 ```
 humu (single binary)
 ├── TUI Layer (ratatui + crossterm)
-│   ├── WorkspacePanel
-│   ├── RoomPanel
+│   ├── WorkspacePanel (workspace tree with rooms)
 │   ├── TerminalArea (tabs + split panes)
+│   ├── ExplorerPanel
 │   └── StatusBar (mode badge + key hints)
 ├── Git Layer
 │   ├── Workspace manager (clone / init / register)
 │   └── Room manager (worktree add / remove / list)
 ├── PTY Layer (portable-pty)
-│   └── Spawn shell/claude processes per pane
+│   └── Spawn shell / claude / gemini / codex processes per pane
 ├── Terminal Emulation (vt100 crate)
 │   └── Parse PTY output → screen buffer → ratatui cells
 ├── Hook Layer (axum HTTP server)
-│   └── HTTP server at 127.0.0.1:<random port>
+│   └── HTTP server at 127.0.0.1:<random port> for Claude/Gemini events
+├── Codex Tracking Layer
+│   └── Poll `~/.codex/sessions/` JSONL files for Codex session state
 ├── Theme Layer
 │   ├── Palette (GitHub Dark color scheme)
 │   └── UiConfig (simplified_ui, rounded_corners)
@@ -96,18 +98,26 @@ When a pane's process exits, the pane is automatically closed on the next tick. 
 
 ## Presets
 
-Two built-in presets, extensible via config. Environment variables in `command` and `args` are expanded at PTY spawn time.
+Four built-in presets, extensible via config. Environment variables in `command` and `args` are expanded at PTY spawn time.
 
 ```yaml
 # ~/.humu/config.yaml
 presets:
   claude:
     command: claude
-    args: []
+    args: ["--dangerously-skip-permissions"]
+  gemini:
+    command: gemini
+    args: ["--yolo"]
+  codex:
+    command: codex
+    args: ["--yolo"]
   shell:
     command: $SHELL
     args: []
 ```
+
+`apply_builtin_presets()` only fills in missing builtin entries; user-defined presets with the same name are not overwritten.
 
 ## Layout Persistence
 
@@ -133,7 +143,7 @@ On graceful shutdown, all suspended rooms have their layouts persisted to `state
 
 When a workspace is deleted, all its entries in `suspended_rooms` are discarded. If the deleted workspace was active, live panes are cleared and humu auto-switches to the next available workspace.
 
-## Claude Hook Integration
+## Claude/Gemini Hook Integration
 
 ### HTTP Hook Server
 
@@ -148,14 +158,16 @@ On startup, humu generates two files:
 
 - **`~/.humu/hooks/notify.sh`** — hook script using `curl` and `grep` (no `jq`/`socat`)
 - **`~/.humu/hooks/claude-settings.json`** — Claude Code settings with hook registration for: `UserPromptSubmit`, `Stop`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`
+- **`~/.humu/hooks/gemini-settings.json`** — Gemini CLI settings file consumed via environment variable
 
-### Claude Preset Spawning
+### Claude/Gemini Preset Spawning
 
-When spawning a claude preset, humu:
+When spawning a `claude` or `gemini` preset, humu:
 
 1. Passes env vars: `HUMU_PORT`, `HUMU_WORKSPACE_ID`, `HUMU_ROOM_ID`, `HUMU_TAB_ID`, `HUMU_PANE_ID`
-2. Appends `--settings ~/.humu/hooks/claude-settings.json` to the command
-3. If restoring with `session_id`, appends `--resume SESSION_ID`
+2. For Claude, appends `--settings ~/.humu/hooks/claude-settings.json`
+3. For Gemini, sets `GEMINI_CLI_SYSTEM_SETTINGS_PATH=~/.humu/hooks/gemini-settings.json`
+4. If restoring with `session_id`, appends `--resume SESSION_ID`
 
 ### Event Processing
 
@@ -185,6 +197,31 @@ Workspace/room panel spinners are derived from pane states:
 2. Humu stores `session_id` in `AgentStateEntry` keyed by `PaneId`
 3. `session_id` is persisted to `SplitNode::Leaf` on state save
 4. On restore, `--resume SESSION_ID` is passed to Claude Code
+
+Gemini uses the same persistence path: `session_id` is stored in `SplitNode::Leaf` and restored with `--resume SESSION_ID`.
+
+## Codex Integration
+
+Codex does not use the HTTP hook server. Instead, humu infers agent state by polling Codex session JSONL files under `~/.codex/sessions/`.
+
+### Codex Preset Spawning
+
+When spawning a `codex` preset, humu:
+
+1. Spawns the configured `codex` command in the room working directory
+2. If restoring with `session_id`, appends `resume SESSION_ID`
+3. Registers the pane with `CodexTracker` using the pane `cwd` and start time
+
+### Codex Session Tracking
+
+`CodexTracker` discovers the matching session file either by known `session_id` or by `(cwd, started_at)` heuristics, then reads the session JSONL summary on each poll tick:
+
+| Codex Event | Canonical State |
+|---|---|
+| `task_started` | Working |
+| `task_complete` | Idle |
+
+Codex currently supports `Working` and `Idle`. `NeedsInput` is not available because Codex does not emit an equivalent hook event through the current integration path.
 
 ## Theme
 
