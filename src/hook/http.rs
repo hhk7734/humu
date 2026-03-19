@@ -70,6 +70,7 @@ echo '{"status":"ok"}'
         "hooks": {
             "UserPromptSubmit": [{"hooks": [{"type": "command", "command": notify_abs}]}],
             "Stop": [{"hooks": [{"type": "command", "command": notify_abs}]}],
+            "SessionEnd": [{"hooks": [{"type": "command", "command": notify_abs}]}],
             "PostToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": notify_abs}]}],
             "PostToolUseFailure": [{"matcher": "*", "hooks": [{"type": "command", "command": notify_abs}]}],
             "PermissionRequest": [{"matcher": "*", "hooks": [{"type": "command", "command": notify_abs}]}]
@@ -112,9 +113,10 @@ struct HookParams {
 fn map_event_type(raw: &str) -> Option<AgentState> {
     match raw {
         // Claude Code
-        "UserPromptSubmit" | "PostToolUse" | "PostToolUseFailure" => Some(AgentState::Working),
+        "UserPromptSubmit" | "PostToolUse" => Some(AgentState::Working),
+        "PostToolUseFailure" => Some(AgentState::Working), // may also fire on interrupt but next event clarifies
         "PermissionRequest" => Some(AgentState::NeedsInput),
-        "Stop" => Some(AgentState::Idle),
+        "Stop" | "SessionEnd" => Some(AgentState::Idle),
 
         // Gemini CLI
         "BeforeAgent" | "BeforeTool" | "AfterTool" => Some(AgentState::Working),
