@@ -4105,17 +4105,38 @@ impl App {
         // 4. Otherwise, ensure the "main" room entry exists.
         let target_room_id = if let Some(rid) = self.room_selected {
             rid
-        } else if let Some(last) = self.state.ws_by_id(target_ws_id).and_then(|w| w.last_room_id) {
+        } else if let Some(last) = self.state.ws_by_id(target_ws_id).and_then(|w| {
+            // Only use last_room_id if the room entry still exists.
+            w.last_room_id.filter(|id| w.room_by_id(*id).is_some())
+        }) {
             self.room_selected = Some(last);
             last
         } else {
             let items = self.room_items_for_workspace(target_ws_id);
-            match items.first().and_then(|r| r.id) {
-                Some(id) => {
+            match items.first() {
+                Some(r) if r.id.is_some() => {
+                    let id = r.id.unwrap();
                     self.room_selected = Some(id);
                     id
                 }
+                Some(r) => {
+                    // Room exists in git but not in state — create the entry.
+                    let ws_name = match self.state.ws_by_id(target_ws_id) {
+                        Some(w) => w.name.clone(),
+                        None => return,
+                    };
+                    match humu::config::ensure_room_id_for_workspace(
+                        &mut self.state, &ws_name, &r.name,
+                    ) {
+                        Some(id) => {
+                            self.room_selected = Some(id);
+                            id
+                        }
+                        None => return,
+                    }
+                }
                 None => {
+                    // No rooms discovered at all — try creating "main" as fallback.
                     let ws_name = match self.state.ws_by_id(target_ws_id) {
                         Some(w) => w.name.clone(),
                         None => return,
