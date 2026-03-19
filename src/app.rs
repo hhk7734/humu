@@ -138,7 +138,7 @@ pub enum PopupState {
         focused_field: usize,
     },
     WorkspaceDelete {
-        /// field index 0=Confirm (yes/no)
+        /// field index 0=Confirm (yes/no), 1=Checkbox (delete dir from disk)
         fields: Vec<DialogField>,
         focused_field: usize,
         workspace_id: WorkspaceId,
@@ -1292,6 +1292,9 @@ impl App {
                         DialogField::Confirm { yes, .. } => {
                             *yes = !*yes;
                         }
+                        DialogField::Checkbox { checked, .. } => {
+                            *checked = !*checked;
+                        }
                         DialogField::TextInput { .. } => {}
                     }
                 }
@@ -1315,6 +1318,9 @@ impl App {
                         }
                         DialogField::Confirm { yes, .. } => {
                             *yes = !*yes;
+                        }
+                        DialogField::Checkbox { checked, .. } => {
+                            *checked = !*checked;
                         }
                         DialogField::TextInput { .. } => {}
                     }
@@ -1490,9 +1496,17 @@ impl App {
     }
 
     fn execute_workspace_delete(&mut self, fields: Vec<DialogField>, workspace_id: WorkspaceId) {
-        // Field 0: Confirm — also used as "remove from disk?" prompt
-        let remove_from_disk = match &fields[0] {
+        // Field 0: Confirm (yes/no)
+        let confirmed = match &fields[0] {
             DialogField::Confirm { yes, .. } => *yes,
+            _ => false,
+        };
+        if !confirmed {
+            return;
+        }
+        // Field 1: Checkbox — delete directory from disk
+        let remove_from_disk = match fields.get(1) {
+            Some(DialogField::Checkbox { checked, .. }) => *checked,
             _ => false,
         };
 
@@ -2894,10 +2908,16 @@ impl App {
                             Some(w) => w.name.clone(),
                             None => return,
                         };
-                        let fields = vec![DialogField::Confirm {
-                            message: format!("Delete workspace '{ws_name}'? Also remove from disk?"),
-                            yes: false,
-                        }];
+                        let fields = vec![
+                            DialogField::Confirm {
+                                message: format!("Delete workspace '{ws_name}'?"),
+                                yes: false,
+                            },
+                            DialogField::Checkbox {
+                                label: "Also delete directory from disk".to_string(),
+                                checked: false,
+                            },
+                        ];
                         self.popup = PopupState::WorkspaceDelete {
                             fields,
                             focused_field: 0,

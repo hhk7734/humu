@@ -21,6 +21,7 @@ pub enum DialogField {
     TextInput { label: String, value: String },
     Select { label: String, options: Vec<String>, selected: usize },
     Confirm { message: String, yes: bool },
+    Checkbox { label: String, checked: bool },
 }
 
 impl DialogField {
@@ -29,6 +30,7 @@ impl DialogField {
             DialogField::TextInput { label, .. } => label,
             DialogField::Select { label, .. } => label,
             DialogField::Confirm { message, .. } => message,
+            DialogField::Checkbox { label, .. } => label,
         }
     }
 }
@@ -197,6 +199,19 @@ impl Widget for Dialog<'_> {
                     };
                     buf.set_string(inner.x, row, "[Yes]", yes_style);
                     buf.set_string(inner.x + 6, row, "[No]", no_style);
+                    row += 1;
+                }
+                DialogField::Checkbox { label, checked } => {
+                    let marker = if *checked { "[x]" } else { "[ ]" };
+                    let text = format!("{} {}", marker, label);
+                    let style = if focused {
+                        Style::default()
+                            .fg(self.palette.accent_orange)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(self.palette.fg_secondary)
+                    };
+                    buf.set_string(inner.x, row, &text, style);
                     row += 1;
                 }
             }
