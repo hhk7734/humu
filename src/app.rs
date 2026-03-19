@@ -682,6 +682,7 @@ impl App {
                     PresetAction::SplitDown => self.split_pane_with_preset(&chosen, false),
                     PresetAction::SplitRight => self.split_pane_with_preset(&chosen, true),
                 }
+                self.mode = Mode::Terminal;
             }
             KeyCode::Esc => {
                 self.popup = PopupState::None;
@@ -2826,6 +2827,7 @@ impl App {
                 PresetAction::SplitDown => self.split_pane_with_preset("shell", false),
                 PresetAction::SplitRight => self.split_pane_with_preset("shell", true),
             }
+            self.mode = Mode::Terminal;
             return;
         }
         self.popup = PopupState::PresetSelector { presets, selected: 0, action };
