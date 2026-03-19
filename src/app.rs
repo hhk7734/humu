@@ -607,8 +607,13 @@ impl App {
                     KeyCode::Enter => {
                         if !value.is_empty() {
                             self.explorer_create_entry(is_dir, &value);
+                            // Don't clear popup if show_error set an ErrorDialog
+                            if matches!(self.popup, PopupState::ExplorerNewEntry { .. }) {
+                                self.popup = PopupState::None;
+                            }
+                        } else {
+                            self.popup = PopupState::None;
                         }
-                        self.popup = PopupState::None;
                     }
                     KeyCode::Esc => {
                         self.popup = PopupState::None;
@@ -4013,6 +4018,21 @@ impl App {
 
     /// Create a new file or directory in the explorer's current directory context.
     fn explorer_create_entry(&mut self, is_dir: bool, name: &str) {
+        // Validate name
+        let name = name.trim();
+        if name.is_empty() {
+            self.show_error("Name cannot be empty");
+            return;
+        }
+        if name.contains('/') || name.contains('\\') {
+            self.show_error("Name cannot contain path separators");
+            return;
+        }
+        if name == "." || name == ".." {
+            self.show_error("Invalid name");
+            return;
+        }
+
         let parent = if let Some(entry) = self.explorer_state.selected_entry() {
             if entry.kind == humu::explorer::FileKind::Directory {
                 entry.path.clone()
@@ -4023,18 +4043,30 @@ impl App {
             self.explorer_state.root.clone()
         };
         let target = parent.join(name);
+
+        // Check if already exists
+        if target.exists() {
+            self.show_error(format!("\"{}\" already exists", name));
+            return;
+        }
+
         let result = if is_dir {
             std::fs::create_dir_all(&target)
         } else {
-            if let Some(p) = target.parent() {
-                let _ = std::fs::create_dir_all(p);
-            }
             std::fs::File::create(&target).map(|_| ())
         };
         if let Err(e) = result {
             self.show_error(format!("Failed to create: {e}"));
         } else {
+            // Expand the parent directory so the new entry is visible.
+            self.explorer_state.expanded_dirs.insert(parent);
             self.explorer_state.scan();
+            // Select the newly created entry.
+            if let Some(idx) = self.explorer_state.entries.iter().position(|e| e.path == target) {
+                self.explorer_state.selected = idx;
+                let viewport = self.panel_rects.explorer.height.saturating_sub(2) as usize;
+                self.explorer_state.scroll_to_visible(viewport);
+            }
         }
     }
 
