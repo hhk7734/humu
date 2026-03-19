@@ -48,6 +48,7 @@ pub enum FocusedPanel {
 /// Cached room info with git stats, refreshed periodically.
 struct CachedRoomInfo {
     branch: String,
+    path: PathBuf,
     git_status: RoomGitStatus,
 }
 
@@ -2939,13 +2940,21 @@ impl App {
     ///
     /// Returns `None` when no workspace or room is active.  The default room
     /// (the workspace repo itself) maps to the workspace path; worktree rooms
-    /// map to `~/.humu/worktrees/<workspace>/<room>`.
+    /// map to their actual git worktree path (looked up from cache).
     fn current_room_path(&self) -> Option<PathBuf> {
         let ws_id = self.state.active_workspace_id?;
         let room_id = self.state.active_room_id?;
         let ws = self.state.ws_by_id(ws_id)?;
         let room = ws.room_by_id(room_id)?;
 
+        // Look up the actual worktree path from the cache.
+        if let Some(cached) = self.room_cache.get(&ws_id) {
+            if let Some(entry) = cached.iter().find(|r| r.branch == room.name) {
+                return Some(entry.path.clone());
+            }
+        }
+
+        // Fallback: try humu-managed worktree path, then workspace root.
         let worktree_path = humu_dir()
             .join("worktrees")
             .join(&ws.name)
@@ -2954,7 +2963,6 @@ impl App {
         if worktree_path.exists() {
             Some(worktree_path)
         } else {
-            // Default room: the workspace repo directory itself.
             Some(ws.path.clone())
         }
     }
@@ -3677,6 +3685,7 @@ impl App {
                         let git_status = mgr.status(&r.path);
                         CachedRoomInfo {
                             branch: r.branch,
+                            path: r.path,
                             git_status,
                         }
                     })

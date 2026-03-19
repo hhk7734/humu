@@ -63,11 +63,9 @@ impl RoomManager {
             } else if let Some(branch_ref) = line.strip_prefix("branch refs/heads/") {
                 current_branch = Some(branch_ref.to_string());
             } else if line.is_empty() {
-                // For detached HEAD worktrees, fall back to short SHA
-                if current_branch.is_none()
-                    && let Some(ref sha) = current_head
-                {
-                    current_branch = Some(sha[..sha.len().min(7)].to_string());
+                if current_branch.is_none() {
+                    current_branch =
+                        detached_head_name(current_path.as_ref(), current_head.as_ref());
                 }
                 if let (Some(path), Some(branch)) = (current_path.take(), current_branch.take()) {
                     // Skip the main worktree (already added as default)
@@ -85,10 +83,8 @@ impl RoomManager {
         }
 
         // Handle last entry if no trailing newline
-        if current_branch.is_none()
-            && let Some(ref sha) = current_head
-        {
-            current_branch = Some(sha[..sha.len().min(7)].to_string());
+        if current_branch.is_none() {
+            current_branch = detached_head_name(current_path.as_ref(), current_head.as_ref());
         }
         if let (Some(path), Some(branch)) = (current_path, current_branch) {
             let canon_wt = std::fs::canonicalize(&path).unwrap_or(path.clone());
@@ -249,6 +245,13 @@ impl RoomManager {
             bail!("cannot determine branch for repo: {}", repo_path.display())
         }
     }
+}
+
+/// For detached HEAD worktrees, derive a name from the directory; fall back to short SHA.
+fn detached_head_name(path: Option<&PathBuf>, head: Option<&String>) -> Option<String> {
+    path.and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .or_else(|| head.map(|sha| sha[..sha.len().min(7)].to_string()))
 }
 
 /// Parse `git diff --shortstat` output like " 3 files changed, 10 insertions(+), 5 deletions(-)"
