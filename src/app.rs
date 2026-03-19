@@ -37,6 +37,7 @@ const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦
 const PRESET_CLAUDE: &str = "claude";
 const PRESET_GEMINI: &str = "gemini";
 const PRESET_CODEX: &str = "codex";
+const DEFAULT_ROOM_NAME: &str = "local";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusedPanel {
@@ -47,7 +48,8 @@ pub enum FocusedPanel {
 
 /// Cached room info with git stats, refreshed periodically.
 struct CachedRoomInfo {
-    branch: String,
+    room_id: Option<RoomId>,
+    name: String,
     path: PathBuf,
     git_status: RoomGitStatus,
 }
@@ -56,6 +58,7 @@ struct CachedRoomInfo {
 struct CachedRoomItem {
     id: Option<RoomId>,
     name: String,
+    path: PathBuf,
     active: bool,
     git_status: RoomGitStatus,
 }
@@ -138,7 +141,7 @@ pub enum PopupState {
         /// field index 0=Confirm (yes/no)
         fields: Vec<DialogField>,
         focused_field: usize,
-        workspace_name: String,
+        workspace_id: WorkspaceId,
     },
     RoomDelete {
         /// field index 0=Confirm (yes/no)
@@ -1365,8 +1368,8 @@ impl App {
             PopupState::RoomCreate { fields, .. } => {
                 self.execute_room_create(fields);
             }
-            PopupState::WorkspaceDelete { fields, workspace_name, .. } => {
-                self.execute_workspace_delete(fields, workspace_name);
+            PopupState::WorkspaceDelete { fields, workspace_id, .. } => {
+                self.execute_workspace_delete(fields, workspace_id);
             }
             PopupState::RoomDelete { fields, branch, .. } => {
                 self.execute_room_delete(fields, branch);
@@ -1431,15 +1434,11 @@ impl App {
             }
         };
         match result {
-            Ok(name) => {
+            Ok(ws_id) => {
                 // Auto-select the new workspace and its default room.
-                if let Some(ws) = self.state.ws_by_name(&name) {
-                    self.workspace_selected = Some(ws.id);
-                    self.room_selected = None;
-                    self.switch_to_selected_room();
-                } else {
-                    self.save_state();
-                }
+                self.workspace_selected = Some(ws_id);
+                self.room_selected = None;
+                self.switch_to_selected_room();
             }
             Err(e) => {
                 self.show_error(e.to_string());
@@ -1463,24 +1462,26 @@ impl App {
             return;
         }
 
-        let ws_name = match self.active_workspace_name() {
-            Some(w) => w,
+        let ws_id = match self.state.active_workspace_id {
+            Some(id) => id,
             None => {
                 self.show_error("No active workspace");
                 return;
             }
         };
-        let ws_path = match self.state.ws_by_name(&ws_name) {
-            Some(e) => e.path.clone(),
+        let ws = match self.state.ws_by_id(ws_id) {
+            Some(w) => w,
             None => {
                 self.show_error("Workspace not found");
                 return;
             }
         };
+        let ws_path = ws.path.clone();
+        let ws_id_str = ws_id.to_string();
         let base = if base_branch.is_empty() { "HEAD" } else { &base_branch };
         let worktree_path = humu_dir()
             .join("worktrees")
-            .join(&ws_name)
+            .join(&ws_id_str)
             .join(&branch);
         let mgr = RoomManager::new();
         if let Err(e) = mgr.create(&ws_path, &branch, base, &worktree_path) {
@@ -1488,21 +1489,14 @@ impl App {
         }
     }
 
-    fn execute_workspace_delete(&mut self, fields: Vec<DialogField>, workspace_name: String) {
+    fn execute_workspace_delete(&mut self, fields: Vec<DialogField>, workspace_id: WorkspaceId) {
         // Field 0: Confirm — also used as "remove from disk?" prompt
         let remove_from_disk = match &fields[0] {
             DialogField::Confirm { yes, .. } => *yes,
             _ => false,
         };
 
-        // Capture the workspace ID before deletion so we can clean up
-        // suspended rooms and detect if the active workspace is being deleted.
-        let ws_id = self
-            .state
-            .ws_by_name(&workspace_name)
-            .map(|e| e.id);
-
-        let was_active = ws_id == self.state.active_workspace_id;
+        let was_active = Some(workspace_id) == self.state.active_workspace_id;
 
         // If the active workspace is being deleted and its panes are live,
         // clear them first (they'll be invalid after deletion).
@@ -1515,13 +1509,11 @@ impl App {
         }
 
         let mgr = WorkspaceManager::new();
-        match mgr.delete(&mut self.state, &workspace_name, remove_from_disk) {
+        match mgr.delete(&mut self.state, workspace_id, remove_from_disk) {
             Ok(()) => {
                 // Remove all suspended rooms belonging to the deleted workspace.
-                if let Some(ws_id) = ws_id {
-                    self.suspended_rooms
-                        .retain(|(wid, _), _| *wid != ws_id);
-                }
+                self.suspended_rooms
+                    .retain(|(wid, _), _| *wid != workspace_id);
 
                 // Adjust selection if needed.
                 if self.state.workspaces.is_empty() {
@@ -1553,23 +1545,24 @@ impl App {
         if !confirmed {
             return;
         }
-        let ws_name = match self.active_workspace_name() {
-            Some(w) => w,
+        let ws_id = match self.state.active_workspace_id {
+            Some(id) => id,
             None => {
                 self.show_error("No active workspace");
                 return;
             }
         };
-        let ws_path = match self.state.ws_by_name(&ws_name) {
-            Some(e) => e.path.clone(),
+        let ws = match self.state.ws_by_id(ws_id) {
+            Some(w) => w,
             None => {
                 self.show_error("Workspace not found");
                 return;
             }
         };
+        let ws_path = ws.path.clone();
         let worktree_path = humu_dir()
             .join("worktrees")
-            .join(&ws_name)
+            .join(ws_id.to_string())
             .join(&branch);
         let mgr = RoomManager::new();
         if let Err(e) = mgr.delete(&ws_path, &branch, &worktree_path) {
@@ -2908,7 +2901,7 @@ impl App {
                         self.popup = PopupState::WorkspaceDelete {
                             fields,
                             focused_field: 0,
-                            workspace_name: ws_name,
+                            workspace_id: item.workspace_id,
                         };
                     }
                     TreeItemKind::Room => {
@@ -2945,19 +2938,18 @@ impl App {
         let ws_id = self.state.active_workspace_id?;
         let room_id = self.state.active_room_id?;
         let ws = self.state.ws_by_id(ws_id)?;
-        let room = ws.room_by_id(room_id)?;
-
         // Look up the actual worktree path from the cache.
         if let Some(cached) = self.room_cache.get(&ws_id) {
-            if let Some(entry) = cached.iter().find(|r| r.branch == room.name) {
+            if let Some(entry) = cached.iter().find(|r| r.room_id == Some(room_id)) {
                 return Some(entry.path.clone());
             }
         }
 
         // Fallback: try humu-managed worktree path, then workspace root.
+        let room = ws.room_by_id(room_id)?;
         let worktree_path = humu_dir()
             .join("worktrees")
-            .join(&ws.name)
+            .join(ws_id.to_string())
             .join(&room.name);
 
         if worktree_path.exists() {
@@ -3405,20 +3397,20 @@ impl App {
         // Prune stale room entries for every workspace before restoring selection.
         // Discover actual rooms from git and remove any persisted entries that no
         // longer correspond to a live worktree.
-        let ws_info: Vec<(String, PathBuf)> = self
+        let ws_info: Vec<(WorkspaceId, PathBuf)> = self
             .state
             .workspaces
             .iter()
-            .map(|w| (w.name.clone(), w.path.clone()))
+            .map(|w| (w.id, w.path.clone()))
             .collect();
-        for (ws_name, ws_path) in ws_info {
+        for (ws_id, ws_path) in ws_info {
             let mgr = RoomManager::new();
             if let Ok(rooms) = mgr.list(&ws_path) {
-                let discovered: std::collections::HashSet<String> =
-                    rooms.into_iter().map(|r| r.branch).collect();
+                let discovered: std::collections::HashSet<PathBuf> =
+                    rooms.into_iter().map(|r| r.path).collect();
                 humu::config::prune_stale_rooms_for_workspace(
                     &mut self.state,
-                    &ws_name,
+                    ws_id,
                     &discovered,
                 );
             }
@@ -3682,9 +3674,17 @@ impl App {
                 let cached: Vec<CachedRoomInfo> = rooms
                     .into_iter()
                     .map(|r| {
+                        let existing = ws.room_by_path(&r.path);
+                        let room_id = existing.map(|e| e.id);
+                        let name = existing
+                            .map(|e| e.name.clone())
+                            .unwrap_or_else(|| {
+                                if r.is_default { DEFAULT_ROOM_NAME.to_string() } else { r.branch }
+                            });
                         let git_status = mgr.status(&r.path);
                         CachedRoomInfo {
-                            branch: r.branch,
+                            room_id,
+                            name,
                             path: r.path,
                             git_status,
                         }
@@ -3698,22 +3698,19 @@ impl App {
     /// List rooms for a specific workspace by ID, with agent activity flags.
     /// Uses the cached room list -- no git subprocesses.
     fn room_items_for_workspace(&self, ws_id: WorkspaceId) -> Vec<CachedRoomItem> {
-        let ws = match self.state.ws_by_id(ws_id) {
-            Some(ws) => ws,
-            None => return vec![],
-        };
         let empty = Vec::new();
         let cache = self.room_cache.get(&ws_id).unwrap_or(&empty);
         cache
             .iter()
             .map(|r| {
-                let room_id = ws.room_by_name(&r.branch).map(|e| e.id);
-                let active = room_id
+                let active = r
+                    .room_id
                     .map(|rid| self.has_active_agent(&self.pane_ids_for_room(ws_id, rid)))
                     .unwrap_or(false);
                 CachedRoomItem {
-                    id: room_id,
-                    name: r.branch.clone(),
+                    id: r.room_id,
+                    name: r.name.clone(),
+                    path: r.path.clone(),
                     active,
                     git_status: r.git_status,
                 }
@@ -4153,12 +4150,8 @@ impl App {
                 }
                 Some(r) => {
                     // Room exists in git but not in state — create the entry.
-                    let ws_name = match self.state.ws_by_id(target_ws_id) {
-                        Some(w) => w.name.clone(),
-                        None => return,
-                    };
-                    match humu::config::ensure_room_id_for_workspace(
-                        &mut self.state, &ws_name, &r.name,
+                    match humu::config::create_room_for_workspace(
+                        &mut self.state, target_ws_id, &r.name, r.path.clone(),
                     ) {
                         Some(id) => {
                             self.room_selected = Some(id);
@@ -4168,13 +4161,13 @@ impl App {
                     }
                 }
                 None => {
-                    // No rooms discovered at all — try creating "main" as fallback.
-                    let ws_name = match self.state.ws_by_id(target_ws_id) {
-                        Some(w) => w.name.clone(),
+                    // No rooms discovered — create default room at workspace root.
+                    let ws_path = match self.state.ws_by_id(target_ws_id) {
+                        Some(w) => w.path.clone(),
                         None => return,
                     };
-                    match humu::config::ensure_room_id_for_workspace(
-                        &mut self.state, &ws_name, "main",
+                    match humu::config::create_room_for_workspace(
+                        &mut self.state, target_ws_id, DEFAULT_ROOM_NAME, ws_path,
                     ) {
                         Some(id) => {
                             self.room_selected = Some(id);
@@ -4214,14 +4207,6 @@ impl App {
         self.rebuild_workspace_tree();
 
         self.save_state();
-    }
-
-    // ── ID ↔ Name bridge helpers (Task 3 shims; superseded by Task 5) ─────────
-
-    /// Return the name of the active workspace, looked up by ID.
-    fn active_workspace_name(&self) -> Option<String> {
-        let id = self.state.active_workspace_id?;
-        self.state.ws_by_id(id).map(|w| w.name.clone())
     }
 
 }

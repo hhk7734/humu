@@ -230,6 +230,9 @@ pub struct TabLayout {
 pub struct RoomEntry {
     pub name: String,
     pub id: RoomId,
+    /// Actual worktree path (repo root for default room).
+    #[serde(default)]
+    pub path: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_tab: Option<usize>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -250,12 +253,8 @@ pub struct WorkspaceEntry {
 }
 
 impl WorkspaceEntry {
-    pub fn room_by_name(&self, name: &str) -> Option<&RoomEntry> {
-        self.rooms.iter().find(|r| r.name == name)
-    }
-
-    pub fn room_by_name_mut(&mut self, name: &str) -> Option<&mut RoomEntry> {
-        self.rooms.iter_mut().find(|r| r.name == name)
+    pub fn room_by_path(&self, path: &Path) -> Option<&RoomEntry> {
+        self.rooms.iter().find(|r| r.path == path)
     }
 
     pub fn room_by_id(&self, id: RoomId) -> Option<&RoomEntry> {
@@ -293,26 +292,12 @@ where
 }
 
 impl HumuState {
-    pub fn ws_by_name(&self, name: &str) -> Option<&WorkspaceEntry> {
-        self.workspaces.iter().find(|w| w.name == name)
-    }
-
-    pub fn ws_by_name_mut(&mut self, name: &str) -> Option<&mut WorkspaceEntry> {
-        self.workspaces.iter_mut().find(|w| w.name == name)
-    }
-
     pub fn ws_by_id(&self, id: WorkspaceId) -> Option<&WorkspaceEntry> {
         self.workspaces.iter().find(|w| w.id == id)
     }
 
     pub fn ws_by_id_mut(&mut self, id: WorkspaceId) -> Option<&mut WorkspaceEntry> {
         self.workspaces.iter_mut().find(|w| w.id == id)
-    }
-
-    pub fn ws_names_sorted(&self) -> Vec<String> {
-        let mut names: Vec<_> = self.workspaces.iter().map(|w| w.name.clone()).collect();
-        names.sort();
-        names
     }
 
     pub fn load(path: &Path) -> Result<Self> {
@@ -330,39 +315,33 @@ impl HumuState {
 
 // ── Room ID helpers ────────────────────────────────────────────────────────────
 
-/// Returns the `RoomId` for `room_name` within the named workspace, creating a
-/// new entry if one does not already exist (lazy assignment).
-///
-/// Returns `None` if `workspace_name` is not found in `state`.
-pub fn ensure_room_id_for_workspace(
+/// Creates a new room entry in the workspace. Returns the new `RoomId`,
+/// or `None` if `workspace_id` is not found in `state`.
+pub fn create_room_for_workspace(
     state: &mut HumuState,
-    workspace_name: &str,
+    workspace_id: WorkspaceId,
     room_name: &str,
+    room_path: PathBuf,
 ) -> Option<RoomId> {
-    let ws = state.ws_by_name_mut(workspace_name)?;
-    if let Some(entry) = ws.room_by_name(room_name) {
-        Some(entry.id)
-    } else {
-        let id = RoomId::new();
-        ws.rooms.push(RoomEntry {
-            name: room_name.to_string(),
-            id,
-            active_tab: None,
-            tabs: vec![],
-        });
-        Some(id)
-    }
+    let ws = state.ws_by_id_mut(workspace_id)?;
+    let id = RoomId::new();
+    ws.rooms.push(RoomEntry {
+        name: room_name.to_string(),
+        id,
+        path: room_path,
+        active_tab: None,
+        tabs: vec![],
+    });
+    Some(id)
 }
 
-/// Removes any room entries from the named workspace whose names are not present
-/// in `discovered_rooms`. Silently does nothing if `workspace_name` is not
-/// found in `state`.
+/// Removes room entries whose paths don't match any discovered worktree.
 pub fn prune_stale_rooms_for_workspace(
     state: &mut HumuState,
-    workspace_name: &str,
-    discovered_rooms: &HashSet<String>,
+    workspace_id: WorkspaceId,
+    discovered_paths: &HashSet<PathBuf>,
 ) {
-    if let Some(ws) = state.ws_by_name_mut(workspace_name) {
-        ws.rooms.retain(|r| discovered_rooms.contains(&r.name));
+    if let Some(ws) = state.ws_by_id_mut(workspace_id) {
+        ws.rooms.retain(|r| discovered_paths.contains(&r.path));
     }
 }

@@ -13,20 +13,25 @@ impl WorkspaceManager {
     }
 
     /// Register an existing git repo as a workspace.
-    pub fn register(&self, state: &mut HumuState, path: &Path) -> Result<String> {
+    pub fn register(&self, state: &mut HumuState, path: &Path) -> Result<WorkspaceId> {
         let path = std::fs::canonicalize(path)?;
         if !path.join(".git").exists() {
             bail!("not a git repository: {}", path.display());
         }
-        let name = self.unique_name(state, &path);
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let id = WorkspaceId::new();
         state.workspaces.push(WorkspaceEntry {
-            name: name.clone(),
-            id: WorkspaceId::new(),
+            name,
+            id,
             path,
             last_room_id: None,
             rooms: vec![],
         });
-        Ok(name)
+        Ok(id)
     }
 
     /// Clone a remote repo and register it.
@@ -35,7 +40,7 @@ impl WorkspaceManager {
         state: &mut HumuState,
         url: &str,
         target_dir: &Path,
-    ) -> Result<String> {
+    ) -> Result<WorkspaceId> {
         let output = Command::new("git")
             .arg("clone")
             .arg(url)
@@ -51,7 +56,7 @@ impl WorkspaceManager {
     }
 
     /// Initialize a new git repo and register it.
-    pub fn init(&self, state: &mut HumuState, path: &Path) -> Result<String> {
+    pub fn init(&self, state: &mut HumuState, path: &Path) -> Result<WorkspaceId> {
         if path.join(".git").exists() {
             bail!("directory is already a git repository: {}", path.display());
         }
@@ -73,19 +78,19 @@ impl WorkspaceManager {
     pub fn delete(
         &self,
         state: &mut HumuState,
-        name: &str,
+        id: WorkspaceId,
         remove_from_disk: bool,
     ) -> Result<()> {
         let idx = state
             .workspaces
             .iter()
-            .position(|w| w.name == name)
-            .ok_or_else(|| anyhow::anyhow!("workspace not found: {name}"))?;
+            .position(|w| w.id == id)
+            .ok_or_else(|| anyhow::anyhow!("workspace not found: {id}"))?;
         let entry = state.workspaces.remove(idx);
 
         let worktrees_dir = crate::config::humu_dir()
             .join("worktrees")
-            .join(name);
+            .join(entry.id.to_string());
         if worktrees_dir.exists() {
             std::fs::remove_dir_all(&worktrees_dir)?;
         }
@@ -103,30 +108,6 @@ impl WorkspaceManager {
         Ok(())
     }
 
-    /// List all workspace names.
-    pub fn list(&self, state: &HumuState) -> Vec<String> {
-        state.ws_names_sorted()
-    }
 
-    /// Derive a unique workspace name from the directory name.
-    fn unique_name(&self, state: &HumuState, path: &Path) -> String {
-        let base = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
 
-        if state.ws_by_name(&base).is_none() {
-            return base;
-        }
-
-        let mut suffix = 2;
-        loop {
-            let candidate = format!("{base}-{suffix}");
-            if state.ws_by_name(&candidate).is_none() {
-                return candidate;
-            }
-            suffix += 1;
-        }
-    }
 }
