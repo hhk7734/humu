@@ -3572,14 +3572,35 @@ impl App {
         let mut ws_list: Vec<_> = self.state.workspaces.iter().collect();
         ws_list.sort_by(|a, b| a.name.cmp(&b.name));
 
+        // Compute display names: add parent dir when names collide.
+        let mut name_count: HashMap<&str, usize> = HashMap::new();
+        for ws in &ws_list {
+            *name_count.entry(&ws.name).or_insert(0) += 1;
+        }
+        let display_names: Vec<String> = ws_list
+            .iter()
+            .map(|ws| {
+                if name_count.get(ws.name.as_str()).copied().unwrap_or(0) > 1 {
+                    // Show parent/name to disambiguate
+                    ws.path
+                        .parent()
+                        .and_then(|p| p.file_name())
+                        .map(|parent| format!("{}/{}", parent.to_string_lossy(), ws.name))
+                        .unwrap_or_else(|| ws.name.clone())
+                } else {
+                    ws.name.clone()
+                }
+            })
+            .collect();
+
         let mut items = Vec::new();
 
-        for ws in ws_list {
+        for (i, ws) in ws_list.iter().enumerate() {
             let ws_active = self.has_active_agent(&self.pane_ids_for_workspace(ws.id));
 
             items.push(WorkspaceTreeItem {
                 kind: TreeItemKind::Workspace,
-                name: ws.name.clone(),
+                name: display_names[i].clone(),
                 active: ws_active,
                 workspace_id: ws.id,
                 room_id: None,
