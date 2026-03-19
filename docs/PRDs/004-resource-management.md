@@ -14,14 +14,14 @@ Three modes:
 2. **Existing repo**: User provides a path to an existing local git directory.
 3. **New project**: User provides a target directory → `git init`.
 
-Workspace name is derived from the repo directory name. Name collisions get a numeric suffix (e.g., `infra-2`). The path field supports fuzzy filesystem autocomplete with cross-segment matching (e.g., `~/githhk` → `~/github/hhk7734/`).
+Workspace name is derived from the repo directory name. If multiple workspaces share the same name (e.g., two repos named `vllm`), humu disambiguates them by displaying them as `parent/name` (e.g., `distributed/vllm`, `moreh-dev/vllm`) in the workspace panel. The path field supports fuzzy filesystem autocomplete with cross-segment matching (e.g., `~/githhk` → `~/github/hhk7734/`).
 
 On creation, humu auto-selects the new workspace and its default room (main branch), so the terminal is immediately usable.
 
 ### Select
 
 - Click a workspace in `WorkspacePanel` (enters Workspace mode) or use `Ctrl+w`. The last-selected room for that workspace is restored.
-- On startup, the last active workspace and room are restored.
+- On startup, the last active workspace and room are restored. If room entries were pruned (e.g., branch was deleted), the active room is validated and falls back to an existing branch or "main".
 - **State preservation**: Switching workspaces suspends the current room's live PTY panes. The target workspace's last-active room is restored with live panes if previously suspended.
 
 ### Delete
@@ -41,6 +41,7 @@ A working context within a workspace.
 
 - Represents the repository's main working directory.
 - Always exists when a workspace exists. Cannot be created or deleted manually.
+- For detached HEAD states, the room name uses the worktree directory name instead of the commit SHA.
 
 ### Create (Additional Room)
 
@@ -121,4 +122,5 @@ workspaces:
     path: /home/user/github/infra
 ```
 
-Workspaces and rooms are lists with `name` and `id` fields. Room layout (tabs, panes) is stored directly in the room entry. IDs are UUIDs assigned lazily on first discovery. On startup, stale room entries (worktrees that no longer exist) are pruned.
+Workspaces and rooms are lists with `name` and `id` fields. Room layout (tabs, panes) is stored directly in the room entry. IDs are UUIDs assigned lazily on first discovery. On startup, stale room entries (worktrees that no longer exist) are pruned. If a room exists in git but not in the state, it is created using the git-discovered branch name.
+
