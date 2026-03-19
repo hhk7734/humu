@@ -33,6 +33,11 @@ use tokio::runtime::Runtime;
 
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
+// Built-in preset names for AI agent integrations.
+const PRESET_CLAUDE: &str = "claude";
+const PRESET_GEMINI: &str = "gemini";
+const PRESET_CODEX: &str = "codex";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusedPanel {
     Workspace,
@@ -41,11 +46,8 @@ pub enum FocusedPanel {
 }
 
 /// Cached room info with git stats, refreshed periodically.
-#[allow(dead_code)]
 struct CachedRoomInfo {
     branch: String,
-    path: std::path::PathBuf,
-    is_default: bool,
     git_status: RoomGitStatus,
 }
 
@@ -53,8 +55,6 @@ struct CachedRoomInfo {
 struct CachedRoomItem {
     id: Option<RoomId>,
     name: String,
-    #[allow(dead_code)]
-    is_default: bool,
     active: bool,
     git_status: RoomGitStatus,
 }
@@ -223,6 +223,8 @@ pub struct App {
     pub explorer_state: humu::explorer::ExplorerState,
     /// Cached room list + git stats per workspace, refreshed periodically (~3s).
     room_cache: HashMap<WorkspaceId, Vec<CachedRoomInfo>>,
+    /// Cached flattened workspace tree, rebuilt alongside room_cache.
+    workspace_tree_cache: Vec<WorkspaceTreeItem>,
     /// Cursor position in the flat workspace tree (for keyboard navigation).
     selected_tree_index: usize,
     /// When workspace mode was entered (for auto-return to terminal after timeout).
@@ -341,6 +343,7 @@ impl App {
             search_state: None,
             explorer_state: humu::explorer::ExplorerState::new(std::path::PathBuf::new()),
             room_cache: HashMap::new(),
+            workspace_tree_cache: Vec::new(),
             selected_tree_index: 0,
             workspace_mode_entered: None,
             state_path: humu_dir().join("state.yaml"),
@@ -378,6 +381,8 @@ impl App {
         let mut terminal = Terminal::new(backend)?;
 
         self.restore_selection();
+        self.refresh_room_cache();
+        self.rebuild_workspace_tree();
 
         // Initialize explorer with the active room's directory.
         if let Some(path) = self.current_room_path() {
@@ -432,6 +437,7 @@ impl App {
                     self.explorer_state.scan();
                 }
                 self.refresh_room_cache();
+                self.rebuild_workspace_tree();
             }
 
             terminal.draw(|frame| self.render(frame))?;
@@ -1596,7 +1602,7 @@ impl App {
         let spinner_frame = SPINNER_FRAMES[self.spin_tick / 2 % SPINNER_FRAMES.len()];
 
         // Workspace tree panel (workspaces + rooms)
-        let tree_items = self.build_workspace_tree();
+        let tree_items = self.workspace_tree_cache.clone();
         let ws_widget = WorkspacePanel::new(&tree_items, &self.palette, &self.ui_config)
             .selected(Some(self.selected_tree_index))
             .focus(self.focus == FocusedPanel::Workspace)
@@ -2458,7 +2464,7 @@ impl App {
         if self.panel_rects.workspace.contains(pos) {
             self.handle_action(Action::EnterMode(Mode::Workspace));
             let visual_row = y.saturating_sub(self.panel_rects.workspace.y + 1) as usize;
-            let tree = self.build_workspace_tree();
+            let tree = self.workspace_tree_cache.clone();
             if let Some(idx) = Self::visual_row_to_tree_index(&tree, visual_row) {
                 self.selected_tree_index = idx;
                 let item = &tree[idx];
@@ -2878,7 +2884,7 @@ impl App {
     fn show_delete_dialog(&mut self) {
         match self.focus {
             FocusedPanel::Workspace => {
-                let tree = self.build_workspace_tree();
+                let tree = self.workspace_tree_cache.clone();
                 if self.selected_tree_index >= tree.len() { return; }
                 let item = &tree[self.selected_tree_index];
                 match &item.kind {
@@ -2973,7 +2979,7 @@ impl App {
         let id = PaneId::new();
         let mut envs: Vec<(String, String)> = vec![];
 
-        if preset_name == "claude" {
+        if preset_name == PRESET_CLAUDE {
             let settings_path = humu_dir().join("hooks/claude-settings.json");
             extra_args.push("--settings".to_string());
             extra_args.push(settings_path.to_string_lossy().into_owned());
@@ -2982,7 +2988,7 @@ impl App {
                 extra_args.push("--resume".to_string());
                 extra_args.push(sid);
             }
-        } else if preset_name == "gemini" {
+        } else if preset_name == PRESET_GEMINI {
             let settings_path = humu_dir().join("hooks/gemini-settings.json");
             // Gemini CLI uses env var for custom settings path
             envs.push((
@@ -2994,14 +3000,14 @@ impl App {
                 extra_args.push("--resume".to_string());
                 extra_args.push(sid);
             }
-        } else if preset_name == "codex" {
+        } else if preset_name == PRESET_CODEX {
             if let Some(sid) = session_id {
                 extra_args.push("resume".to_string());
                 extra_args.push(sid);
             }
         }
 
-        if preset_name == "claude" || preset_name == "gemini" {
+        if preset_name == PRESET_CLAUDE || preset_name == PRESET_GEMINI {
             if let Some(port) = self.hook_port {
                 envs.push(("HUMU_PORT".to_string(), port.to_string()));
             }
@@ -3033,7 +3039,7 @@ impl App {
                 },
             );
         }
-        if preset_name == "codex"
+        if preset_name == PRESET_CODEX
             && let Some(cwd) = cwd
         {
             self.codex_tracker
@@ -3331,7 +3337,7 @@ impl App {
     fn navigate(&mut self, delta: i32) {
         match self.focus {
             FocusedPanel::Workspace => {
-                let tree = self.build_workspace_tree();
+                let tree = self.workspace_tree_cache.clone();
                 if tree.is_empty() { return; }
                 let current = self.selected_tree_index as i32;
                 let next = (current + delta).clamp(0, tree.len() as i32 - 1) as usize;
@@ -3351,7 +3357,7 @@ impl App {
     fn select_current(&mut self) {
         match self.focus {
             FocusedPanel::Workspace => {
-                let tree = self.build_workspace_tree();
+                let tree = self.workspace_tree_cache.clone();
                 if self.selected_tree_index >= tree.len() { return; }
                 let item = tree[self.selected_tree_index].clone();
                 match &item.kind {
@@ -3556,7 +3562,8 @@ impl App {
     /// Build a flattened workspace tree for rendering. Workspaces are sorted
     /// alphabetically. Expanded workspaces show their rooms as children. The
     /// active workspace is always expanded.
-    fn build_workspace_tree(&self) -> Vec<WorkspaceTreeItem> {
+    /// Rebuild the cached workspace tree from current state.
+    fn rebuild_workspace_tree(&mut self) {
         let mut ws_list: Vec<_> = self.state.workspaces.iter().collect();
         ws_list.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -3587,7 +3594,7 @@ impl App {
             }
         }
 
-        items
+        self.workspace_tree_cache = items;
     }
 
     /// Map a visual row in the workspace panel to a tree item index.
@@ -3642,8 +3649,6 @@ impl App {
                         let git_status = mgr.status(&r.path);
                         CachedRoomInfo {
                             branch: r.branch,
-                            path: r.path,
-                            is_default: r.is_default,
                             git_status,
                         }
                     })
@@ -3672,7 +3677,6 @@ impl App {
                 CachedRoomItem {
                     id: room_id,
                     name: r.branch.clone(),
-                    is_default: r.is_default,
                     active,
                     git_status: r.git_status,
                 }
@@ -4122,6 +4126,7 @@ impl App {
 
         // Refresh room git stats immediately so the panel doesn't show stale/empty data.
         self.refresh_room_cache();
+        self.rebuild_workspace_tree();
 
         self.save_state();
     }

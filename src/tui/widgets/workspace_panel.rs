@@ -99,20 +99,20 @@ impl Widget for WorkspacePanel<'_> {
 
         let viewport_height = inner.height as usize;
 
-        // Compute visual row offset for each item (workspace=1 row, room=2 rows).
-        let mut item_visual_rows: Vec<(usize, usize)> = Vec::new(); // (item_index, visual_start_row)
-        let mut total_rows = 0usize;
-        for (i, item) in self.items.iter().enumerate() {
-            item_visual_rows.push((i, total_rows));
-            total_rows += match item.kind {
+        // Compute visual start row for each item (workspace=1 row, room=2 rows).
+        let mut visual_starts: Vec<usize> = Vec::new();
+        let mut row_acc = 0usize;
+        for item in self.items.iter() {
+            visual_starts.push(row_acc);
+            row_acc += match item.kind {
                 TreeItemKind::Workspace => 1,
-                TreeItemKind::Room => 2, // name + git stats
+                TreeItemKind::Room => 2,
             };
         }
 
         // Find scroll offset so selected item is visible.
         let scroll_offset = if let Some(selected_idx) = self.selected {
-            let sel_start = item_visual_rows.get(selected_idx).map(|r| r.1).unwrap_or(0);
+            let sel_start = visual_starts.get(selected_idx).copied().unwrap_or(0);
             let sel_height = self.items.get(selected_idx).map(|item| match item.kind {
                 TreeItemKind::Workspace => 1,
                 TreeItemKind::Room => 2,
