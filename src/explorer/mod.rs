@@ -262,79 +262,47 @@ impl ExplorerState {
         }
     }
 
+    /// List direct children of `dir`, respecting .gitignore unless `show_ignored`.
+    /// Uses the `ignore` crate (ripgrep's engine) for gitignore handling — no subprocess.
     fn list_children(&self, dir: &Path) -> Vec<PathBuf> {
-        if self.show_ignored {
-            self.list_children_all(dir)
-        } else {
-            self.list_children_git(dir)
-        }
-    }
+        use ignore::WalkBuilder;
 
-    /// List children using plain read_dir (skip .git/).
-    fn list_children_all(&self, dir: &Path) -> Vec<PathBuf> {
-        let Ok(read_dir) = std::fs::read_dir(dir) else {
-            return Vec::new();
-        };
-        read_dir
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| {
-                p.file_name()
-                    .map(|n| n != ".git")
-                    .unwrap_or(true)
+        if self.show_ignored {
+            // Show everything (skip .git/ only)
+            let Ok(read_dir) = std::fs::read_dir(dir) else {
+                return Vec::new();
+            };
+            return read_dir
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.file_name().map(|n| n != ".git").unwrap_or(true))
+                .collect();
+        }
+
+        // Use ignore crate: walks with .gitignore rules, depth=1 for direct children.
+        let walker = WalkBuilder::new(dir)
+            .max_depth(Some(1))
+            .hidden(false)       // show dotfiles (e.g., .claude/)
+            .git_global(true)    // respect global gitignore
+            .git_ignore(true)    // respect .gitignore
+            .git_exclude(true)   // respect .git/info/exclude
+            .follow_links(true)  // follow symlinks
+            .build();
+
+        walker
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                let path = entry.into_path();
+                // Skip the root dir itself and .git/
+                if path == dir {
+                    return None;
+                }
+                if path.file_name().map(|n| n == ".git").unwrap_or(false) {
+                    return None;
+                }
+                Some(path)
             })
             .collect()
-    }
-
-    /// List children using git ls-files to respect .gitignore.
-    /// Directories are always included (git doesn't track them); only files are filtered.
-    fn list_children_git(&self, dir: &Path) -> Vec<PathBuf> {
-        let rel_dir = dir.strip_prefix(&self.root).unwrap_or(dir);
-
-        // Get tracked files — don't pass empty arg when at root
-        let mut tracked_cmd = Command::new("git");
-        tracked_cmd.args(["ls-files"]).current_dir(&self.root);
-        if rel_dir != Path::new("") {
-            tracked_cmd.arg(rel_dir);
-        }
-        let tracked = tracked_cmd.output();
-
-        // Get untracked (non-ignored) files
-        let mut untracked_cmd = Command::new("git");
-        untracked_cmd.args(["ls-files", "--others", "--exclude-standard"]).current_dir(&self.root);
-        if rel_dir != Path::new("") {
-            untracked_cmd.arg(rel_dir);
-        }
-        let untracked = untracked_cmd.output();
-
-        let mut allowed: HashSet<PathBuf> = HashSet::new();
-
-        for output in [tracked, untracked] {
-            if let Ok(o) = output {
-                let stdout = String::from_utf8_lossy(&o.stdout);
-                for line in stdout.lines() {
-                    let p = self.root.join(line);
-                    if let Ok(rel) = p.strip_prefix(dir) {
-                        let mut components = rel.components();
-                        if let Some(first) = components.next() {
-                            allowed.insert(dir.join(first));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Always include directories from disk (git doesn't track empty dirs)
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() && path.file_name().map(|n| n != ".git").unwrap_or(false) {
-                    allowed.insert(path);
-                }
-            }
-        }
-
-        allowed.into_iter().collect()
     }
 }
 
