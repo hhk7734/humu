@@ -1,5 +1,5 @@
 use humu::codex::CodexTracker;
-use humu::config::{humu_dir, HumuConfig, HumuState, SplitDirection as CfgDir, SplitNode, TabLayout};
+use humu::config::{humu_dir, HumuConfig, HumuState, SplitDirection as CfgDir, SplitNode, TabLayout, WorkspaceEntry};
 use humu::id::{RoomId, TabId, WorkspaceId};
 use humu::git::room::{RoomGitStatus, RoomManager};
 use humu::git::workspace::WorkspaceManager;
@@ -2904,13 +2904,9 @@ impl App {
                 let item = &tree[self.selected_tree_index];
                 match &item.kind {
                     TreeItemKind::Workspace => {
-                        let ws_name = match self.state.ws_by_id(item.workspace_id) {
-                            Some(w) => w.name.clone(),
-                            None => return,
-                        };
                         let fields = vec![
                             DialogField::Confirm {
-                                message: format!("Delete workspace '{ws_name}'?"),
+                                message: format!("Delete workspace '{}'?", item.name),
                                 yes: false,
                             },
                             DialogField::Checkbox {
@@ -3591,38 +3587,24 @@ impl App {
     /// active workspace is always expanded.
     /// Rebuild the cached workspace tree from current state.
     fn rebuild_workspace_tree(&mut self) {
-        let mut ws_list: Vec<_> = self.state.workspaces.iter().collect();
-        ws_list.sort_by(|a, b| a.name.cmp(&b.name));
+        let ws_list: Vec<_> = self.state.workspaces.iter().collect();
 
-        // Compute display names: add parent dir when names collide.
-        let mut name_count: HashMap<&str, usize> = HashMap::new();
-        for ws in &ws_list {
-            *name_count.entry(&ws.name).or_insert(0) += 1;
-        }
-        let display_names: Vec<String> = ws_list
-            .iter()
-            .map(|ws| {
-                if name_count.get(ws.name.as_str()).copied().unwrap_or(0) > 1 {
-                    // Show parent/name to disambiguate
-                    ws.path
-                        .parent()
-                        .and_then(|p| p.file_name())
-                        .map(|parent| format!("{}/{}", parent.to_string_lossy(), ws.name))
-                        .unwrap_or_else(|| ws.name.clone())
-                } else {
-                    ws.name.clone()
-                }
-            })
-            .collect();
+        // Compute display names: show at least 2 trailing path components,
+        // expanding further when duplicates remain.
+        let display_names = Self::compute_display_names(&ws_list);
+
+        // Zip and sort by display name.
+        let mut entries: Vec<_> = display_names.into_iter().zip(ws_list).collect();
+        entries.sort_by(|(a, _), (b, _)| a.cmp(b));
 
         let mut items = Vec::new();
 
-        for (i, ws) in ws_list.iter().enumerate() {
+        for (display_name, ws) in &entries {
             let ws_active = self.has_active_agent(&self.pane_ids_for_workspace(ws.id));
 
             items.push(WorkspaceTreeItem {
                 kind: TreeItemKind::Workspace,
-                name: display_names[i].clone(),
+                name: display_name.clone(),
                 active: ws_active,
                 workspace_id: ws.id,
                 room_id: None,
@@ -3643,6 +3625,54 @@ impl App {
         }
 
         self.workspace_tree_cache = items;
+    }
+
+    /// Build display names for workspaces using at least 2 trailing path
+    /// components (e.g. `hhk7734/humu`). When duplicates remain, expand with
+    /// more components until each name is unique (or the full path is used).
+    fn compute_display_names(ws_list: &[&WorkspaceEntry]) -> Vec<String> {
+        let min_depth = 2usize;
+
+        // Helper: take the last `n` components of a path and join with '/'.
+        let trailing = |path: &std::path::Path, n: usize| -> String {
+            let total = path.iter().count();
+            path.iter()
+                .skip(total.saturating_sub(n))
+                .map(|c| c.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/")
+        };
+
+        // Start with min_depth components for every workspace.
+        let mut names: Vec<String> = ws_list
+            .iter()
+            .map(|ws| trailing(&ws.path, min_depth))
+            .collect();
+
+        // Iteratively expand duplicates until unique or path exhausted.
+        let max_components = ws_list
+            .iter()
+            .map(|ws| ws.path.iter().count())
+            .max()
+            .unwrap_or(0);
+
+        for depth in (min_depth + 1)..=max_components {
+            let mut count: HashMap<&str, usize> = HashMap::new();
+            for name in &names {
+                *count.entry(name.as_str()).or_insert(0) += 1;
+            }
+            let dups: Vec<usize> = (0..names.len())
+                .filter(|i| count[names[*i].as_str()] > 1)
+                .collect();
+            if dups.is_empty() {
+                break;
+            }
+            for i in dups {
+                names[i] = trailing(&ws_list[i].path, depth);
+            }
+        }
+
+        names
     }
 
     /// Map a visual row in the workspace panel to a tree item index.
