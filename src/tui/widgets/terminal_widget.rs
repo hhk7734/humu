@@ -4,7 +4,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
-use vt100::Screen;
+use crate::pty::terminal::Screen;
 
 pub struct TerminalWidget<'a> {
     screen: &'a Screen,
@@ -327,10 +327,10 @@ impl Widget for TerminalWidget<'_> {
     }
 }
 
-fn convert_color(color: vt100::Color) -> Color {
+fn convert_color(color: crate::pty::terminal::Color) -> Color {
     match color {
-        vt100::Color::Default => Color::Reset,
-        vt100::Color::Idx(i) => Color::Indexed(i),
-        vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
+        crate::pty::terminal::Color::Default => Color::Reset,
+        crate::pty::terminal::Color::Idx(i) => Color::Indexed(i),
+        crate::pty::terminal::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
     }
 }

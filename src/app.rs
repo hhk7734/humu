@@ -895,7 +895,7 @@ impl App {
 
         // If child has no mouse reporting, convert scroll to arrow keys
         // and consume other mouse events.
-        if pane.mouse_protocol_mode() == vt100::MouseProtocolMode::None {
+        if pane.mouse_protocol_mode() == humu::pty::terminal::MouseProtocolMode::None {
             let lines_per_tick = 3;
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
@@ -935,7 +935,7 @@ impl App {
 
         let encoding = pane.mouse_protocol_encoding();
         let seq = match encoding {
-            vt100::MouseProtocolEncoding::Sgr => {
+            humu::pty::terminal::MouseProtocolEncoding::Sgr => {
                 let suffix = if press { 'M' } else { 'm' };
                 format!("\x1b[<{};{};{}{}", button, col + 1, row + 1, suffix)
             }
@@ -2665,7 +2665,7 @@ impl App {
             None => return false,
         };
 
-        if pane.mouse_protocol_mode() == vt100::MouseProtocolMode::None {
+        if pane.mouse_protocol_mode() == humu::pty::terminal::MouseProtocolMode::None {
             return false;
         }
 
@@ -2690,7 +2690,7 @@ impl App {
         };
 
         let seq = match encoding {
-            vt100::MouseProtocolEncoding::Sgr => {
+            humu::pty::terminal::MouseProtocolEncoding::Sgr => {
                 let suffix = if press { 'M' } else { 'm' };
                 format!("\x1b[<{};{};{}{}", button, col + 1, row + 1, suffix)
             }
@@ -2729,7 +2729,7 @@ impl App {
         // Read mouse protocol state via thin accessors (avoids cloning full Screen).
         let mouse_mode = pane.mouse_protocol_mode();
 
-        if mouse_mode != vt100::MouseProtocolMode::None {
+        if mouse_mode != humu::pty::terminal::MouseProtocolMode::None {
             // Child process wants mouse events — send proper mouse escape sequences.
             let encoding = pane.mouse_protocol_encoding();
             // Translate terminal-absolute coordinates to pane-relative.
@@ -2738,7 +2738,7 @@ impl App {
             let button: u32 = if up { 64 } else { 65 }; // 64 = scroll up, 65 = scroll down
 
             let seq = match encoding {
-                vt100::MouseProtocolEncoding::Sgr => {
+                humu::pty::terminal::MouseProtocolEncoding::Sgr => {
                     format!("\x1b[<{};{};{}M", button, col + 1, row + 1)
                 }
                 _ => {
@@ -3271,7 +3271,7 @@ impl App {
             // Page Up/Down: scroll scrollback buffer when no mouse reporting,
             // otherwise forward to PTY.
             if matches!(key.code, KeyCode::PageUp | KeyCode::PageDown)
-                && pane.mouse_protocol_mode() == vt100::MouseProtocolMode::None
+                && pane.mouse_protocol_mode() == humu::pty::terminal::MouseProtocolMode::None
             {
                 let page = pane.rows() as usize;
                 let current = pane.scrollback();

@@ -12,7 +12,7 @@ pub struct PtyPane {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn std::io::Write + Send>,
     output_rx: mpsc::Receiver<Vec<u8>>,
-    parser: Arc<Mutex<vt100::Parser>>,
+    parser: Arc<Mutex<crate::pty::terminal::Parser>>,
     output_tail: Vec<u8>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
     exit_code: Option<i32>,
@@ -61,7 +61,7 @@ impl PtyPane {
 
         let writer = pair.master.take_writer()?;
         let mut reader = pair.master.try_clone_reader()?;
-        let parser = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, DEFAULT_SCROLLBACK_LEN)));
+        let parser = Arc::new(Mutex::new(crate::pty::terminal::Parser::new(rows, cols, DEFAULT_SCROLLBACK_LEN)));
 
         // Read PTY output in a background thread to avoid blocking the event loop.
         let (output_tx, output_rx) = mpsc::channel();
@@ -96,17 +96,31 @@ impl PtyPane {
     /// Drain any PTY output received from the background reader thread.
     pub fn process_output(&mut self) -> Result<()> {
         while let Ok(data) = self.output_rx.try_recv() {
-            let cpr_requests = count_cursor_position_requests(&self.output_tail, &data);
+            let queries = detect_terminal_queries(&self.output_tail, &data);
             {
                 let mut parser = self.parser.lock().unwrap();
                 parser.process(&data);
-                if cpr_requests > 0 {
+                if queries.cpr > 0 {
                     let (row, col) = parser.screen().cursor_position();
                     let response = format!("\x1b[{};{}R", row + 1, col + 1);
                     use std::io::Write;
-                    for _ in 0..cpr_requests {
+                    for _ in 0..queries.cpr {
                         self.writer.write_all(response.as_bytes())?;
                     }
+                }
+            }
+            // DA1: report as VT220 with ANSI color
+            if queries.da1 > 0 {
+                use std::io::Write;
+                for _ in 0..queries.da1 {
+                    self.writer.write_all(b"\x1b[?62;22c")?;
+                }
+            }
+            // DA2: generic terminal, no version
+            if queries.da2 > 0 {
+                use std::io::Write;
+                for _ in 0..queries.da2 {
+                    self.writer.write_all(b"\x1b[>0;0;0c")?;
                 }
             }
             update_output_tail(&mut self.output_tail, &data);
@@ -127,12 +141,12 @@ impl PtyPane {
     }
 
     /// Returns the mouse protocol mode the child process has requested.
-    pub fn mouse_protocol_mode(&self) -> vt100::MouseProtocolMode {
+    pub fn mouse_protocol_mode(&self) -> crate::pty::terminal::MouseProtocolMode {
         self.parser.lock().unwrap().screen().mouse_protocol_mode()
     }
 
     /// Returns the mouse protocol encoding the child process has requested.
-    pub fn mouse_protocol_encoding(&self) -> vt100::MouseProtocolEncoding {
+    pub fn mouse_protocol_encoding(&self) -> crate::pty::terminal::MouseProtocolEncoding {
         self.parser.lock().unwrap().screen().mouse_protocol_encoding()
     }
 
@@ -163,12 +177,12 @@ impl PtyPane {
     }
 
     /// Get a snapshot of the terminal screen.
-    pub fn screen(&self) -> vt100::Screen {
+    pub fn screen(&self) -> crate::pty::terminal::Screen {
         self.parser.lock().unwrap().screen().clone()
     }
 
     /// Returns a reference to the parser Arc for search operations.
-    pub fn parser_ref(&self) -> &std::sync::Arc<std::sync::Mutex<vt100::Parser>> {
+    pub fn parser_ref(&self) -> &std::sync::Arc<std::sync::Mutex<crate::pty::terminal::Parser>> {
         &self.parser
     }
 
@@ -196,15 +210,27 @@ impl PtyPane {
     }
 }
 
-fn count_cursor_position_requests(tail: &[u8], data: &[u8]) -> usize {
+struct TerminalQueries {
+    cpr: usize,
+    da1: usize,
+    da2: usize,
+}
+
+fn detect_terminal_queries(tail: &[u8], data: &[u8]) -> TerminalQueries {
     let mut combined = Vec::with_capacity(tail.len() + data.len());
     combined.extend_from_slice(tail);
     combined.extend_from_slice(data);
-    combined.windows(4).filter(|w| *w == b"\x1b[6n").count()
+    TerminalQueries {
+        cpr: combined.windows(4).filter(|w| *w == b"\x1b[6n").count(),
+        da1: combined.windows(3).filter(|w| *w == b"\x1b[c").count()
+            + combined.windows(4).filter(|w| *w == b"\x1b[0c").count(),
+        da2: combined.windows(4).filter(|w| *w == b"\x1b[>c").count()
+            + combined.windows(5).filter(|w| *w == b"\x1b[>0c").count(),
+    }
 }
 
 fn update_output_tail(tail: &mut Vec<u8>, data: &[u8]) {
-    const MAX_TAIL_LEN: usize = 3;
+    const MAX_TAIL_LEN: usize = 4;
     tail.clear();
     let keep = data.len().min(MAX_TAIL_LEN);
     tail.extend_from_slice(&data[data.len() - keep..]);

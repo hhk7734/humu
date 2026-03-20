@@ -151,7 +151,7 @@ impl SearchState {
 /// unsigned subtraction in `visible_rows()`. Scrollback is clamped in
 /// `PtyPane::set_scrollback` to prevent this.
 pub fn extract_rows(
-    parser: &std::sync::Arc<std::sync::Mutex<vt100::Parser>>,
+    parser: &std::sync::Arc<std::sync::Mutex<crate::pty::terminal::Parser>>,
 ) -> Vec<(String, Vec<usize>)> {
     let guard = parser.lock().unwrap();
     let screen = guard.screen().clone();

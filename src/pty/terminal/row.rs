@@ -1,0 +1,134 @@
+#[derive(Clone, Debug)]
+pub struct Row {
+    cells: Vec<super::cell::Cell>,
+    wrapped: bool,
+}
+
+impl Row {
+    pub fn new(cols: u16) -> Self {
+        Self {
+            cells: vec![super::cell::Cell::default(); usize::from(cols)],
+            wrapped: false,
+        }
+    }
+
+    fn cols(&self) -> u16 {
+        self.cells
+            .len()
+            .try_into()
+            // we limit the number of cols to a u16 (see Size)
+            .unwrap()
+    }
+
+    pub fn clear(&mut self, attrs: super::attrs::Attrs) {
+        for cell in &mut self.cells {
+            cell.clear(attrs);
+        }
+        self.wrapped = false;
+    }
+
+    fn cells(&self) -> impl Iterator<Item = &super::cell::Cell> {
+        self.cells.iter()
+    }
+
+    pub fn get(&self, col: u16) -> Option<&super::cell::Cell> {
+        self.cells.get(usize::from(col))
+    }
+
+    pub fn get_mut(&mut self, col: u16) -> Option<&mut super::cell::Cell> {
+        self.cells.get_mut(usize::from(col))
+    }
+
+    pub fn insert(&mut self, i: u16, cell: super::cell::Cell) {
+        self.cells.insert(usize::from(i), cell);
+        self.wrapped = false;
+    }
+
+    pub fn remove(&mut self, i: u16) {
+        self.clear_wide(i);
+        self.cells.remove(usize::from(i));
+        self.wrapped = false;
+    }
+
+    pub fn erase(&mut self, i: u16, attrs: super::attrs::Attrs) {
+        let wide = self.cells[usize::from(i)].is_wide();
+        self.clear_wide(i);
+        self.cells[usize::from(i)].clear(attrs);
+        if i == self.cols() - if wide { 2 } else { 1 } {
+            self.wrapped = false;
+        }
+    }
+
+    pub fn truncate(&mut self, len: u16) {
+        self.cells.truncate(usize::from(len));
+        self.wrapped = false;
+        let last_cell = &mut self.cells[usize::from(len) - 1];
+        if last_cell.is_wide() {
+            last_cell.clear(*last_cell.attrs());
+        }
+    }
+
+    pub fn resize(&mut self, len: u16, cell: super::cell::Cell) {
+        self.cells.resize(usize::from(len), cell);
+        self.wrapped = false;
+    }
+
+    pub fn wrap(&mut self, wrap: bool) {
+        self.wrapped = wrap;
+    }
+
+    pub fn wrapped(&self) -> bool {
+        self.wrapped
+    }
+
+    pub fn clear_wide(&mut self, col: u16) {
+        let cell = &self.cells[usize::from(col)];
+        let other = if cell.is_wide() {
+            &mut self.cells[usize::from(col + 1)]
+        } else if cell.is_wide_continuation() {
+            &mut self.cells[usize::from(col - 1)]
+        } else {
+            return;
+        };
+        other.clear(*other.attrs());
+    }
+
+    pub fn write_contents(
+        &self,
+        contents: &mut String,
+        start: u16,
+        width: u16,
+        wrapping: bool,
+    ) {
+        let mut prev_was_wide = false;
+
+        let mut prev_col = start;
+        for (col, cell) in self
+            .cells()
+            .enumerate()
+            .skip(usize::from(start))
+            .take(usize::from(width))
+        {
+            if prev_was_wide {
+                prev_was_wide = false;
+                continue;
+            }
+            prev_was_wide = cell.is_wide();
+
+            // we limit the number of cols to a u16 (see Size)
+            let col: u16 = col.try_into().unwrap();
+            if cell.has_contents() {
+                for _ in 0..(col - prev_col) {
+                    contents.push(' ');
+                }
+                prev_col += col - prev_col;
+
+                contents.push_str(&cell.contents());
+                prev_col += if cell.is_wide() { 2 } else { 1 };
+            }
+        }
+        if prev_col == start && wrapping {
+            contents.push('\n');
+        }
+    }
+}

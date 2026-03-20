@@ -7,7 +7,9 @@ edition = "2024"
 ratatui = "0.29"
 crossterm = "0.28"
 portable-pty = "0.8"
-vt100 = { path = "third_party/vt100" }
+vte = "0.11"
+unicode-width = "0.1"
+log = "0.4"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 serde_yaml = "0.9"

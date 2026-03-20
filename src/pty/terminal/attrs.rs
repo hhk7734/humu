@@ -1,0 +1,120 @@
+/// Represents a foreground or background color for cells.
+#[derive(Eq, PartialEq, Debug, Copy, Clone)]
+pub enum Color {
+    /// The default terminal color.
+    Default,
+
+    /// An indexed terminal color.
+    Idx(u8),
+
+    /// An RGB terminal color. The parameters are (red, green, blue).
+    Rgb(u8, u8, u8),
+}
+
+impl Default for Color {
+    fn default() -> Self {
+        Self::Default
+    }
+}
+
+const TEXT_MODE_BOLD: u8 = 0b0000_0001;
+const TEXT_MODE_DIM: u8 = 0b0000_0010;
+const TEXT_MODE_ITALIC: u8 = 0b0000_0100;
+const TEXT_MODE_UNDERLINE: u8 = 0b0000_1000;
+const TEXT_MODE_INVERSE: u8 = 0b0001_0000;
+const TEXT_MODE_HIDDEN: u8 = 0b0010_0000;
+const TEXT_MODE_STRIKE: u8 = 0b0100_0000;
+
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Attrs {
+    pub fgcolor: Color,
+    pub bgcolor: Color,
+    pub mode: u8,
+}
+
+impl Attrs {
+    pub fn bold(&self) -> bool {
+        self.mode & TEXT_MODE_BOLD != 0
+    }
+
+    pub fn set_bold(&mut self, bold: bool) {
+        if bold {
+            self.mode |= TEXT_MODE_BOLD;
+        } else {
+            self.mode &= !TEXT_MODE_BOLD;
+        }
+    }
+
+    pub fn dim(&self) -> bool {
+        self.mode & TEXT_MODE_DIM != 0
+    }
+
+    pub fn set_dim(&mut self, dim: bool) {
+        if dim {
+            self.mode |= TEXT_MODE_DIM;
+        } else {
+            self.mode &= !TEXT_MODE_DIM;
+        }
+    }
+
+    pub fn italic(&self) -> bool {
+        self.mode & TEXT_MODE_ITALIC != 0
+    }
+
+    pub fn set_italic(&mut self, italic: bool) {
+        if italic {
+            self.mode |= TEXT_MODE_ITALIC;
+        } else {
+            self.mode &= !TEXT_MODE_ITALIC;
+        }
+    }
+
+    pub fn underline(&self) -> bool {
+        self.mode & TEXT_MODE_UNDERLINE != 0
+    }
+
+    pub fn set_underline(&mut self, underline: bool) {
+        if underline {
+            self.mode |= TEXT_MODE_UNDERLINE;
+        } else {
+            self.mode &= !TEXT_MODE_UNDERLINE;
+        }
+    }
+
+    pub fn inverse(&self) -> bool {
+        self.mode & TEXT_MODE_INVERSE != 0
+    }
+
+    pub fn set_inverse(&mut self, inverse: bool) {
+        if inverse {
+            self.mode |= TEXT_MODE_INVERSE;
+        } else {
+            self.mode &= !TEXT_MODE_INVERSE;
+        }
+    }
+
+    pub fn hidden(&self) -> bool {
+        self.mode & TEXT_MODE_HIDDEN != 0
+    }
+
+    pub fn set_hidden(&mut self, hidden: bool) {
+        if hidden {
+            self.mode |= TEXT_MODE_HIDDEN;
+        } else {
+            self.mode &= !TEXT_MODE_HIDDEN;
+        }
+    }
+
+    pub fn strike(&self) -> bool {
+        self.mode & TEXT_MODE_STRIKE != 0
+    }
+
+    pub fn set_strike(&mut self, strike: bool) {
+        if strike {
+            self.mode |= TEXT_MODE_STRIKE;
+        } else {
+            self.mode &= !TEXT_MODE_STRIKE;
+        }
+    }
+
+}
