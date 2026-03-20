@@ -1201,7 +1201,7 @@ impl vte::Perform for Screen {
                 'C' => self.cuf(canonicalize_params_1(params, 1)),
                 'D' => self.cub(canonicalize_params_1(params, 1)),
                 'G' => self.cha(canonicalize_params_1(params, 1)),
-                'H' => self.cup(canonicalize_params_2(params, 1, 1)),
+                'H' | 'f' => self.cup(canonicalize_params_2(params, 1, 1)),
                 'J' => self.ed(canonicalize_params_1(params, 0)),
                 'K' => self.el(canonicalize_params_1(params, 0)),
                 'L' => self.il(canonicalize_params_1(params, 1)),

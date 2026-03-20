@@ -52,6 +52,11 @@ impl PtyPane {
         if let Some(dir) = cwd {
             cmd.cwd(dir);
         }
+        // Override TERM so child processes use capabilities humu actually
+        // supports. Inheriting the outer terminal's TERM (e.g. "alacritty")
+        // causes programs to assume features like Kitty graphics protocol
+        // that humu's VT220-class emulation does not provide.
+        cmd.env("TERM", "xterm-256color");
         for (k, v) in envs {
             cmd.env(k, v);
         }
