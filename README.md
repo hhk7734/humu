@@ -23,7 +23,7 @@ HuMu organizes your terminal workflow around git concepts: **workspaces** map to
 - Split panes horizontally/vertically with configurable ratios
 - Multiple tabs per room with Powerline-style tab bar
 - Presets for quick spawning (e.g., `claude`, `gemini`, `shell`, custom commands)
-- Full terminal emulation via vt100 with 10,000-line scrollback
+- Full terminal emulation via vte with 10,000-line scrollback
 
 **File Explorer**
 - Directory tree with Nerd Font icons (40+ file types with per-type colors)
@@ -146,6 +146,22 @@ notifications:
     enabled: false
     only_unfocused: false
 ```
+
+## Known Issues
+
+### Arrow keys exit visual mode in Neovim
+
+If arrow keys exit visual mode while `hjkl` works normally, check your Neovim config for `keymodel`:
+
+```lua
+-- This causes unshifted arrow keys to exit visual mode (Windows-style selection)
+opt.keymodel = { "startsel", "stopsel" }
+
+-- Fix: remove "stopsel"
+opt.keymodel = { "startsel" }
+```
+
+The `stopsel` option tells Neovim to stop visual selection on any unshifted special key (arrows, Home, End, PageUp, PageDown). Since `hjkl` are regular character keys, they are unaffected. This is a Neovim setting, not a HuMu bug.
 
 ## License
 
