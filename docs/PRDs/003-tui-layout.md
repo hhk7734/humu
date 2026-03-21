@@ -22,7 +22,7 @@ Three panels plus a status bar. The left panel is a single workspace tree: each 
 
 ## Panels
 
-- **WorkspacePanel**: A flattened workspace tree. Workspace rows are 1 line; room rows are 2 lines (name + git summary). Duplicate workspace names (e.g., two repos named `vllm`) are disambiguated as `parent/name` (e.g., `distributed/vllm`, `moreh-dev/vllm`). Rounded border, `accent_blue` when focused, `fg_muted` when unfocused. Selected item: `▸` prefix, bold. The active workspace section (workspace row + all its room rows) uses a blue-gray section background, while the active room uses a darker blue background and stronger text weight on top so the current room stands out within the active workspace. The room summary line always shows a git icon, colored green when clean and orange when dirty; additional markers show ahead/behind and working tree deltas including `?N` for untracked files.
+- **WorkspacePanel**: A flattened workspace tree. Workspace rows are 1 line; room rows are 2 lines (name + git summary). Duplicate workspace names (e.g., two repos named `vllm`) are disambiguated as `parent/name` (e.g., `distributed/vllm`, `moreh-dev/vllm`). Rounded border, `accent_blue` when focused, `fg_muted` when unfocused. Selected item: `▸` prefix, bold. The active workspace section (workspace row + all its room rows) uses a blue-gray section background, while the active room uses a darker blue background and stronger text weight on top so the current room stands out within the active workspace. Single-click selects an item and keeps Workspace mode active; activating the selection requires `Enter` or a second click on the same item. Mouse wheel over the panel moves the selection up/down and auto-scrolls long lists. The room summary line always shows a git icon, colored green when clean and orange when dirty; additional markers show ahead/behind and working tree deltas including `?N` for untracked files.
 - **Terminal Area**: Tab bar (Powerline-style) at top with `+` button. Each tab is a Powerline segment with entry/exit arrows (first tab has no entry arrow, second+ tabs do). Animated spinner on tabs with active agent panes. Each tab contains one or more split panes (vertical/horizontal) with rounded borders and preset title. Panes run presets with `cwd` set to the room's working directory.
 - **ExplorerPanel**: File tree of the active room's directory. Nerd Font icons per file extension plus distinct symlink file/dir icons, git status indicators (`✗` modified, `★` added). Navigate with `↑/↓`, `Enter` opens files in `$EDITOR` (floating pane), `Shift+Enter` opens delta diff (floating pane). `Shift+I` toggles gitignored files.
 - **StatusBar**: Borderless ribbon with Powerline mode badge (color-coded per mode), `Ctrl +` segment (Powerline arrows, orange text, `bg_tertiary`), and key hint segments (Powerline arrows, dark red bold keys, black labels on light gray `#8B949E` background). Errors displayed in red, auto-clear on next keypress.
@@ -155,7 +155,7 @@ Navigate search results in the focused pane.
 
 ### Mouse Support
 
-Clicking a panel enters the corresponding mode: workspace tree → Workspace mode, terminal area → Terminal mode, explorer panel → Explorer mode. Clicking tabs, `+` button are also supported. Panel resizing is keyboard-only (`Shift+←→`). All mouse interactions have keyboard equivalents.
+Clicking a panel enters the corresponding mode: workspace tree → Workspace mode, terminal area → Terminal mode, explorer panel → Explorer mode. Workspace tree activation uses two steps: first click selects, second click on the same item activates. Explorer activation already follows the same pattern. Clicking tabs, `+` button are also supported. Panel resizing is keyboard-only (`Shift+←→`). All mouse interactions have keyboard equivalents.
 
 **Status bar hint clicks**: Clicking a key hint segment in the status bar triggers the corresponding action (e.g., clicking the "PANE" hint in Terminal mode enters Pane mode). Multi-key hints like arrow navigation are not clickable. Works across all modes including Search mode hints (NEXT, PREV, CASE, WRAP).
 
@@ -170,6 +170,10 @@ Clicking a panel enters the corresponding mode: workspace tree → Workspace mod
 **Scroll wheel** on terminal panes:
 - **Programs with mouse reporting** (vim, less, tmux): scroll events are forwarded as proper mouse escape sequences (SGR or default encoding) with pane-relative coordinates, except when the pane is on the alternate screen. Alternate-screen panes keep humu-managed scrollback so fullscreen TUIs such as Codex can still be reviewed with wheel scroll and `PageUp/PageDown`.
 - **Plain shell / no mouse reporting**: scrolls through the vt100 scrollback buffer (10,000 lines). A yellow `↑N` indicator appears in the pane's bottom border showing lines scrolled back. Scrollback auto-resets to live view on new output or keypress.
+
+**Scroll wheel** on list panels:
+- **Workspace panel**: focuses Workspace mode, moves the selection up/down by one item per wheel tick, and auto-scrolls long trees so the selection stays visible.
+- **Explorer panel**: focuses Explorer mode, moves the selection up/down by one entry per wheel tick, and updates `scroll_offset` so long trees stay navigable without keyboard input.
 
 ## Status Bar Structure
 

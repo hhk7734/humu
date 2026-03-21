@@ -20,7 +20,7 @@ On creation, humu auto-selects the new workspace and its default room (main bran
 
 ### Select
 
-- Click a workspace in `WorkspacePanel` (enters Workspace mode) or use `Ctrl+w`. The last-selected room for that workspace is restored.
+- Click a workspace in `WorkspacePanel` once to select it and enter Workspace mode. Click the same workspace again, or press `Enter`, to restore that workspace's last-selected room.
 - On startup, the last active workspace and room are restored. If room entries were pruned (e.g., branch was deleted), the active room is validated and falls back to an existing branch or "main".
 - **State preservation**: Switching workspaces suspends the current room's live PTY panes. The target workspace's last-active room is restored with live panes if previously suspended.
 
@@ -54,8 +54,8 @@ A working context within a workspace.
 
 ### Select
 
-- Click a room in `RoomPanel` (enters Room mode) or use `Ctrl+r`. Terminal panes switch to the selected room's context.
-- Clicking a room under a different workspace switches both workspace and room immediately; the clicked room wins over that workspace's remembered `last_room_id`.
+- Click a room in the workspace tree once to select it and enter Workspace mode. Click the same room again, or press `Enter`, to switch the terminal panes to that room's context.
+- Clicking a room under a different workspace still gives that room precedence over the workspace's remembered `last_room_id` once the selection is activated.
 - Terminal panes are room-scoped: if no room is selected, the terminal area is empty and pane/tab creation is blocked.
 - **State preservation**: Switching rooms suspends the current room's live PTY panes rather than killing them. Switching back restores panes instantly with full terminal history. See Architecture > Room Suspension for details.
 - Rooms discovered from `git worktree list` are materialized into `state.yaml` during startup and cache refresh so externally-created worktrees are selectable immediately.

@@ -18,6 +18,7 @@ A file explorer panel on the right side of the layout showing the active room's 
 - `FocusedPanel::Explorer` for focus tracking, border turns `accent_blue` when focused
 - Explorer rescans the tree on mode enter, workspace/room switch, and automatically every ~3 seconds (periodic git status refresh)
 - Click on explorer panel: first click focuses + selects, second click on same item opens
+- Mouse wheel on the explorer panel focuses Explorer mode, moves the selection, and adjusts `scroll_offset` to keep long trees visible
 
 ## Keybindings (Explorer Mode)
 
