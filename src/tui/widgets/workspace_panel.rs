@@ -135,6 +135,7 @@ impl Widget for WorkspacePanel<'_> {
 
         let mut visual_row = 0usize;
         let mut y = inner.y;
+        let mut current_workspace_is_active = false;
         for (i, item) in self.items.iter().enumerate() {
             let item_height: usize = match item.kind {
                 TreeItemKind::Workspace => 1,
@@ -154,22 +155,25 @@ impl Widget for WorkspacePanel<'_> {
             let is_selected = self.selected == Some(i);
             let max_width = inner.width as usize;
 
-            // Highlight the active workspace/room with bg_tertiary
-            let is_active = match &item.kind {
-                TreeItemKind::Workspace => self.active_ws == Some(item.workspace_id),
-                TreeItemKind::Room => {
-                    self.active_ws == Some(item.workspace_id)
+            let is_active_room = matches!(
+                &item.kind,
+                TreeItemKind::Room
+                    if self.active_ws == Some(item.workspace_id)
                         && self.active_room.is_some()
                         && self.active_room == item.room_id
-                }
-            };
-            if is_selected {
+            );
+
+            if matches!(item.kind, TreeItemKind::Workspace) {
+                current_workspace_is_active = self.active_ws == Some(item.workspace_id);
+            }
+
+            if current_workspace_is_active {
                 let bg = Style::default().bg(self.palette.bg_tertiary);
                 for bx in inner.x..inner.x + inner.width {
                     buf[(bx, y)].set_style(bg);
                 }
             }
-            if is_active {
+            if is_active_room {
                 let bg = Style::default().bg(self.palette.bg_selected);
                 for bx in inner.x..inner.x + inner.width {
                     buf[(bx, y)].set_style(bg);
@@ -250,8 +254,13 @@ impl Widget for WorkspacePanel<'_> {
                         ahead > 0 || behind > 0 || untracked > 0 || ins > 0 || del > 0;
 
                     if y < inner.y + inner.height {
-                        // Fill background for active room stats line
-                        if is_active {
+                        if current_workspace_is_active {
+                            let bg = Style::default().bg(self.palette.bg_tertiary);
+                            for bx in inner.x..inner.x + inner.width {
+                                buf[(bx, y)].set_style(bg);
+                            }
+                        }
+                        if is_active_room {
                             let bg = Style::default().bg(self.palette.bg_selected);
                             for bx in inner.x..inner.x + inner.width {
                                 buf[(bx, y)].set_style(bg);

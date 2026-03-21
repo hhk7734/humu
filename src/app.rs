@@ -377,11 +377,16 @@ impl App {
             crossterm::event::EnableFocusChange,
         )?;
         // Enable Kitty keyboard protocol for modifier-aware keys (Shift+Enter, etc.).
+        // Request the full progressive enhancement set so Unicode/non-ASCII
+        // modified keys arrive as CSI-u events (for example Ctrl+Hangul jamo).
         // Silently ignored on terminals that don't support it.
         let keyboard_enhanced = crossterm::execute!(
             stdout(),
             crossterm::event::PushKeyboardEnhancementFlags(
-                crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES,
+                crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | crossterm::event::KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+                    | crossterm::event::KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+                    | crossterm::event::KeyboardEnhancementFlags::REPORT_EVENT_TYPES,
             ),
         )
         .is_ok();
@@ -4587,9 +4592,16 @@ impl App {
             None => return,
         };
 
-        // If switching to a different workspace, clear room_selected so
-        // the last_room_id fallback kicks in.
-        if self.state.active_workspace_id != Some(target_ws_id) {
+        // Preserve an explicit room selection when it already belongs to the
+        // target workspace (for example clicking room2 in another workspace).
+        // Otherwise clear stale selection so the usual last-room fallback applies.
+        let selected_room_in_target = self.room_selected.filter(|rid| {
+            self.state
+                .ws_by_id(target_ws_id)
+                .and_then(|ws| ws.room_by_id(*rid))
+                .is_some()
+        });
+        if selected_room_in_target.is_none() {
             self.room_selected = None;
         }
 

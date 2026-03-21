@@ -55,6 +55,7 @@ A working context within a workspace.
 ### Select
 
 - Click a room in `RoomPanel` (enters Room mode) or use `Ctrl+r`. Terminal panes switch to the selected room's context.
+- Clicking a room under a different workspace switches both workspace and room immediately; the clicked room wins over that workspace's remembered `last_room_id`.
 - Terminal panes are room-scoped: if no room is selected, the terminal area is empty and pane/tab creation is blocked.
 - **State preservation**: Switching rooms suspends the current room's live PTY panes rather than killing them. Switching back restores panes instantly with full terminal history. See Architecture > Room Suspension for details.
 - Rooms discovered from `git worktree list` are materialized into `state.yaml` during startup and cache refresh so externally-created worktrees are selectable immediately.
