@@ -3067,10 +3067,11 @@ impl App {
             None => return,
         };
 
-        // Read mouse protocol state via thin accessors (avoids cloning full Screen).
+        // Read pane mode via thin accessors (avoids cloning full Screen).
         let mouse_mode = pane.mouse_protocol_mode();
+        let alternate_screen = pane.alternate_screen();
 
-        if mouse_mode != humu::pty::terminal::MouseProtocolMode::None {
+        if mouse_mode != humu::pty::terminal::MouseProtocolMode::None && !alternate_screen {
             // Child process wants mouse events — send proper mouse escape sequences.
             let encoding = pane.mouse_protocol_encoding();
             // Translate terminal-absolute coordinates to pane-relative.
@@ -3644,10 +3645,12 @@ impl App {
         }
 
         if let Some(pane) = self.panes.get_mut(&pane_id) {
-            // Page Up/Down: scroll scrollback buffer when no mouse reporting,
-            // otherwise forward to PTY.
+            // Page Up/Down: scroll humu's scrollback buffer when the child is
+            // on the normal screen without mouse reporting, or whenever the
+            // child is on the alternate screen (for example Codex's TUI).
             if matches!(key.code, KeyCode::PageUp | KeyCode::PageDown)
-                && pane.mouse_protocol_mode() == humu::pty::terminal::MouseProtocolMode::None
+                && (pane.mouse_protocol_mode() == humu::pty::terminal::MouseProtocolMode::None
+                    || pane.alternate_screen())
             {
                 let page = pane.rows() as usize;
                 let current = pane.scrollback();

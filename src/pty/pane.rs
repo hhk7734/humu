@@ -168,6 +168,11 @@ impl PtyPane {
         self.parser.lock().unwrap().screen().bracketed_paste()
     }
 
+    /// Returns whether the child process is currently using the alternate screen.
+    pub fn alternate_screen(&self) -> bool {
+        self.parser.lock().unwrap().screen().alternate_screen()
+    }
+
     /// Write input to the PTY (user keystrokes).
     pub fn write_input(&mut self, data: &[u8]) -> Result<()> {
         use std::io::Write;

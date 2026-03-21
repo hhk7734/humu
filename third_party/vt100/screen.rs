@@ -87,7 +87,7 @@ impl Screen {
         grid.allocate_rows();
         Self {
             grid,
-            alternate_grid: super::grid::Grid::new(size, 0),
+            alternate_grid: super::grid::Grid::new(size, scrollback_len),
 
             attrs: super::attrs::Attrs::default(),
             saved_attrs: super::attrs::Attrs::default(),

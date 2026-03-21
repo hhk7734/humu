@@ -168,7 +168,7 @@ Clicking a panel enters the corresponding mode: workspace tree → Workspace mod
 **Keyboard enhancement**: On terminals that support the Kitty keyboard protocol, humu enables `DISAMBIGUATE_ESCAPE_CODES`, `REPORT_ALL_KEYS_AS_ESCAPE_CODES`, `REPORT_ALTERNATE_KEYS`, and `REPORT_EVENT_TYPES` so modified keys arrive as CSI u events with minimal ambiguity. Modified Enter and Tab are forwarded as CSI u sequences (`\x1b[{codepoint};{modifier}u`). Alt+char is forwarded with the standard ESC prefix. For Ctrl-modified Hangul 2-set jamo emitted by IMEs, humu normalizes the jamo to the corresponding QWERTY letter before dispatching shortcuts or forwarding bytes to the PTY, so `Ctrl+ㅊ` behaves like `Ctrl+C`. Gracefully degrades on unsupported terminals.
 
 **Scroll wheel** on terminal panes:
-- **Programs with mouse reporting** (vim, less, tmux): scroll events are forwarded as proper mouse escape sequences (SGR or default encoding) with pane-relative coordinates.
+- **Programs with mouse reporting** (vim, less, tmux): scroll events are forwarded as proper mouse escape sequences (SGR or default encoding) with pane-relative coordinates, except when the pane is on the alternate screen. Alternate-screen panes keep humu-managed scrollback so fullscreen TUIs such as Codex can still be reviewed with wheel scroll and `PageUp/PageDown`.
 - **Plain shell / no mouse reporting**: scrolls through the vt100 scrollback buffer (10,000 lines). A yellow `↑N` indicator appears in the pane's bottom border showing lines scrolled back. Scrollback auto-resets to live view on new output or keypress.
 
 ## Status Bar Structure
