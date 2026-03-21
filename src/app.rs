@@ -467,7 +467,7 @@ impl App {
             // per-event renders when mouse moves queue up.
             while event::poll(Duration::from_millis(0))? {
                 match event::read()? {
-                    Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    Event::Key(key) if should_handle_key_event(&key) => {
                         let key = normalize_key_event(key);
                         // Reset workspace auto-return timer on any keypress.
                         if self.mode == Mode::Workspace {
@@ -499,7 +499,7 @@ impl App {
             // If no events were pending, wait up to 50ms for the next one.
             if event::poll(Duration::from_millis(50))? {
                 match event::read()? {
-                    Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    Event::Key(key) if should_handle_key_event(&key) => {
                         let key = normalize_key_event(key);
                         // Reset workspace auto-return timer on any keypress.
                         if self.mode == Mode::Workspace {
@@ -4947,6 +4947,10 @@ fn base64_encode(data: &[u8]) -> String {
     result
 }
 
+fn should_handle_key_event(key: &KeyEvent) -> bool {
+    matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4983,6 +4987,35 @@ mod tests {
     fn ctrl_hangul_jamo_emits_matching_ascii_control_byte() {
         let normalized = normalize_key_event(ctrl_char('ㅊ'));
         assert_eq!(key_event_to_bytes(&normalized), vec![0x03]);
+    }
+
+    #[test]
+    fn should_handle_key_event_accepts_press_and_repeat() {
+        let press = KeyEvent {
+            code: KeyCode::Down,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        };
+        let repeat = KeyEvent {
+            kind: KeyEventKind::Repeat,
+            ..press
+        };
+
+        assert!(should_handle_key_event(&press));
+        assert!(should_handle_key_event(&repeat));
+    }
+
+    #[test]
+    fn should_handle_key_event_ignores_release() {
+        let release = KeyEvent {
+            code: KeyCode::Down,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Release,
+            state: crossterm::event::KeyEventState::NONE,
+        };
+
+        assert!(!should_handle_key_event(&release));
     }
 
     fn test_app_with_workspace_tree(
