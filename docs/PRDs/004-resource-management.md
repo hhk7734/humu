@@ -16,6 +16,8 @@ Three modes:
 
 Workspace name is derived from the repo directory name. If multiple workspaces share the same name (e.g., two repos named `vllm`), humu disambiguates them by displaying them as `parent/name` (e.g., `distributed/vllm`, `moreh-dev/vllm`) in the workspace panel. The path field supports fuzzy filesystem autocomplete with cross-segment matching (e.g., `~/githhk` → `~/github/hhk7734/`).
 
+Workspace registration rejects duplicate repository paths using the canonicalized filesystem path. This blocks both exact path re-use and alternate spellings such as symlinks that resolve to an already-registered repository.
+
 On creation, humu auto-selects the new workspace and its default room (main branch), so the terminal is immediately usable.
 
 ### Select

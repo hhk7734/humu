@@ -18,6 +18,9 @@ impl WorkspaceManager {
         if !path.join(".git").exists() {
             bail!("not a git repository: {}", path.display());
         }
+        if state.workspaces.iter().any(|workspace| workspace.path == path) {
+            bail!("workspace path already registered: {}", path.display());
+        }
         let name = path
             .file_name()
             .unwrap_or_default()

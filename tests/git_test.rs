@@ -1,6 +1,7 @@
 use humu::config::HumuState;
 use humu::git::room::RoomManager;
 use humu::git::workspace::WorkspaceManager;
+use std::os::unix::fs::symlink;
 use tempfile::TempDir;
 
 #[test]
@@ -28,6 +29,45 @@ fn test_register_non_git_dir_fails() {
     let mgr = WorkspaceManager::new();
     let result = mgr.register(&mut state, dir.path());
     assert!(result.is_err());
+}
+
+#[test]
+fn test_register_duplicate_workspace_path_fails() {
+    let dir = TempDir::new().unwrap();
+    std::process::Command::new("git")
+        .args(["init", dir.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    let mut state = HumuState::default();
+    let mgr = WorkspaceManager::new();
+    mgr.register(&mut state, dir.path()).unwrap();
+
+    let result = mgr.register(&mut state, dir.path());
+
+    assert!(result.is_err());
+    assert_eq!(state.workspaces.len(), 1);
+}
+
+#[test]
+fn test_register_symlink_to_existing_workspace_fails() {
+    let dir = TempDir::new().unwrap();
+    let repo = dir.path().join("repo");
+    let link = dir.path().join("repo-link");
+    std::process::Command::new("git")
+        .args(["init", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    symlink(&repo, &link).unwrap();
+
+    let mut state = HumuState::default();
+    let mgr = WorkspaceManager::new();
+    mgr.register(&mut state, &repo).unwrap();
+
+    let result = mgr.register(&mut state, &link);
+
+    assert!(result.is_err());
+    assert_eq!(state.workspaces.len(), 1);
 }
 
 #[test]
