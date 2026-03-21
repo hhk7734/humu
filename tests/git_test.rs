@@ -13,12 +13,12 @@ fn test_register_existing_repo() {
 
     let mut state = HumuState::default();
     let mgr = WorkspaceManager::new();
-    let name = mgr.register(&mut state, dir.path()).unwrap();
+    let ws_id = mgr.register(&mut state, dir.path()).unwrap();
 
-    assert!(state.ws_by_name(&name).is_some());
+    assert!(state.ws_by_id(ws_id).is_some());
     // register canonicalizes the path, so compare against the canonical form
     let canonical = std::fs::canonicalize(dir.path()).unwrap();
-    assert_eq!(state.ws_by_name(&name).unwrap().path, canonical);
+    assert_eq!(state.ws_by_id(ws_id).unwrap().path, canonical);
 }
 
 #[test]
@@ -37,11 +37,11 @@ fn test_init_new_project() {
 
     let mut state = HumuState::default();
     let mgr = WorkspaceManager::new();
-    let name = mgr.init(&mut state, &project_path).unwrap();
+    let ws_id = mgr.init(&mut state, &project_path).unwrap();
 
-    assert_eq!(name, "my-project");
+    assert_eq!(state.ws_by_id(ws_id).unwrap().name, "my-project");
     assert!(project_path.join(".git").exists());
-    assert!(state.ws_by_name("my-project").is_some());
+    assert!(state.ws_by_id(ws_id).is_some());
 }
 
 #[test]
@@ -54,9 +54,9 @@ fn test_name_collision_appends_suffix() {
     let mgr = WorkspaceManager::new();
 
     mgr.init(&mut state, &repo1).unwrap();
-    let name2 = mgr.init(&mut state, &repo2).unwrap();
+    let ws_id2 = mgr.init(&mut state, &repo2).unwrap();
 
-    assert_eq!(name2, "infra-2");
+    assert_eq!(state.ws_by_id(ws_id2).unwrap().name, "infra");
 }
 
 #[test]
@@ -64,11 +64,11 @@ fn test_delete_workspace_keeps_repo() {
     let dir = TempDir::new().unwrap();
     let mut state = HumuState::default();
     let mgr = WorkspaceManager::new();
-    let name = mgr.init(&mut state, &dir.path().join("proj")).unwrap();
+    let ws_id = mgr.init(&mut state, &dir.path().join("proj")).unwrap();
 
-    mgr.delete(&mut state, &name, false).unwrap();
+    mgr.delete(&mut state, ws_id, false).unwrap();
 
-    assert!(state.ws_by_name(&name).is_none());
+    assert!(state.ws_by_id(ws_id).is_none());
     assert!(dir.path().join("proj").exists());
 }
 
@@ -78,11 +78,11 @@ fn test_delete_workspace_removes_repo() {
     let project_path = dir.path().join("proj");
     let mut state = HumuState::default();
     let mgr = WorkspaceManager::new();
-    let name = mgr.init(&mut state, &project_path).unwrap();
+    let ws_id = mgr.init(&mut state, &project_path).unwrap();
 
-    mgr.delete(&mut state, &name, true).unwrap();
+    mgr.delete(&mut state, ws_id, true).unwrap();
 
-    assert!(state.ws_by_name(&name).is_none());
+    assert!(state.ws_by_id(ws_id).is_none());
     assert!(!project_path.exists());
 }
 

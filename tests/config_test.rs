@@ -1,6 +1,6 @@
 use humu::config::RoomEntry;
+use humu::config::create_room_for_workspace;
 use humu::config::{HumuConfig, HumuState, SplitDirection, SplitNode, TabLayout, WorkspaceEntry};
-use humu::config::{ensure_room_id_for_workspace, prune_stale_rooms_for_workspace};
 use humu::id::{RoomId, WorkspaceId};
 use humu::preset::{expand_env, resolve_preset};
 use std::collections::HashSet;
@@ -81,6 +81,7 @@ fn state_round_trip() {
             rooms: vec![RoomEntry {
                 name: "room1".to_string(),
                 id: room_id,
+                path: PathBuf::from("/tmp/ws1/room1"),
                 active_tab: Some(0),
                 tabs: vec![TabLayout {
                     name: "tab1".to_string(),
@@ -100,17 +101,17 @@ fn state_round_trip() {
     assert_eq!(loaded.active_workspace_id, Some(ws_id));
     assert_eq!(loaded.active_room_id, Some(room_id));
 
-    let ws = loaded.ws_by_name("ws1").expect("workspace not found");
+    let ws = loaded.ws_by_id(ws_id).expect("workspace not found");
     assert_eq!(ws.path, PathBuf::from("/tmp/ws1"));
     assert_eq!(ws.id, ws_id);
 
-    let room = ws.room_by_name("room1").expect("room not found");
+    let room = ws.room_by_id(room_id).expect("room not found");
     assert_eq!(room.active_tab, Some(0));
     assert_eq!(room.tabs[0].name, "tab1");
     match &room.tabs[0].split {
         SplitNode::Leaf { preset, session_id } => {
             assert_eq!(preset, "shell");
-            assert_eq!(*session_id, None);
+            assert_eq!(session_id, &None);
         }
         other => panic!("expected Leaf, got {other:?}"),
     }
@@ -172,6 +173,7 @@ fn state_round_trip_with_ids() {
         rooms: vec![RoomEntry {
             name: "main".to_string(),
             id: room_id,
+            path: PathBuf::from("/tmp/humu"),
             active_tab: None,
             tabs: vec![],
         }],
@@ -182,9 +184,9 @@ fn state_round_trip_with_ids() {
 
     assert_eq!(loaded.active_workspace_id, Some(ws_id));
     assert_eq!(loaded.active_room_id, Some(room_id));
-    let ws = loaded.ws_by_name("humu").unwrap();
+    let ws = loaded.ws_by_id(ws_id).unwrap();
     assert_eq!(ws.id, ws_id);
-    assert_eq!(ws.room_by_name("main").unwrap().id, room_id);
+    assert_eq!(ws.room_by_id(room_id).unwrap().id, room_id);
 }
 
 #[test]
@@ -259,14 +261,21 @@ fn ensure_room_id_creates_new_id() {
         rooms: vec![],
     });
 
+    let main_path = PathBuf::from("/tmp/test");
+    let dev_path = PathBuf::from("/tmp/test-dev");
+
     // First call creates ID
-    let id1 = ensure_room_id_for_workspace(&mut state, "test", "main").unwrap();
-    // Second call returns same ID
-    let id2 = ensure_room_id_for_workspace(&mut state, "test", "main").unwrap();
+    let id1 = create_room_for_workspace(&mut state, ws_id, "main", main_path.clone()).unwrap();
+    // Existing room lookup returns the same ID
+    let id2 = state
+        .ws_by_id(ws_id)
+        .and_then(|ws| ws.room_by_path(&main_path))
+        .map(|room| room.id)
+        .unwrap();
     assert_eq!(id1, id2);
 
     // Different room gets different ID
-    let id3 = ensure_room_id_for_workspace(&mut state, "test", "dev").unwrap();
+    let id3 = create_room_for_workspace(&mut state, ws_id, "dev", dev_path).unwrap();
     assert_ne!(id1, id3);
 }
 
@@ -283,25 +292,27 @@ fn prune_removes_stale_rooms() {
             RoomEntry {
                 name: "main".to_string(),
                 id: RoomId::new(),
+                path: PathBuf::from("/tmp/test"),
                 active_tab: None,
                 tabs: vec![],
             },
             RoomEntry {
                 name: "deleted-branch".to_string(),
                 id: RoomId::new(),
+                path: PathBuf::from("/tmp/test-deleted"),
                 active_tab: None,
                 tabs: vec![],
             },
         ],
     });
 
-    // Only "main" exists on disk
-    let discovered = HashSet::from(["main".to_string()]);
-    prune_stale_rooms_for_workspace(&mut state, "test", &discovered);
+    // Only the main room path still exists
+    let discovered = HashSet::from([PathBuf::from("/tmp/test")]);
+    humu::config::prune_stale_rooms_for_workspace(&mut state, ws_id, &discovered);
 
-    let ws = state.ws_by_name("test").unwrap();
-    assert!(ws.room_by_name("main").is_some());
-    assert!(ws.room_by_name("deleted-branch").is_none());
+    let ws = state.ws_by_id(ws_id).unwrap();
+    assert!(ws.rooms.iter().any(|room| room.name == "main"));
+    assert!(!ws.rooms.iter().any(|room| room.name == "deleted-branch"));
 }
 
 // ── Notifications Config ─────────────────────────────────────────────────────
