@@ -1806,7 +1806,8 @@ impl App {
             }
         }
 
-        if self.state.active_workspace_id == Some(ws_id) && self.state.active_room_id == Some(room_entry.id)
+        if self.state.active_workspace_id == Some(ws_id)
+            && self.state.active_room_id == Some(room_entry.id)
         {
             self.state.active_room_id = None;
         }
@@ -2820,30 +2821,18 @@ impl App {
     fn handle_click(&mut self, x: u16, y: u16) {
         let pos = Position::new(x, y);
         if self.panel_rects.workspace.contains(pos) {
+            let was_workspace_focused =
+                self.mode == Mode::Workspace && self.focus == FocusedPanel::Workspace;
             self.handle_action(Action::EnterMode(Mode::Workspace));
             let visual_row = y.saturating_sub(self.panel_rects.workspace.y + 1) as usize;
             let tree = self.workspace_tree_cache.clone();
             if let Some(idx) = Self::visual_row_to_tree_index(&tree, visual_row) {
+                let activate = was_workspace_focused && self.selected_tree_index == idx;
                 self.selected_tree_index = idx;
                 let item = &tree[idx];
-                match &item.kind {
-                    TreeItemKind::Workspace => {
-                        // Click on workspace: select it and switch to its last room
-                        self.workspace_selected = Some(item.workspace_id);
-                        self.room_selected = None;
-                        self.switch_to_selected_room();
-                        self.mode = Mode::Terminal;
-                        self.focus = FocusedPanel::Terminal;
-                        self.workspace_mode_entered = None;
-                    }
-                    TreeItemKind::Room => {
-                        // Click on a room: switch to it
-                        self.ensure_tree_room_selected(item);
-                        self.switch_to_selected_room();
-                        self.mode = Mode::Terminal;
-                        self.focus = FocusedPanel::Terminal;
-                        self.workspace_mode_entered = None;
-                    }
+                self.select_workspace_tree_item(item);
+                if activate {
+                    self.activate_selected_workspace_tree_item();
                 }
             }
         } else if self.panel_rects.tab_bar.contains(pos) {
@@ -3048,11 +3037,31 @@ impl App {
 
     /// Handle mouse scroll within the terminal area.
     ///
-    /// If the child process has enabled mouse reporting, forward the scroll
-    /// as a proper mouse escape sequence. Otherwise, send arrow key sequences
-    /// (3 lines per scroll tick) for programs like plain shells.
+    /// Workspace and explorer panels treat scroll as list navigation. Terminal
+    /// panes preserve the existing scrollback / mouse-reporting behavior.
     fn handle_scroll(&mut self, x: u16, y: u16, up: bool) {
         let pos = Position::new(x, y);
+        if self.panel_rects.workspace.contains(pos) {
+            self.mode = Mode::Workspace;
+            self.focus = FocusedPanel::Workspace;
+            self.workspace_mode_entered = Some(std::time::Instant::now());
+            self.navigate(if up { -1 } else { 1 });
+            return;
+        }
+
+        if self.panel_rects.explorer.contains(pos) {
+            self.mode = Mode::Explorer;
+            self.focus = FocusedPanel::Explorer;
+            if up {
+                self.explorer_state.move_up();
+            } else {
+                self.explorer_state.move_down();
+            }
+            let viewport_height = self.panel_rects.explorer.height.saturating_sub(2) as usize;
+            self.explorer_state.scroll_to_visible(viewport_height);
+            return;
+        }
+
         if !self.panel_rects.terminal.contains(pos) {
             return;
         }
@@ -3106,6 +3115,32 @@ impl App {
         if self.search_state.is_some() {
             self.run_search();
         }
+    }
+
+    fn select_workspace_tree_item(&mut self, item: &WorkspaceTreeItem) {
+        match item.kind {
+            TreeItemKind::Workspace => {
+                self.workspace_selected = Some(item.workspace_id);
+                self.room_selected = None;
+            }
+            TreeItemKind::Room => {
+                self.ensure_tree_room_selected(item);
+            }
+        }
+    }
+
+    fn activate_selected_workspace_tree_item(&mut self) {
+        let tree = self.workspace_tree_cache.clone();
+        if self.selected_tree_index >= tree.len() {
+            return;
+        }
+
+        let item = tree[self.selected_tree_index].clone();
+        self.select_workspace_tree_item(&item);
+        self.switch_to_selected_room();
+        self.mode = Mode::Terminal;
+        self.focus = FocusedPanel::Terminal;
+        self.workspace_mode_entered = None;
     }
 
     /// Handle keyboard resize actions.
@@ -3761,28 +3796,7 @@ impl App {
     fn select_current(&mut self) {
         match self.focus {
             FocusedPanel::Workspace => {
-                let tree = self.workspace_tree_cache.clone();
-                if self.selected_tree_index >= tree.len() {
-                    return;
-                }
-                let item = tree[self.selected_tree_index].clone();
-                match &item.kind {
-                    TreeItemKind::Workspace => {
-                        // Select workspace and switch to its last room
-                        self.workspace_selected = Some(item.workspace_id);
-                        self.room_selected = None;
-                        self.switch_to_selected_room();
-                        self.mode = Mode::Terminal;
-                        self.focus = FocusedPanel::Terminal;
-                    }
-                    TreeItemKind::Room => {
-                        // Switch to this room
-                        self.ensure_tree_room_selected(&item);
-                        self.switch_to_selected_room();
-                        self.mode = Mode::Terminal;
-                        self.focus = FocusedPanel::Terminal;
-                    }
-                }
+                self.activate_selected_workspace_tree_item();
             }
             FocusedPanel::Terminal => {}
             FocusedPanel::Explorer => {
@@ -4196,7 +4210,8 @@ impl App {
     }
 
     fn drop_room_runtime_state(&mut self, ws_id: WorkspaceId, room_id: RoomId) {
-        if self.state.active_workspace_id == Some(ws_id) && self.state.active_room_id == Some(room_id)
+        if self.state.active_workspace_id == Some(ws_id)
+            && self.state.active_room_id == Some(room_id)
         {
             let pane_ids: Vec<PaneId> = self.panes.keys().copied().collect();
             for pane_id in pane_ids {
@@ -4935,6 +4950,7 @@ fn base64_encode(data: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn ctrl_char(c: char) -> KeyEvent {
         KeyEvent {
@@ -4967,5 +4983,216 @@ mod tests {
     fn ctrl_hangul_jamo_emits_matching_ascii_control_byte() {
         let normalized = normalize_key_event(ctrl_char('ㅊ'));
         assert_eq!(key_event_to_bytes(&normalized), vec![0x03]);
+    }
+
+    fn test_app_with_workspace_tree(
+        state: HumuState,
+        workspace_tree_cache: Vec<WorkspaceTreeItem>,
+        room_cache: HashMap<WorkspaceId, Vec<CachedRoomInfo>>,
+    ) -> App {
+        let config = HumuConfig::default();
+        let notification_manager =
+            humu::notification::NotificationManager::from_config(&config.notifications);
+
+        App {
+            config,
+            state,
+            mode: Mode::Terminal,
+            focus: FocusedPanel::Terminal,
+            workspace_selected: None,
+            room_selected: None,
+            running: true,
+            panes: HashMap::new(),
+            tabs: TabContainer::new(),
+            focused_pane: None,
+            pane_presets: HashMap::new(),
+            popup: PopupState::None,
+            agent_states: HashMap::new(),
+            hook_rx: None,
+            hook_port: None,
+            panel_rects: PanelRects {
+                workspace: Rect::new(0, 0, 24, 8),
+                terminal: Rect::new(24, 0, 56, 20),
+                explorer: Rect::new(80, 0, 20, 20),
+                tab_bar: Rect::new(24, 0, 56, 1),
+                status_bar: Rect::new(0, 20, 100, 1),
+            },
+            panel_widths: [24, 20],
+            pty_mouse_active: false,
+            is_focused: true,
+            selection: None,
+            fullscreen_pane: None,
+            palette: humu::tui::theme::Palette::GITHUB_DARK,
+            ui_config: humu::tui::theme::UiConfig {
+                simplified_ui: false,
+                rounded_corners: true,
+            },
+            spin_tick: 0,
+            suspended_rooms: HashMap::new(),
+            search_state: None,
+            explorer_state: humu::explorer::ExplorerState::new(PathBuf::new()),
+            room_cache,
+            workspace_tree_cache,
+            selected_tree_index: 0,
+            workspace_mode_entered: None,
+            state_path: PathBuf::from("/tmp/humu-test-state.yaml"),
+            notification_manager,
+            config_path: PathBuf::from("/tmp/humu-test-config.yaml"),
+            codex_tracker: CodexTracker::new(PathBuf::from("/tmp/humu-test-codex")),
+        }
+    }
+
+    fn workspace_room_fixture() -> (App, WorkspaceId, RoomId, RoomId) {
+        let ws_id = WorkspaceId::new();
+        let local_room_id = RoomId::new();
+        let feature_room_id = RoomId::new();
+        let workspace_path = PathBuf::from("/tmp/humu-workspace");
+        let feature_path = workspace_path.join("feature");
+
+        let state = HumuState {
+            active_workspace_id: Some(ws_id),
+            active_room_id: Some(local_room_id),
+            workspaces: vec![WorkspaceEntry {
+                name: "humu".to_string(),
+                id: ws_id,
+                path: workspace_path.clone(),
+                last_room_id: Some(local_room_id),
+                rooms: vec![
+                    humu::config::RoomEntry {
+                        name: "local".to_string(),
+                        id: local_room_id,
+                        path: workspace_path.clone(),
+                        active_tab: None,
+                        tabs: vec![],
+                    },
+                    humu::config::RoomEntry {
+                        name: "feature".to_string(),
+                        id: feature_room_id,
+                        path: feature_path.clone(),
+                        active_tab: None,
+                        tabs: vec![],
+                    },
+                ],
+            }],
+            panel_widths: Some([24, 20]),
+        };
+
+        let workspace_tree_cache = vec![
+            WorkspaceTreeItem {
+                kind: TreeItemKind::Workspace,
+                name: "hhk7734/humu".to_string(),
+                active: false,
+                workspace_id: ws_id,
+                room_id: None,
+                room_path: None,
+                git_status: RoomGitStatus::default(),
+            },
+            WorkspaceTreeItem {
+                kind: TreeItemKind::Room,
+                name: "local".to_string(),
+                active: false,
+                workspace_id: ws_id,
+                room_id: Some(local_room_id),
+                room_path: Some(workspace_path.clone()),
+                git_status: RoomGitStatus::default(),
+            },
+            WorkspaceTreeItem {
+                kind: TreeItemKind::Room,
+                name: "feature".to_string(),
+                active: false,
+                workspace_id: ws_id,
+                room_id: Some(feature_room_id),
+                room_path: Some(feature_path.clone()),
+                git_status: RoomGitStatus::default(),
+            },
+        ];
+
+        let room_cache = HashMap::from([(
+            ws_id,
+            vec![
+                CachedRoomInfo {
+                    room_id: Some(local_room_id),
+                    name: "local".to_string(),
+                    path: workspace_path,
+                    git_status: RoomGitStatus::default(),
+                },
+                CachedRoomInfo {
+                    room_id: Some(feature_room_id),
+                    name: "feature".to_string(),
+                    path: feature_path,
+                    git_status: RoomGitStatus::default(),
+                },
+            ],
+        )]);
+
+        let mut app = test_app_with_workspace_tree(state, workspace_tree_cache, room_cache);
+        app.suspended_rooms.insert(
+            (ws_id, feature_room_id),
+            RoomState {
+                panes: HashMap::new(),
+                tabs: TabContainer::new(),
+                pane_presets: HashMap::new(),
+                focused_pane: None,
+                fullscreen_pane: None,
+            },
+        );
+
+        (app, ws_id, local_room_id, feature_room_id)
+    }
+
+    fn left_click(column: u16, row: u16) -> crossterm::event::MouseEvent {
+        crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    fn scroll_down(column: u16, row: u16) -> crossterm::event::MouseEvent {
+        crossterm::event::MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    #[test]
+    fn first_workspace_room_click_only_selects_and_enters_workspace_mode() {
+        let (mut app, ws_id, local_room_id, feature_room_id) = workspace_room_fixture();
+
+        app.handle_mouse(left_click(2, 4));
+
+        assert_eq!(app.selected_tree_index, 2);
+        assert_eq!(app.workspace_selected, Some(ws_id));
+        assert_eq!(app.room_selected, Some(feature_room_id));
+        assert_eq!(app.state.active_room_id, Some(local_room_id));
+        assert_eq!(app.mode, Mode::Workspace);
+        assert_eq!(app.focus, FocusedPanel::Workspace);
+    }
+
+    #[test]
+    fn second_workspace_room_click_activates_selected_room() {
+        let (mut app, ws_id, _local_room_id, feature_room_id) = workspace_room_fixture();
+
+        app.handle_mouse(left_click(2, 4));
+        app.handle_mouse(left_click(2, 4));
+
+        assert_eq!(app.state.active_workspace_id, Some(ws_id));
+        assert_eq!(app.state.active_room_id, Some(feature_room_id));
+        assert_eq!(app.mode, Mode::Terminal);
+        assert_eq!(app.focus, FocusedPanel::Terminal);
+    }
+
+    #[test]
+    fn workspace_panel_scroll_moves_selection() {
+        let (mut app, _ws_id, _local_room_id, _feature_room_id) = workspace_room_fixture();
+
+        app.handle_mouse(scroll_down(2, 2));
+
+        assert_eq!(app.selected_tree_index, 1);
+        assert_eq!(app.mode, Mode::Workspace);
+        assert_eq!(app.focus, FocusedPanel::Workspace);
     }
 }
