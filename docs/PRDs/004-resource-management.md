@@ -64,6 +64,7 @@ A working context within a workspace.
 
 - Removes the git worktree and its local branch: `git worktree remove <path>` then `git branch -D <branch>`
 - The default room cannot be deleted.
+- Deleting a room also discards that room's live/suspended terminal state. After deletion, humu switches to the same workspace's `local` room.
 
 ---
 

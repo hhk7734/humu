@@ -158,6 +158,7 @@ Suspended panes continue running in the background — their reader threads accu
 On graceful shutdown, all suspended rooms have their layouts persisted to `state.yaml` before PTY processes are dropped.
 
 When a workspace is deleted, all its entries in `suspended_rooms` are discarded. If the deleted workspace was active, live panes are cleared and humu auto-switches to the next available workspace.
+When a room is deleted, humu discards both the live runtime state and any suspended runtime state for that `(workspace_id, room_id)` pair before switching the workspace back to its `local` room.
 
 ## Claude/Gemini Hook Integration
 

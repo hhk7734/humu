@@ -168,13 +168,13 @@ impl Widget for WorkspacePanel<'_> {
             }
 
             if current_workspace_is_active {
-                let bg = Style::default().bg(self.palette.bg_tertiary);
+                let bg = Style::default().bg(self.palette.bg_workspace_section);
                 for bx in inner.x..inner.x + inner.width {
                     buf[(bx, y)].set_style(bg);
                 }
             }
             if is_active_room {
-                let bg = Style::default().bg(self.palette.bg_selected);
+                let bg = Style::default().bg(self.palette.bg_active_room);
                 for bx in inner.x..inner.x + inner.width {
                     buf[(bx, y)].set_style(bg);
                 }
@@ -205,6 +205,10 @@ impl Widget for WorkspacePanel<'_> {
                     let style = if is_selected {
                         Style::default()
                             .fg(self.palette.accent_blue)
+                            .add_modifier(Modifier::BOLD)
+                    } else if current_workspace_is_active {
+                        Style::default()
+                            .fg(self.palette.fg_primary)
                             .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(self.palette.fg_primary)
@@ -239,6 +243,12 @@ impl Widget for WorkspacePanel<'_> {
                         Style::default()
                             .fg(self.palette.accent_blue)
                             .add_modifier(Modifier::BOLD)
+                    } else if is_active_room {
+                        Style::default()
+                            .fg(self.palette.fg_primary)
+                            .add_modifier(Modifier::BOLD)
+                    } else if current_workspace_is_active {
+                        Style::default().fg(self.palette.fg_primary)
                     } else {
                         Style::default().fg(self.palette.fg_secondary)
                     };
@@ -255,13 +265,13 @@ impl Widget for WorkspacePanel<'_> {
 
                     if y < inner.y + inner.height {
                         if current_workspace_is_active {
-                            let bg = Style::default().bg(self.palette.bg_tertiary);
+                            let bg = Style::default().bg(self.palette.bg_workspace_section);
                             for bx in inner.x..inner.x + inner.width {
                                 buf[(bx, y)].set_style(bg);
                             }
                         }
                         if is_active_room {
-                            let bg = Style::default().bg(self.palette.bg_selected);
+                            let bg = Style::default().bg(self.palette.bg_active_room);
                             for bx in inner.x..inner.x + inner.width {
                                 buf[(bx, y)].set_style(bg);
                             }

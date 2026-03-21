@@ -152,6 +152,7 @@ pub enum PopupState {
         /// field index 0=Confirm (yes/no)
         fields: Vec<DialogField>,
         focused_field: usize,
+        workspace_id: WorkspaceId,
         branch: String,
     },
     NotificationSettings {
@@ -1547,8 +1548,13 @@ impl App {
             } => {
                 self.execute_workspace_delete(fields, workspace_id);
             }
-            PopupState::RoomDelete { fields, branch, .. } => {
-                self.execute_room_delete(fields, branch);
+            PopupState::RoomDelete {
+                fields,
+                workspace_id,
+                branch,
+                ..
+            } => {
+                self.execute_room_delete(fields, workspace_id, branch);
             }
             other => {
                 // Restore if we didn't handle it.
@@ -1755,7 +1761,12 @@ impl App {
         }
     }
 
-    fn execute_room_delete(&mut self, fields: Vec<DialogField>, branch: String) {
+    fn execute_room_delete(
+        &mut self,
+        fields: Vec<DialogField>,
+        ws_id: WorkspaceId,
+        branch: String,
+    ) {
         let confirmed = match &fields[0] {
             DialogField::Confirm { yes, .. } => *yes,
             _ => false,
@@ -1763,13 +1774,6 @@ impl App {
         if !confirmed {
             return;
         }
-        let ws_id = match self.state.active_workspace_id {
-            Some(id) => id,
-            None => {
-                self.show_error("No active workspace");
-                return;
-            }
-        };
         let ws = match self.state.ws_by_id(ws_id) {
             Some(w) => w,
             None => {
@@ -1777,14 +1781,47 @@ impl App {
                 return;
             }
         };
+        let Some(room_entry) = ws.rooms.iter().find(|room| room.name == branch).cloned() else {
+            self.show_error("Room not found");
+            return;
+        };
+        if room_entry.name == DEFAULT_ROOM_NAME || room_entry.path == ws.path {
+            self.show_error("The local room cannot be deleted");
+            return;
+        }
         let ws_path = ws.path.clone();
-        let worktree_path = humu_dir()
-            .join("worktrees")
-            .join(ws_id.to_string())
-            .join(&branch);
+        let worktree_path = room_entry.path.clone();
         let mgr = RoomManager::new();
         if let Err(e) = mgr.delete(&ws_path, &branch, &worktree_path) {
             self.show_error(e.to_string());
+            return;
+        }
+
+        self.drop_room_runtime_state(ws_id, room_entry.id);
+
+        if let Some(ws) = self.state.ws_by_id_mut(ws_id) {
+            ws.rooms.retain(|room| room.id != room_entry.id);
+            if ws.last_room_id == Some(room_entry.id) {
+                ws.last_room_id = None;
+            }
+        }
+
+        if self.state.active_workspace_id == Some(ws_id) && self.state.active_room_id == Some(room_entry.id)
+        {
+            self.state.active_room_id = None;
+        }
+
+        self.workspace_selected = Some(ws_id);
+        self.room_selected = self.ensure_local_room(ws_id);
+        self.refresh_room_cache();
+        self.rebuild_workspace_tree();
+        self.switch_to_selected_room();
+        self.mode = Mode::Terminal;
+        self.focus = FocusedPanel::Terminal;
+        self.workspace_mode_entered = None;
+        if let Some(path) = self.current_room_path() {
+            self.explorer_state = humu::explorer::ExplorerState::new(path);
+            self.explorer_state.scan();
         }
     }
 
@@ -3253,6 +3290,7 @@ impl App {
                         self.popup = PopupState::RoomDelete {
                             fields,
                             focused_field: 0,
+                            workspace_id: item.workspace_id,
                             branch,
                         };
                     }
@@ -4137,6 +4175,43 @@ impl App {
                     room_name,
                     path.clone(),
                 );
+            }
+        }
+    }
+
+    fn ensure_local_room(&mut self, ws_id: WorkspaceId) -> Option<RoomId> {
+        let ws_path = self.state.ws_by_id(ws_id)?.path.clone();
+        if let Some(existing) = self
+            .state
+            .ws_by_id(ws_id)
+            .and_then(|ws| ws.room_by_path(&ws_path).map(|room| room.id))
+        {
+            return Some(existing);
+        }
+
+        humu::config::create_room_for_workspace(&mut self.state, ws_id, DEFAULT_ROOM_NAME, ws_path)
+    }
+
+    fn drop_room_runtime_state(&mut self, ws_id: WorkspaceId, room_id: RoomId) {
+        if self.state.active_workspace_id == Some(ws_id) && self.state.active_room_id == Some(room_id)
+        {
+            let pane_ids: Vec<PaneId> = self.panes.keys().copied().collect();
+            for pane_id in pane_ids {
+                self.agent_states.remove(&pane_id);
+                self.codex_tracker.remove_pane(pane_id);
+            }
+            self.panes.clear();
+            self.pane_presets.clear();
+            self.tabs = TabContainer::new();
+            self.focused_pane = None;
+            self.fullscreen_pane = None;
+            self.search_state = None;
+        }
+
+        if let Some(room_state) = self.suspended_rooms.remove(&(ws_id, room_id)) {
+            for pane_id in room_state.panes.keys().copied() {
+                self.agent_states.remove(&pane_id);
+                self.codex_tracker.remove_pane(pane_id);
             }
         }
     }
