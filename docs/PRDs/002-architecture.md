@@ -14,7 +14,7 @@ humu (single binary)
 │   └── Room manager (worktree add / remove / list)
 ├── PTY Layer (portable-pty)
 │   └── Spawn shell / claude / gemini / codex processes per pane
-├── Terminal Emulation (src/pty/terminal/, vte-based)
+├── Terminal Emulation (third_party/vt100/, vte-based vendored module)
 │   └── Parse PTY output → screen buffer → ratatui cells
 ├── Hook Layer (axum HTTP server)
 │   └── HTTP server at 127.0.0.1:<random port> for Claude/Gemini events
@@ -42,7 +42,7 @@ humu (single binary)
 | Terminal I/O       | vendored crossterm (`third_party/crossterm`) |
 | Terminal backend   | crossterm    |
 | PTY               | portable-pty |
-| Terminal emulation | vte (inlined module) |
+| Terminal emulation | vte (vendored module in `third_party/vt100`) |
 | HTTP server        | axum         |
 | ID generation      | uuid         |
 
@@ -66,11 +66,11 @@ IDs are the first-class identity for all entities. Names are used only for displ
 ## Rendering Pipeline
 
 ```
-PTY output → vte parser (src/pty/terminal/) → screen buffer → ratatui cells
+PTY output → vte parser (`third_party/vt100/` via `crate::pty::terminal`) → screen buffer → ratatui cells
 User keystrokes → ratatui/crossterm → PTY input
 ```
 
-Terminal emulation uses an inlined module at `src/pty/terminal/` built on the `vte` crate. This was migrated from a vendored `vt100` crate to give direct control over the emulation layer. The module implements `vte::Perform` on a custom `Screen` struct with grid, cell, and attribute tracking.
+Terminal emulation uses a vendored module at `third_party/vt100/` built on the `vte` crate and re-exported through `crate::pty::terminal`. The module implements `vte::Perform` on a custom `Screen` struct with grid, cell, and attribute tracking.
 
 PTY reads run in a background thread with `mpsc::channel`, using `try_recv()` in the main event loop to avoid blocking. Resize events propagate to the PTY via `SIGWINCH`. Each parser is created with 10,000 lines of scrollback, and `Parser::set_scrollback(offset)` shifts the viewport into history. Scrollback auto-resets to live view on new output or keypress.
 
