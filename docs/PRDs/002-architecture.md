@@ -39,6 +39,7 @@ humu (single binary)
 | ------------------ | ------------ |
 | Language           | Rust         |
 | TUI framework      | ratatui      |
+| Terminal I/O       | vendored crossterm (`third_party/crossterm`) |
 | Terminal backend   | crossterm    |
 | PTY               | portable-pty |
 | Terminal emulation | vte (inlined module) |
@@ -73,7 +74,7 @@ Terminal emulation uses an inlined module at `src/pty/terminal/` built on the `v
 
 PTY reads run in a background thread with `mpsc::channel`, using `try_recv()` in the main event loop to avoid blocking. Resize events propagate to the PTY via `SIGWINCH`. Each parser is created with 10,000 lines of scrollback, and `Parser::set_scrollback(offset)` shifts the viewport into history. Scrollback auto-resets to live view on new output or keypress.
 
-At startup, humu enables crossterm's Kitty keyboard progressive enhancement flags (`DISAMBIGUATE_ESCAPE_CODES`, `REPORT_ALL_KEYS_AS_ESCAPE_CODES`, `REPORT_ALTERNATE_KEYS`, `REPORT_EVENT_TYPES`) when the terminal supports them. This allows modified non-ASCII keys such as `Ctrl+ㅊ` to arrive as CSI-u events and be normalized into the app's ASCII shortcut layer before passthrough to the PTY.
+At startup, humu enables crossterm's Kitty keyboard progressive enhancement flags (`DISAMBIGUATE_ESCAPE_CODES`, `REPORT_ALL_KEYS_AS_ESCAPE_CODES`, `REPORT_ALTERNATE_KEYS`, `REPORT_EVENT_TYPES`) when the terminal supports them. The project vendors `crossterm` under `third_party/crossterm` so input parsing behavior can be patched locally when upstream support is insufficient. This allows modified non-ASCII keys such as `Ctrl+ㅊ` to arrive as CSI-u events and be normalized into the app's ASCII shortcut layer before passthrough to the PTY.
 
 ### Terminal Query Responses
 
