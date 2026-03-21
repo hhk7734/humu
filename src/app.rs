@@ -462,6 +462,7 @@ impl App {
             while event::poll(Duration::from_millis(0))? {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
+                        let key = normalize_key_event(key);
                         // Reset workspace auto-return timer on any keypress.
                         if self.mode == Mode::Workspace {
                             self.workspace_mode_entered = Some(std::time::Instant::now());
@@ -493,6 +494,7 @@ impl App {
             if event::poll(Duration::from_millis(50))? {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
+                        let key = normalize_key_event(key);
                         // Reset workspace auto-return timer on any keypress.
                         if self.mode == Mode::Workspace {
                             self.workspace_mode_entered = Some(std::time::Instant::now());
@@ -4711,6 +4713,56 @@ fn csi_u_modifier(modifiers: KeyModifiers) -> u8 {
     }
 }
 
+fn normalize_key_event(mut key: KeyEvent) -> KeyEvent {
+    if key.modifiers.contains(KeyModifiers::CONTROL)
+        && let KeyCode::Char(c) = key.code
+        && let Some(mapped) = hangul_2set_jamo_to_qwerty(c)
+    {
+        key.code = KeyCode::Char(mapped);
+    }
+
+    key
+}
+
+fn hangul_2set_jamo_to_qwerty(c: char) -> Option<char> {
+    Some(match c {
+        'ㅂ' => 'q',
+        'ㅈ' => 'w',
+        'ㄷ' => 'e',
+        'ㄱ' => 'r',
+        'ㅅ' => 't',
+        'ㅛ' => 'y',
+        'ㅕ' => 'u',
+        'ㅑ' => 'i',
+        'ㅐ' => 'o',
+        'ㅔ' => 'p',
+        'ㅁ' => 'a',
+        'ㄴ' => 's',
+        'ㅇ' => 'd',
+        'ㄹ' => 'f',
+        'ㅎ' => 'g',
+        'ㅗ' => 'h',
+        'ㅓ' => 'j',
+        'ㅏ' => 'k',
+        'ㅣ' => 'l',
+        'ㅋ' => 'z',
+        'ㅌ' => 'x',
+        'ㅊ' => 'c',
+        'ㅍ' => 'v',
+        'ㅠ' => 'b',
+        'ㅜ' => 'n',
+        'ㅡ' => 'm',
+        'ㅃ' => 'q',
+        'ㅉ' => 'w',
+        'ㄸ' => 'e',
+        'ㄲ' => 'r',
+        'ㅆ' => 't',
+        'ㅒ' => 'o',
+        'ㅖ' => 'p',
+        _ => return None,
+    })
+}
+
 fn key_event_to_bytes(key: &KeyEvent) -> Vec<u8> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let alt = key.modifiers.contains(KeyModifiers::ALT);
@@ -4788,4 +4840,42 @@ fn base64_encode(data: &[u8]) -> String {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ctrl_char(c: char) -> KeyEvent {
+        KeyEvent {
+            code: KeyCode::Char(c),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        }
+    }
+
+    #[test]
+    fn normalize_key_event_maps_ctrl_hangul_jamo_to_qwerty() {
+        let normalized = normalize_key_event(ctrl_char('ㅊ'));
+        assert_eq!(normalized.code, KeyCode::Char('c'));
+    }
+
+    #[test]
+    fn normalize_key_event_leaves_plain_hangul_input_unchanged() {
+        let key = KeyEvent {
+            code: KeyCode::Char('ㅊ'),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: crossterm::event::KeyEventState::NONE,
+        };
+
+        assert_eq!(normalize_key_event(key).code, KeyCode::Char('ㅊ'));
+    }
+
+    #[test]
+    fn ctrl_hangul_jamo_emits_matching_ascii_control_byte() {
+        let normalized = normalize_key_event(ctrl_char('ㅊ'));
+        assert_eq!(key_event_to_bytes(&normalized), vec![0x03]);
+    }
 }
