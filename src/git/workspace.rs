@@ -1,6 +1,6 @@
 use crate::config::{HumuState, WorkspaceEntry};
 use crate::id::WorkspaceId;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::path::Path;
 use std::process::Command;
 
@@ -61,10 +61,7 @@ impl WorkspaceManager {
             bail!("directory is already a git repository: {}", path.display());
         }
         std::fs::create_dir_all(path)?;
-        let output = Command::new("git")
-            .arg("init")
-            .arg(path)
-            .output()?;
+        let output = Command::new("git").arg("init").arg(path).output()?;
         if !output.status.success() {
             bail!(
                 "git init failed: {}",
@@ -107,7 +104,4 @@ impl WorkspaceManager {
 
         Ok(())
     }
-
-
-
 }

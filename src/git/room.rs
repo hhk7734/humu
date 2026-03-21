@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -185,12 +185,7 @@ impl RoomManager {
     }
 
     /// Delete a room: remove worktree, then delete the local branch.
-    pub fn delete(
-        &self,
-        repo_path: &Path,
-        branch: &str,
-        worktree_path: &Path,
-    ) -> Result<()> {
+    pub fn delete(&self, repo_path: &Path, branch: &str, worktree_path: &Path) -> Result<()> {
         let output = Command::new("git")
             .arg("-C")
             .arg(repo_path)

@@ -25,17 +25,12 @@ fn same_plaintext_produces_different_ciphertexts() {
 #[test]
 fn tampered_ciphertext_fails() {
     let encrypted = crypto::encrypt("secret").unwrap();
-    let mut bytes = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        &encrypted,
-    ).unwrap();
+    let mut bytes =
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &encrypted).unwrap();
     if let Some(b) = bytes.last_mut() {
         *b ^= 0xFF;
     }
-    let tampered = base64::Engine::encode(
-        &base64::engine::general_purpose::STANDARD,
-        &bytes,
-    );
+    let tampered = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
     assert!(crypto::decrypt(&tampered).is_err());
 }
 

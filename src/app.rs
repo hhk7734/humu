@@ -1,28 +1,34 @@
+use anyhow::Result;
+use crossterm::ExecutableCommand;
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
+use crossterm::terminal::{
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+};
 use humu::codex::CodexTracker;
-use humu::config::{humu_dir, HumuConfig, HumuState, SplitDirection as CfgDir, SplitNode, TabLayout, WorkspaceEntry};
-use humu::id::{RoomId, TabId, WorkspaceId};
+use humu::config::{
+    HumuConfig, HumuState, SplitDirection as CfgDir, SplitNode, TabLayout, WorkspaceEntry, humu_dir,
+};
 use humu::git::room::{RoomGitStatus, RoomManager};
 use humu::git::workspace::WorkspaceManager;
-use humu::hook::http::{generate_hook_files, AgentState, HookEvent, HookServer};
+use humu::hook::http::{AgentState, HookEvent, HookServer, generate_hook_files};
+use humu::id::{RoomId, TabId, WorkspaceId};
 use humu::pty::pane::PtyPane;
 use humu::tui::completion::complete_path;
-use humu::tui::search::SearchState;
-use humu::tui::input::{handle_key, hint_click_action, hint_click_action_right, Action, Direction as NavDirection, Mode};
+use humu::tui::input::{
+    Action, Direction as NavDirection, Mode, handle_key, hint_click_action, hint_click_action_right,
+};
 use humu::tui::layout::{PaneId, SplitDirection, SplitTree, TabContainer};
+use humu::tui::search::SearchState;
 use humu::tui::widgets::dialog::{Dialog, DialogField};
 use humu::tui::widgets::preset_selector::PresetSelector;
 use humu::tui::widgets::status_bar::{self, StatusBar};
 use humu::tui::widgets::terminal_area::TabBar;
 use humu::tui::widgets::terminal_widget::TerminalWidget;
 use humu::tui::widgets::workspace_panel::{TreeItemKind, WorkspacePanel, WorkspaceTreeItem};
-use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
-use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
-};
-use crossterm::ExecutableCommand;
-use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use ratatui::Terminal;
+use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use std::collections::HashMap;
 use std::io::stdout;
 use std::path::PathBuf;
@@ -73,7 +79,6 @@ pub struct PanelRects {
     pub tab_bar: Rect,
     pub status_bar: Rect,
 }
-
 
 /// Active text selection state for mouse drag in terminal panes.
 #[derive(Debug, Clone)]
@@ -419,7 +424,12 @@ impl App {
                         let _ = pane.resize(inner_w, inner_h);
                     }
                 }
-                if self.panes.get_mut(&pane_id).and_then(|p| p.exit_status()).is_some() {
+                if self
+                    .panes
+                    .get_mut(&pane_id)
+                    .and_then(|p| p.exit_status())
+                    .is_some()
+                {
                     self.panes.remove(&pane_id);
                     self.pane_presets.remove(&pane_id);
                     self.popup = PopupState::None;
@@ -469,8 +479,12 @@ impl App {
                     }
                     Event::Mouse(mouse) => self.handle_mouse(mouse),
                     Event::Paste(text) => self.handle_paste_event(&text),
-                    Event::FocusGained => { self.is_focused = true; }
-                    Event::FocusLost => { self.is_focused = false; }
+                    Event::FocusGained => {
+                        self.is_focused = true;
+                    }
+                    Event::FocusLost => {
+                        self.is_focused = false;
+                    }
                     Event::Resize(_, _) => {}
                     _ => {}
                 }
@@ -496,8 +510,12 @@ impl App {
                     }
                     Event::Mouse(mouse) => self.handle_mouse(mouse),
                     Event::Paste(text) => self.handle_paste_event(&text),
-                    Event::FocusGained => { self.is_focused = true; }
-                    Event::FocusLost => { self.is_focused = false; }
+                    Event::FocusGained => {
+                        self.is_focused = true;
+                    }
+                    Event::FocusLost => {
+                        self.is_focused = false;
+                    }
                     Event::Resize(_, _) => {}
                     _ => {}
                 }
@@ -509,7 +527,6 @@ impl App {
 
             // Refresh log viewer if open.
             self.refresh_log_viewer();
-
         }
 
         if keyboard_enhanced {
@@ -634,14 +651,22 @@ impl App {
                 }
                 true
             }
-            PopupState::ExplorerDeleteConfirm { path, name, ok_selected } => {
+            PopupState::ExplorerDeleteConfirm {
+                path,
+                name,
+                ok_selected,
+            } => {
                 let path = path.clone();
                 let name = name.clone();
                 let mut ok_selected = *ok_selected;
                 match key.code {
                     KeyCode::Left | KeyCode::Right | KeyCode::Tab => {
                         ok_selected = !ok_selected;
-                        self.popup = PopupState::ExplorerDeleteConfirm { path, name, ok_selected };
+                        self.popup = PopupState::ExplorerDeleteConfirm {
+                            path,
+                            name,
+                            ok_selected,
+                        };
                     }
                     KeyCode::Enter => {
                         if ok_selected {
@@ -660,7 +685,12 @@ impl App {
     }
 
     fn handle_preset_selector_key(&mut self, key: KeyEvent) {
-        let PopupState::PresetSelector { presets, selected, action } = &self.popup else {
+        let PopupState::PresetSelector {
+            presets,
+            selected,
+            action,
+        } = &self.popup
+        else {
             return;
         };
         let presets = presets.clone();
@@ -672,11 +702,19 @@ impl App {
                 if selected + 1 < presets.len() {
                     selected += 1;
                 }
-                self.popup = PopupState::PresetSelector { presets, selected, action };
+                self.popup = PopupState::PresetSelector {
+                    presets,
+                    selected,
+                    action,
+                };
             }
             KeyCode::Up => {
                 selected = selected.saturating_sub(1);
-                self.popup = PopupState::PresetSelector { presets, selected, action };
+                self.popup = PopupState::PresetSelector {
+                    presets,
+                    selected,
+                    action,
+                };
             }
             KeyCode::Enter => {
                 let chosen = presets[selected].clone();
@@ -714,18 +752,16 @@ impl App {
                 selected = selected.saturating_sub(1);
                 self.popup = PopupState::Settings { selected };
             }
-            KeyCode::Enter => {
-                match selected {
-                    0 => {
-                        self.popup = PopupState::NotificationSettings { selected: 0 };
-                    }
-                    1 => {
-                        self.popup = PopupState::None;
-                        self.open_log_viewer();
-                    }
-                    _ => {}
+            KeyCode::Enter => match selected {
+                0 => {
+                    self.popup = PopupState::NotificationSettings { selected: 0 };
                 }
-            }
+                1 => {
+                    self.popup = PopupState::None;
+                    self.open_log_viewer();
+                }
+                _ => {}
+            },
             KeyCode::Esc => {
                 self.popup = PopupState::None;
             }
@@ -742,9 +778,26 @@ impl App {
             format!("Sound: {}", on_off(cfg.sound.enabled)),
             format!("Sound Only Unfocused: {}", on_off(cfg.sound.only_unfocused)),
             format!("Telegram: {}", on_off(cfg.telegram.enabled)),
-            format!("Telegram Only Unfocused: {}", on_off(cfg.telegram.only_unfocused)),
-            format!("Telegram Bot Token: {}", if cfg.telegram.bot_token_encrypted.is_empty() { "(not set)" } else { "****" }),
-            format!("Telegram Chat ID: {}", if cfg.telegram.chat_id_encrypted.is_empty() { "(not set)" } else { "****" }),
+            format!(
+                "Telegram Only Unfocused: {}",
+                on_off(cfg.telegram.only_unfocused)
+            ),
+            format!(
+                "Telegram Bot Token: {}",
+                if cfg.telegram.bot_token_encrypted.is_empty() {
+                    "(not set)"
+                } else {
+                    "****"
+                }
+            ),
+            format!(
+                "Telegram Chat ID: {}",
+                if cfg.telegram.chat_id_encrypted.is_empty() {
+                    "(not set)"
+                } else {
+                    "****"
+                }
+            ),
         ]
     }
 
@@ -768,8 +821,7 @@ impl App {
             }
             KeyCode::Enter | KeyCode::Char(' ') => match selected {
                 0 => {
-                    self.config.notifications.os.enabled =
-                        !self.config.notifications.os.enabled;
+                    self.config.notifications.os.enabled = !self.config.notifications.os.enabled;
                     self.rebuild_notification_manager();
                 }
                 1 => {
@@ -829,16 +881,13 @@ impl App {
 
         match key.code {
             KeyCode::Enter => {
-                let encrypted =
-                    humu::notification::crypto::encrypt(&value).unwrap_or_default();
+                let encrypted = humu::notification::crypto::encrypt(&value).unwrap_or_default();
                 match field {
                     NotificationField::BotToken => {
-                        self.config.notifications.telegram.bot_token_encrypted =
-                            encrypted;
+                        self.config.notifications.telegram.bot_token_encrypted = encrypted;
                     }
                     NotificationField::ChatId => {
-                        self.config.notifications.telegram.chat_id_encrypted =
-                            encrypted;
+                        self.config.notifications.telegram.chat_id_encrypted = encrypted;
                     }
                 }
                 self.rebuild_notification_manager();
@@ -880,7 +929,11 @@ impl App {
     }
 
     /// Forward a mouse event to the floating pane's PTY. Returns true if handled.
-    fn forward_mouse_to_floating_pane(&mut self, pane_id: PaneId, mouse: &crossterm::event::MouseEvent) -> bool {
+    fn forward_mouse_to_floating_pane(
+        &mut self,
+        pane_id: PaneId,
+        mouse: &crossterm::event::MouseEvent,
+    ) -> bool {
         let popup_area = self.floating_pane_area();
 
         let pos = Position::new(mouse.column, mouse.row);
@@ -951,7 +1004,9 @@ impl App {
     }
 
     fn show_error(&mut self, message: impl Into<String>) {
-        self.popup = PopupState::ErrorDialog { message: message.into() };
+        self.popup = PopupState::ErrorDialog {
+            message: message.into(),
+        };
     }
 
     fn rebuild_notification_manager(&mut self) {
@@ -990,7 +1045,13 @@ impl App {
     }
 
     fn refresh_log_viewer(&mut self) {
-        if let PopupState::LogViewer { lines, scroll, file_len, .. } = &mut self.popup {
+        if let PopupState::LogViewer {
+            lines,
+            scroll,
+            file_len,
+            ..
+        } = &mut self.popup
+        {
             let current_len = std::fs::metadata(humu::log::log_path())
                 .map(|m| m.len())
                 .unwrap_or(0);
@@ -1010,11 +1071,22 @@ impl App {
     fn open_log_viewer(&mut self) {
         let (lines, file_len) = Self::read_log_lines();
         let scroll = lines.len().saturating_sub(1);
-        self.popup = PopupState::LogViewer { lines, scroll, h_scroll: 0, file_len };
+        self.popup = PopupState::LogViewer {
+            lines,
+            scroll,
+            h_scroll: 0,
+            file_len,
+        };
     }
 
     fn handle_log_viewer_key(&mut self, key: KeyEvent) {
-        let PopupState::LogViewer { lines, scroll, h_scroll, .. } = &self.popup else {
+        let PopupState::LogViewer {
+            lines,
+            scroll,
+            h_scroll,
+            ..
+        } = &self.popup
+        else {
             return;
         };
         let total = lines.len();
@@ -1044,7 +1116,12 @@ impl App {
             _ => {}
         }
 
-        if let PopupState::LogViewer { scroll: ref mut s, h_scroll: ref mut hs, .. } = self.popup {
+        if let PopupState::LogViewer {
+            scroll: ref mut s,
+            h_scroll: ref mut hs,
+            ..
+        } = self.popup
+        {
             *s = scroll;
             *hs = h_scroll;
         }
@@ -1209,12 +1286,26 @@ impl App {
         let next = match *completion_selected {
             Some(idx) => {
                 if down {
-                    if idx + 1 < completions.len() { idx + 1 } else { 0 }
+                    if idx + 1 < completions.len() {
+                        idx + 1
+                    } else {
+                        0
+                    }
                 } else {
-                    if idx == 0 { completions.len() - 1 } else { idx - 1 }
+                    if idx == 0 {
+                        completions.len() - 1
+                    } else {
+                        idx - 1
+                    }
                 }
             }
-            None => if down { 0 } else { completions.len() - 1 },
+            None => {
+                if down {
+                    0
+                } else {
+                    completions.len() - 1
+                }
+            }
         };
         *completion_selected = Some(next);
         true
@@ -1275,14 +1366,32 @@ impl App {
     /// Left arrow: for Select fields cycle backwards; for Confirm toggle yes/no.
     fn dialog_field_left(&mut self) {
         match &mut self.popup {
-            PopupState::WorkspaceCreate { fields, focused_field, .. }
-            | PopupState::RoomCreate { fields, focused_field, .. }
-            | PopupState::WorkspaceDelete { fields, focused_field, .. }
-            | PopupState::RoomDelete { fields, focused_field, .. } => {
+            PopupState::WorkspaceCreate {
+                fields,
+                focused_field,
+                ..
+            }
+            | PopupState::RoomCreate {
+                fields,
+                focused_field,
+                ..
+            }
+            | PopupState::WorkspaceDelete {
+                fields,
+                focused_field,
+                ..
+            }
+            | PopupState::RoomDelete {
+                fields,
+                focused_field,
+                ..
+            } => {
                 let idx = *focused_field;
                 if idx < fields.len() {
                     match &mut fields[idx] {
-                        DialogField::Select { options, selected, .. } => {
+                        DialogField::Select {
+                            options, selected, ..
+                        } => {
                             if *selected > 0 {
                                 *selected -= 1;
                             } else {
@@ -1306,14 +1415,32 @@ impl App {
     /// Right arrow: for Select fields cycle forwards; for Confirm toggle yes/no.
     fn dialog_field_right(&mut self) {
         match &mut self.popup {
-            PopupState::WorkspaceCreate { fields, focused_field, .. }
-            | PopupState::RoomCreate { fields, focused_field, .. }
-            | PopupState::WorkspaceDelete { fields, focused_field, .. }
-            | PopupState::RoomDelete { fields, focused_field, .. } => {
+            PopupState::WorkspaceCreate {
+                fields,
+                focused_field,
+                ..
+            }
+            | PopupState::RoomCreate {
+                fields,
+                focused_field,
+                ..
+            }
+            | PopupState::WorkspaceDelete {
+                fields,
+                focused_field,
+                ..
+            }
+            | PopupState::RoomDelete {
+                fields,
+                focused_field,
+                ..
+            } => {
                 let idx = *focused_field;
                 if idx < fields.len() {
                     match &mut fields[idx] {
-                        DialogField::Select { options, selected, .. } => {
+                        DialogField::Select {
+                            options, selected, ..
+                        } => {
                             *selected = (*selected + 1) % options.len().max(1);
                         }
                         DialogField::Confirm { yes, .. } => {
@@ -1332,10 +1459,26 @@ impl App {
 
     fn dialog_field_backspace(&mut self) {
         match &mut self.popup {
-            PopupState::WorkspaceCreate { fields, focused_field, .. }
-            | PopupState::RoomCreate { fields, focused_field, .. }
-            | PopupState::WorkspaceDelete { fields, focused_field, .. }
-            | PopupState::RoomDelete { fields, focused_field, .. } => {
+            PopupState::WorkspaceCreate {
+                fields,
+                focused_field,
+                ..
+            }
+            | PopupState::RoomCreate {
+                fields,
+                focused_field,
+                ..
+            }
+            | PopupState::WorkspaceDelete {
+                fields,
+                focused_field,
+                ..
+            }
+            | PopupState::RoomDelete {
+                fields,
+                focused_field,
+                ..
+            } => {
                 let idx = *focused_field;
                 if idx < fields.len()
                     && let DialogField::TextInput { value, .. } = &mut fields[idx]
@@ -1349,10 +1492,26 @@ impl App {
 
     fn dialog_field_insert(&mut self, c: char) {
         match &mut self.popup {
-            PopupState::WorkspaceCreate { fields, focused_field, .. }
-            | PopupState::RoomCreate { fields, focused_field, .. }
-            | PopupState::WorkspaceDelete { fields, focused_field, .. }
-            | PopupState::RoomDelete { fields, focused_field, .. } => {
+            PopupState::WorkspaceCreate {
+                fields,
+                focused_field,
+                ..
+            }
+            | PopupState::RoomCreate {
+                fields,
+                focused_field,
+                ..
+            }
+            | PopupState::WorkspaceDelete {
+                fields,
+                focused_field,
+                ..
+            }
+            | PopupState::RoomDelete {
+                fields,
+                focused_field,
+                ..
+            } => {
                 let idx = *focused_field;
                 if idx < fields.len()
                     && let DialogField::TextInput { value, .. } = &mut fields[idx]
@@ -1374,7 +1533,11 @@ impl App {
             PopupState::RoomCreate { fields, .. } => {
                 self.execute_room_create(fields);
             }
-            PopupState::WorkspaceDelete { fields, workspace_id, .. } => {
+            PopupState::WorkspaceDelete {
+                fields,
+                workspace_id,
+                ..
+            } => {
                 self.execute_workspace_delete(fields, workspace_id);
             }
             PopupState::RoomDelete { fields, branch, .. } => {
@@ -1484,14 +1647,48 @@ impl App {
         };
         let ws_path = ws.path.clone();
         let ws_id_str = ws_id.to_string();
-        let base = if base_branch.is_empty() { "HEAD" } else { &base_branch };
-        let worktree_path = humu_dir()
-            .join("worktrees")
-            .join(&ws_id_str)
-            .join(&branch);
+        let base = if base_branch.is_empty() {
+            "HEAD"
+        } else {
+            &base_branch
+        };
+        let worktree_path = humu_dir().join("worktrees").join(&ws_id_str).join(&branch);
         let mgr = RoomManager::new();
         if let Err(e) = mgr.create(&ws_path, &branch, base, &worktree_path) {
             self.show_error(e.to_string());
+            return;
+        }
+
+        let room_id = self
+            .state
+            .ws_by_id(ws_id)
+            .and_then(|ws| ws.room_by_path(&worktree_path))
+            .map(|room| room.id)
+            .or_else(|| {
+                humu::config::create_room_for_workspace(
+                    &mut self.state,
+                    ws_id,
+                    &branch,
+                    worktree_path.clone(),
+                )
+            });
+
+        let Some(room_id) = room_id else {
+            self.show_error("Failed to register new room");
+            return;
+        };
+
+        self.workspace_selected = Some(ws_id);
+        self.room_selected = Some(room_id);
+        self.refresh_room_cache();
+        self.rebuild_workspace_tree();
+        self.switch_to_selected_room();
+        self.mode = Mode::Terminal;
+        self.focus = FocusedPanel::Terminal;
+        self.workspace_mode_entered = None;
+        if let Some(path) = self.current_room_path() {
+            self.explorer_state = humu::explorer::ExplorerState::new(path);
+            self.explorer_state.scan();
         }
     }
 
@@ -1603,7 +1800,12 @@ impl App {
             .split(main_chunks[0]);
 
         // Store rects for mouse hit-testing.
-        let tab_bar_rect = Rect::new(panel_chunks[1].x, panel_chunks[1].y, panel_chunks[1].width, 1);
+        let tab_bar_rect = Rect::new(
+            panel_chunks[1].x,
+            panel_chunks[1].y,
+            panel_chunks[1].width,
+            1,
+        );
         self.panel_rects = PanelRects {
             workspace: panel_chunks[0],
             terminal: panel_chunks[1],
@@ -1632,7 +1834,8 @@ impl App {
             &self.explorer_state,
             &self.palette,
             &self.ui_config,
-        ).focus(self.focus == FocusedPanel::Explorer);
+        )
+        .focus(self.focus == FocusedPanel::Explorer);
         frame.render_widget(explorer_widget, panel_chunks[2]);
 
         // Status bar
@@ -1644,7 +1847,8 @@ impl App {
             if self.mode == Mode::Search {
                 let active = state.active_index.map(|i| i + 1).unwrap_or(0);
                 let total = state.matches.len();
-                status = status.search_info(Some((active, total, state.case_sensitive, state.wrap)));
+                status =
+                    status.search_info(Some((active, total, state.case_sensitive, state.wrap)));
             }
         }
         frame.render_widget(status, main_chunks[1]);
@@ -1711,15 +1915,27 @@ impl App {
             let truncated_right = h_scroll + max_width < total_chars;
 
             if truncated_left && max_width > 3 {
-                frame.buffer_mut().set_string(inner.x, inner.y + i as u16, "...", ellipsis_style);
-                let rest: String = chars.iter().skip(h_scroll + 3).take(max_width - 3).collect();
-                frame.buffer_mut().set_string(inner.x + 3, inner.y + i as u16, &rest, style);
+                frame
+                    .buffer_mut()
+                    .set_string(inner.x, inner.y + i as u16, "...", ellipsis_style);
+                let rest: String = chars
+                    .iter()
+                    .skip(h_scroll + 3)
+                    .take(max_width - 3)
+                    .collect();
+                frame
+                    .buffer_mut()
+                    .set_string(inner.x + 3, inner.y + i as u16, &rest, style);
             } else {
-                frame.buffer_mut().set_string(inner.x, inner.y + i as u16, &visible, style);
+                frame
+                    .buffer_mut()
+                    .set_string(inner.x, inner.y + i as u16, &visible, style);
             }
             if truncated_right && max_width > 3 {
                 let col = inner.x + max_width as u16 - 3;
-                frame.buffer_mut().set_string(col, inner.y + i as u16, "...", ellipsis_style);
+                frame
+                    .buffer_mut()
+                    .set_string(col, inner.y + i as u16, "...", ellipsis_style);
             }
         }
     }
@@ -1728,7 +1944,8 @@ impl App {
         match &self.popup {
             PopupState::None => {}
             PopupState::Settings { selected } => {
-                let items: Vec<String> = Self::SETTINGS_ITEMS.iter().map(|s| s.to_string()).collect();
+                let items: Vec<String> =
+                    Self::SETTINGS_ITEMS.iter().map(|s| s.to_string()).collect();
                 frame.render_widget(
                     PresetSelector::new(&items, *selected, &self.palette, &self.ui_config)
                         .title(" Settings "),
@@ -1736,20 +1953,24 @@ impl App {
                 );
             }
             PopupState::SplitDirection => {
-                let items = vec![
-                    "\u{2193} Down".to_string(),
-                    "\u{2192} Right".to_string(),
-                ];
+                let items = vec!["\u{2193} Down".to_string(), "\u{2192} Right".to_string()];
                 frame.render_widget(
                     PresetSelector::new(&items, usize::MAX, &self.palette, &self.ui_config)
                         .title(" Press \u{2193} or \u{2192} "),
                     area,
                 );
             }
-            PopupState::LogViewer { lines, scroll, h_scroll, .. } => {
+            PopupState::LogViewer {
+                lines,
+                scroll,
+                h_scroll,
+                ..
+            } => {
                 self.render_log_viewer(frame, area, lines, *scroll, *h_scroll);
             }
-            PopupState::PresetSelector { presets, selected, .. } => {
+            PopupState::PresetSelector {
+                presets, selected, ..
+            } => {
                 frame.render_widget(
                     PresetSelector::new(presets, *selected, &self.palette, &self.ui_config),
                     area,
@@ -1773,21 +1994,50 @@ impl App {
                 dialog.completion_field = Some(1); // Path field
                 frame.render_widget(dialog, area);
             }
-            PopupState::RoomCreate { fields, focused_field } => {
+            PopupState::RoomCreate {
+                fields,
+                focused_field,
+            } => {
                 frame.render_widget(
-                    Dialog::new("Create Room", fields, *focused_field, &self.palette, &self.ui_config),
+                    Dialog::new(
+                        "Create Room",
+                        fields,
+                        *focused_field,
+                        &self.palette,
+                        &self.ui_config,
+                    ),
                     area,
                 );
             }
-            PopupState::WorkspaceDelete { fields, focused_field, .. } => {
+            PopupState::WorkspaceDelete {
+                fields,
+                focused_field,
+                ..
+            } => {
                 frame.render_widget(
-                    Dialog::new("Delete Workspace", fields, *focused_field, &self.palette, &self.ui_config),
+                    Dialog::new(
+                        "Delete Workspace",
+                        fields,
+                        *focused_field,
+                        &self.palette,
+                        &self.ui_config,
+                    ),
                     area,
                 );
             }
-            PopupState::RoomDelete { fields, focused_field, .. } => {
+            PopupState::RoomDelete {
+                fields,
+                focused_field,
+                ..
+            } => {
                 frame.render_widget(
-                    Dialog::new("Delete Room", fields, *focused_field, &self.palette, &self.ui_config),
+                    Dialog::new(
+                        "Delete Room",
+                        fields,
+                        *focused_field,
+                        &self.palette,
+                        &self.ui_config,
+                    ),
                     area,
                 );
             }
@@ -1807,13 +2057,12 @@ impl App {
                     label: title.trim().to_string(),
                     value: value.clone(),
                 }];
-                let dialog =
-                    Dialog::new(title.trim(), &fields, 0, &self.palette, &self.ui_config);
+                let dialog = Dialog::new(title.trim(), &fields, 0, &self.palette, &self.ui_config);
                 frame.render_widget(dialog, area);
             }
             PopupState::FloatingPane { pane_id, title } => {
-                use ratatui::widgets::Clear;
                 use humu::tui::widgets::terminal_widget::TerminalWidget;
+                use ratatui::widgets::Clear;
 
                 let popup_area = self.floating_pane_area();
 
@@ -1832,7 +2081,9 @@ impl App {
                         let (crow, ccol) = screen.cursor_position();
                         let cx = popup_area.x + 1 + ccol;
                         let cy = popup_area.y + 1 + crow;
-                        if cx < popup_area.x + popup_area.width && cy < popup_area.y + popup_area.height {
+                        if cx < popup_area.x + popup_area.width
+                            && cy < popup_area.y + popup_area.height
+                        {
                             frame.set_cursor_position(Position::new(cx, cy));
                         }
                     }
@@ -1856,7 +2107,11 @@ impl App {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(self.palette.accent_red))
                     .title(" Error ")
-                    .title_style(Style::default().fg(self.palette.accent_red).add_modifier(Modifier::BOLD));
+                    .title_style(
+                        Style::default()
+                            .fg(self.palette.accent_red)
+                            .add_modifier(Modifier::BOLD),
+                    );
 
                 let paragraph = Paragraph::new(message.as_str())
                     .style(Style::default().fg(self.palette.fg_primary))
@@ -1869,7 +2124,11 @@ impl App {
                 use ratatui::style::{Modifier, Style};
                 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
-                let title = if *is_dir { " New Directory " } else { " New File " };
+                let title = if *is_dir {
+                    " New Directory "
+                } else {
+                    " New File "
+                };
                 let width = 40u16.min(area.width - 4);
                 let height = 3u16;
                 let x = area.x + (area.width.saturating_sub(width)) / 2;
@@ -1882,7 +2141,11 @@ impl App {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(self.palette.accent_blue))
                     .title(title)
-                    .title_style(Style::default().fg(self.palette.accent_blue).add_modifier(Modifier::BOLD));
+                    .title_style(
+                        Style::default()
+                            .fg(self.palette.accent_blue)
+                            .add_modifier(Modifier::BOLD),
+                    );
 
                 let display = format!("{}\u{2588}", value); // value + cursor block
                 let paragraph = Paragraph::new(display)
@@ -1891,7 +2154,9 @@ impl App {
 
                 frame.render_widget(paragraph, popup_area);
             }
-            PopupState::ExplorerDeleteConfirm { name, ok_selected, .. } => {
+            PopupState::ExplorerDeleteConfirm {
+                name, ok_selected, ..
+            } => {
                 use ratatui::style::{Modifier, Style};
                 use ratatui::widgets::{Block, Borders, Clear};
 
@@ -1908,13 +2173,19 @@ impl App {
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(self.palette.accent_red))
                     .title(" Confirm Delete ")
-                    .title_style(Style::default().fg(self.palette.accent_red).add_modifier(Modifier::BOLD));
+                    .title_style(
+                        Style::default()
+                            .fg(self.palette.accent_red)
+                            .add_modifier(Modifier::BOLD),
+                    );
                 let inner = block.inner(popup_area);
                 frame.render_widget(block, popup_area);
 
                 // Message line
                 let msg_style = Style::default().fg(self.palette.fg_primary);
-                frame.buffer_mut().set_string(inner.x + 1, inner.y, &msg, msg_style);
+                frame
+                    .buffer_mut()
+                    .set_string(inner.x + 1, inner.y, &msg, msg_style);
 
                 // Buttons line
                 let btn_y = inner.y + 2;
@@ -1924,18 +2195,35 @@ impl App {
                 let btn_x = inner.x + (inner.width.saturating_sub(total_btn_width as u16)) / 2;
 
                 let cancel_style = if !ok_selected {
-                    Style::default().fg(self.palette.bg_primary).bg(self.palette.accent_blue).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(self.palette.bg_primary)
+                        .bg(self.palette.accent_blue)
+                        .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(self.palette.fg_secondary).bg(self.palette.bg_tertiary)
+                    Style::default()
+                        .fg(self.palette.fg_secondary)
+                        .bg(self.palette.bg_tertiary)
                 };
                 let ok_style = if *ok_selected {
-                    Style::default().fg(self.palette.bg_primary).bg(self.palette.accent_red).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(self.palette.bg_primary)
+                        .bg(self.palette.accent_red)
+                        .add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(self.palette.fg_secondary).bg(self.palette.bg_tertiary)
+                    Style::default()
+                        .fg(self.palette.fg_secondary)
+                        .bg(self.palette.bg_tertiary)
                 };
 
-                frame.buffer_mut().set_string(btn_x, btn_y, cancel_label, cancel_style);
-                frame.buffer_mut().set_string(btn_x + cancel_label.len() as u16 + 2, btn_y, ok_label, ok_style);
+                frame
+                    .buffer_mut()
+                    .set_string(btn_x, btn_y, cancel_label, cancel_style);
+                frame.buffer_mut().set_string(
+                    btn_x + cancel_label.len() as u16 + 2,
+                    btn_y,
+                    ok_label,
+                    ok_style,
+                );
             }
         }
     }
@@ -1977,8 +2265,14 @@ impl App {
             })
             .collect();
         let spinner_frame = SPINNER_FRAMES[self.spin_tick / 2 % SPINNER_FRAMES.len()];
-        let tab_bar = TabBar::new(&tab_names, self.tabs.active_index(), &active_indicators, &self.palette, &self.ui_config)
-            .spinner(spinner_frame);
+        let tab_bar = TabBar::new(
+            &tab_names,
+            self.tabs.active_index(),
+            &active_indicators,
+            &self.palette,
+            &self.ui_config,
+        )
+        .spinner(spinner_frame);
         frame.render_widget(tab_bar, tab_bar_area);
 
         // Render panes from active tab's split tree
@@ -2045,15 +2339,13 @@ impl App {
             // Collect exit codes while we still have mutable access.
             let exit_codes: HashMap<PaneId, Option<i32>> = rects
                 .iter()
-                .filter_map(|(pid, _)| {
-                    self.panes.get_mut(pid).map(|p| (*pid, p.exit_status()))
-                })
+                .filter_map(|(pid, _)| self.panes.get_mut(pid).map(|p| (*pid, p.exit_status())))
                 .collect();
             for (pane_id, rect) in rects {
                 if let Some(pane) = self.panes.get(&pane_id) {
                     let screen = pane.screen();
-                    let is_focused = self.focused_pane == Some(pane_id)
-                        && self.focus == FocusedPanel::Terminal;
+                    let is_focused =
+                        self.focused_pane == Some(pane_id) && self.focus == FocusedPanel::Terminal;
                     let preset_name = self
                         .pane_presets
                         .get(&pane_id)
@@ -2061,23 +2353,23 @@ impl App {
                         .unwrap_or("shell");
                     let exit_code = exit_codes.get(&pane_id).copied().flatten();
                     let sel = self.selection_for_pane(pane_id);
-                    let widget = TerminalWidget::new(
-                        &screen,
-                        preset_name,
-                        &self.palette,
-                        &self.ui_config,
-                    )
-                    .focus(is_focused)
-                    .exited(exit_code)
-                    .pane_count(pane_count)
-                    .search(
-                        if is_focused { search_matches } else { &[] },
-                        if is_focused { search_active } else { None },
-                        search_base_row,
-                    )
-                    .selection(sel);
+                    let widget =
+                        TerminalWidget::new(&screen, preset_name, &self.palette, &self.ui_config)
+                            .focus(is_focused)
+                            .exited(exit_code)
+                            .pane_count(pane_count)
+                            .search(
+                                if is_focused { search_matches } else { &[] },
+                                if is_focused { search_active } else { None },
+                                search_base_row,
+                            )
+                            .selection(sel);
                     frame.render_widget(widget, rect);
-                    if is_focused && exit_code.is_none() && !screen.hide_cursor() && screen.scrollback() == 0 {
+                    if is_focused
+                        && exit_code.is_none()
+                        && !screen.hide_cursor()
+                        && screen.scrollback() == 0
+                    {
                         let (crow, ccol) = screen.cursor_position();
                         let cx = rect.x + 1 + ccol;
                         let cy = rect.y + 1 + crow;
@@ -2320,7 +2612,11 @@ impl App {
                 if let Some(entry) = self.explorer_state.selected_entry() {
                     let path = entry.path.clone();
                     let name = entry.name.clone();
-                    self.popup = PopupState::ExplorerDeleteConfirm { path, name, ok_selected: false };
+                    self.popup = PopupState::ExplorerDeleteConfirm {
+                        path,
+                        name,
+                        ok_selected: false,
+                    };
                 }
             }
 
@@ -2437,7 +2733,11 @@ impl App {
         let cols = screen.size().1;
         for row in start_row..=end_row {
             let from = if row == start_row { start_col } else { 0 };
-            let to = if row == end_row { end_col } else { cols.saturating_sub(1) };
+            let to = if row == end_row {
+                end_col
+            } else {
+                cols.saturating_sub(1)
+            };
             for col in from..=to {
                 if let Some(cell) = screen.cell(row, col) {
                     // Skip continuation cells of wide characters (e.g., CJK)
@@ -2494,8 +2794,7 @@ impl App {
                     }
                     TreeItemKind::Room => {
                         // Click on a room: switch to it
-                        self.workspace_selected = Some(item.workspace_id);
-                        self.room_selected = item.room_id;
+                        self.ensure_tree_room_selected(item);
                         self.switch_to_selected_room();
                         self.mode = Mode::Terminal;
                         self.focus = FocusedPanel::Terminal;
@@ -2595,9 +2894,10 @@ impl App {
         let right_hints = status_bar::mode_hints_right(self.mode);
         if !right_hints.is_empty() {
             let alt_prefix_width: u16 = 1 + 7 + 1; // sep + " Alt + " + sep
-            let hints_width: u16 = right_hints.iter().map(|(k, l)| {
-                status_bar::hint_segment_width(k, l)
-            }).sum();
+            let hints_width: u16 = right_hints
+                .iter()
+                .map(|(k, l)| status_bar::hint_segment_width(k, l))
+                .sum();
             let total_right = hints_width + alt_prefix_width;
             let mut rx = area.x + area.width.saturating_sub(total_right);
             for (i, (key, lbl)) in right_hints.iter().enumerate() {
@@ -2612,7 +2912,6 @@ impl App {
             }
         }
     }
-
 
     /// Returns the pane content area (terminal area minus the tab bar row).
     fn terminal_pane_area(&self) -> Rect {
@@ -2649,14 +2948,12 @@ impl App {
             .or_else(|| {
                 // Pane not at mouse position (drag outside) — find focused pane's rect.
                 let pane_area = self.terminal_pane_area();
-                self.tabs
-                    .active_tree()
-                    .and_then(|t| {
-                        t.compute_rects(pane_area)
-                            .into_iter()
-                            .find(|(id, _)| *id == pane_id)
-                            .map(|(_, rect)| rect)
-                    })
+                self.tabs.active_tree().and_then(|t| {
+                    t.compute_rects(pane_area)
+                        .into_iter()
+                        .find(|(id, _)| *id == pane_id)
+                        .map(|(_, rect)| rect)
+                })
             })
             .unwrap_or_else(|| self.terminal_pane_area());
 
@@ -2786,8 +3083,7 @@ impl App {
                     NavDirection::Left => -1,
                     _ => 0,
                 };
-                self.panel_widths[0] =
-                    (self.panel_widths[0] as i16 + delta).clamp(5, 60) as u16;
+                self.panel_widths[0] = (self.panel_widths[0] as i16 + delta).clamp(5, 60) as u16;
             }
             FocusedPanel::Explorer => {
                 let delta: i16 = match dir {
@@ -2795,15 +3091,19 @@ impl App {
                     NavDirection::Left => -1,
                     _ => 0,
                 };
-                self.panel_widths[1] =
-                    (self.panel_widths[1] as i16 + delta).clamp(5, 60) as u16;
+                self.panel_widths[1] = (self.panel_widths[1] as i16 + delta).clamp(5, 60) as u16;
             }
         }
     }
 
     /// Handle tab bar clicks: switch tabs or open new tab via "+".
     fn handle_tab_bar_click(&mut self, x: u16) {
-        let tab_names = self.tabs.tab_names().iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let tab_names = self
+            .tabs
+            .tab_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
         let mut cursor = self.panel_rects.tab_bar.x;
         for (i, name) in tab_names.iter().enumerate() {
             // Tab text is " {name} " — 2 extra chars (leading + trailing space).
@@ -2838,7 +3138,11 @@ impl App {
             self.mode = Mode::Terminal;
             return;
         }
-        self.popup = PopupState::PresetSelector { presets, selected: 0, action };
+        self.popup = PopupState::PresetSelector {
+            presets,
+            selected: 0,
+            action,
+        };
     }
 
     /// Show create room dialog (n in workspace mode).
@@ -2859,7 +3163,10 @@ impl App {
                         value: String::new(),
                     },
                 ];
-                self.popup = PopupState::RoomCreate { fields, focused_field: 0 };
+                self.popup = PopupState::RoomCreate {
+                    fields,
+                    focused_field: 0,
+                };
             }
             FocusedPanel::Terminal => {}
             FocusedPanel::Explorer => {}
@@ -2900,7 +3207,9 @@ impl App {
         match self.focus {
             FocusedPanel::Workspace => {
                 let tree = self.workspace_tree_cache.clone();
-                if self.selected_tree_index >= tree.len() { return; }
+                if self.selected_tree_index >= tree.len() {
+                    return;
+                }
                 let item = &tree[self.selected_tree_index];
                 match &item.kind {
                     TreeItemKind::Workspace => {
@@ -2921,7 +3230,9 @@ impl App {
                         };
                     }
                     TreeItemKind::Room => {
-                        let branch = match self.state.ws_by_id(item.workspace_id)
+                        let branch = match self
+                            .state
+                            .ws_by_id(item.workspace_id)
                             .and_then(|ws| item.room_id.and_then(|rid| ws.room_by_id(rid)))
                             .map(|r| r.name.clone())
                         {
@@ -3058,7 +3369,6 @@ impl App {
                 AgentStateEntry {
                     state: AgentState::Idle,
                     session_id: restored_session_id.clone(),
-
                 },
             );
         }
@@ -3073,7 +3383,8 @@ impl App {
 
     fn new_tab_with_preset(&mut self, preset_name: &str) {
         if let Some(new_id) = self.spawn_pane(preset_name, None) {
-            self.tabs.add_tab(preset_name.to_string(), SplitTree::leaf(new_id));
+            self.tabs
+                .add_tab(preset_name.to_string(), SplitTree::leaf(new_id));
             let last = self.tabs.len() - 1;
             self.tabs.set_active(last);
             self.focused_pane = Some(new_id);
@@ -3211,7 +3522,12 @@ impl App {
                 .filter(|(id, r)| {
                     *id != focused
                         && r.x + r.width <= focused_rect.x
-                        && ranges_overlap(r.y, r.y + r.height, focused_rect.y, focused_rect.y + focused_rect.height)
+                        && ranges_overlap(
+                            r.y,
+                            r.y + r.height,
+                            focused_rect.y,
+                            focused_rect.y + focused_rect.height,
+                        )
                 })
                 .max_by_key(|(_, r)| r.x + r.width),
 
@@ -3220,7 +3536,12 @@ impl App {
                 .filter(|(id, r)| {
                     *id != focused
                         && r.x >= focused_rect.x + focused_rect.width
-                        && ranges_overlap(r.y, r.y + r.height, focused_rect.y, focused_rect.y + focused_rect.height)
+                        && ranges_overlap(
+                            r.y,
+                            r.y + r.height,
+                            focused_rect.y,
+                            focused_rect.y + focused_rect.height,
+                        )
                 })
                 .min_by_key(|(_, r)| r.x),
 
@@ -3229,7 +3550,12 @@ impl App {
                 .filter(|(id, r)| {
                     *id != focused
                         && r.y + r.height <= focused_rect.y
-                        && ranges_overlap(r.x, r.x + r.width, focused_rect.x, focused_rect.x + focused_rect.width)
+                        && ranges_overlap(
+                            r.x,
+                            r.x + r.width,
+                            focused_rect.x,
+                            focused_rect.x + focused_rect.width,
+                        )
                 })
                 .max_by_key(|(_, r)| r.y + r.height),
 
@@ -3238,7 +3564,12 @@ impl App {
                 .filter(|(id, r)| {
                     *id != focused
                         && r.y >= focused_rect.y + focused_rect.height
-                        && ranges_overlap(r.x, r.x + r.width, focused_rect.x, focused_rect.x + focused_rect.width)
+                        && ranges_overlap(
+                            r.x,
+                            r.x + r.width,
+                            focused_rect.x,
+                            focused_rect.x + focused_rect.width,
+                        )
                 })
                 .min_by_key(|(_, r)| r.y),
         };
@@ -3361,7 +3692,9 @@ impl App {
         match self.focus {
             FocusedPanel::Workspace => {
                 let tree = self.workspace_tree_cache.clone();
-                if tree.is_empty() { return; }
+                if tree.is_empty() {
+                    return;
+                }
                 let current = self.selected_tree_index as i32;
                 let next = (current + delta).clamp(0, tree.len() as i32 - 1) as usize;
                 self.selected_tree_index = next;
@@ -3381,7 +3714,9 @@ impl App {
         match self.focus {
             FocusedPanel::Workspace => {
                 let tree = self.workspace_tree_cache.clone();
-                if self.selected_tree_index >= tree.len() { return; }
+                if self.selected_tree_index >= tree.len() {
+                    return;
+                }
                 let item = tree[self.selected_tree_index].clone();
                 match &item.kind {
                     TreeItemKind::Workspace => {
@@ -3394,8 +3729,7 @@ impl App {
                     }
                     TreeItemKind::Room => {
                         // Switch to this room
-                        self.workspace_selected = Some(item.workspace_id);
-                        self.room_selected = item.room_id;
+                        self.ensure_tree_room_selected(&item);
                         self.switch_to_selected_room();
                         self.mode = Mode::Terminal;
                         self.focus = FocusedPanel::Terminal;
@@ -3410,9 +3744,6 @@ impl App {
     }
 
     fn restore_selection(&mut self) {
-        // Prune stale room entries for every workspace before restoring selection.
-        // Discover actual rooms from git and remove any persisted entries that no
-        // longer correspond to a live worktree.
         let ws_info: Vec<(WorkspaceId, PathBuf)> = self
             .state
             .workspaces
@@ -3420,23 +3751,16 @@ impl App {
             .map(|w| (w.id, w.path.clone()))
             .collect();
         for (ws_id, ws_path) in ws_info {
-            let mgr = RoomManager::new();
-            if let Ok(rooms) = mgr.list(&ws_path) {
-                let discovered: std::collections::HashSet<PathBuf> =
-                    rooms.into_iter().map(|r| r.path).collect();
-                humu::config::prune_stale_rooms_for_workspace(
-                    &mut self.state,
-                    ws_id,
-                    &discovered,
-                );
-            }
+            self.sync_workspace_rooms(ws_id, &ws_path);
         }
 
         self.workspace_selected = self.state.active_workspace_id;
         self.room_selected = self.state.active_room_id;
 
         // Restore layout if saved
-        if let (Some(ws_id), Some(room_id)) = (self.state.active_workspace_id, self.state.active_room_id) {
+        if let (Some(ws_id), Some(room_id)) =
+            (self.state.active_workspace_id, self.state.active_room_id)
+        {
             if let Some(ws) = self.state.ws_by_id(ws_id) {
                 if let Some(room) = ws.room_by_id(room_id) {
                     if !room.tabs.is_empty() {
@@ -3511,7 +3835,9 @@ impl App {
                     .map(WorkspaceId)
                     .and_then(|ws_id| {
                         let ws = self.state.ws_by_id(ws_id)?;
-                        let room_uuid = event.room_id.as_deref()
+                        let room_uuid = event
+                            .room_id
+                            .as_deref()
                             .and_then(|s| uuid::Uuid::parse_str(s).ok())?;
                         ws.room_by_id(RoomId(room_uuid)).map(|r| r.name.clone())
                     })
@@ -3524,15 +3850,14 @@ impl App {
                             room: room_name,
                         }
                     }
-                    AgentState::Idle => {
-                        humu::notification::NotificationEvent::AgentFinished {
-                            workspace: ws_name,
-                            room: room_name,
-                        }
-                    }
+                    AgentState::Idle => humu::notification::NotificationEvent::AgentFinished {
+                        workspace: ws_name,
+                        room: room_name,
+                    },
                     _ => continue,
                 };
-                self.notification_manager.notify(notification_event, self.is_focused);
+                self.notification_manager
+                    .notify(notification_event, self.is_focused);
             }
         }
     }
@@ -3608,6 +3933,7 @@ impl App {
                 active: ws_active,
                 workspace_id: ws.id,
                 room_id: None,
+                room_path: None,
                 git_status: RoomGitStatus::default(),
             });
 
@@ -3619,6 +3945,7 @@ impl App {
                     active: r.active,
                     workspace_id: ws.id,
                     room_id: r.id,
+                    room_path: Some(r.path.clone()),
                     git_status: r.git_status,
                 });
             }
@@ -3716,21 +4043,30 @@ impl App {
         let mgr = RoomManager::new();
         let ws_ids: Vec<WorkspaceId> = self.state.workspaces.iter().map(|w| w.id).collect();
         for ws_id in ws_ids {
+            let ws_path = match self.state.ws_by_id(ws_id) {
+                Some(ws) => ws.path.clone(),
+                None => continue,
+            };
+
+            self.sync_workspace_rooms(ws_id, &ws_path);
+
             let ws = match self.state.ws_by_id(ws_id) {
                 Some(ws) => ws,
                 None => continue,
             };
-            if let Ok(rooms) = mgr.list(&ws.path) {
+            if let Ok(rooms) = mgr.list(&ws_path) {
                 let cached: Vec<CachedRoomInfo> = rooms
                     .into_iter()
                     .map(|r| {
                         let existing = ws.room_by_path(&r.path);
                         let room_id = existing.map(|e| e.id);
-                        let name = existing
-                            .map(|e| e.name.clone())
-                            .unwrap_or_else(|| {
-                                if r.is_default { DEFAULT_ROOM_NAME.to_string() } else { r.branch }
-                            });
+                        let name = existing.map(|e| e.name.clone()).unwrap_or_else(|| {
+                            if r.is_default {
+                                DEFAULT_ROOM_NAME.to_string()
+                            } else {
+                                r.branch
+                            }
+                        });
                         let git_status = mgr.status(&r.path);
                         CachedRoomInfo {
                             room_id,
@@ -3741,6 +4077,59 @@ impl App {
                     })
                     .collect();
                 self.room_cache.insert(ws_id, cached);
+            }
+        }
+    }
+
+    fn sync_workspace_rooms(&mut self, ws_id: WorkspaceId, ws_path: &std::path::Path) {
+        let mgr = RoomManager::new();
+        let Ok(rooms) = mgr.list(ws_path) else {
+            return;
+        };
+
+        let discovered: std::collections::HashSet<PathBuf> =
+            rooms.iter().map(|r| r.path.clone()).collect();
+        humu::config::prune_stale_rooms_for_workspace(&mut self.state, ws_id, &discovered);
+
+        for room in rooms {
+            let exists = self
+                .state
+                .ws_by_id(ws_id)
+                .and_then(|ws| ws.room_by_path(&room.path))
+                .is_some();
+            if !exists {
+                let room_name = if room.is_default {
+                    DEFAULT_ROOM_NAME
+                } else {
+                    room.branch.as_str()
+                };
+                let _ = humu::config::create_room_for_workspace(
+                    &mut self.state,
+                    ws_id,
+                    room_name,
+                    room.path,
+                );
+            }
+        }
+    }
+
+    fn ensure_tree_room_selected(&mut self, item: &WorkspaceTreeItem) {
+        self.workspace_selected = Some(item.workspace_id);
+        self.room_selected = item.room_id;
+
+        if self.room_selected.is_none() {
+            if let Some(path) = &item.room_path {
+                let room_name = if item.name.is_empty() {
+                    DEFAULT_ROOM_NAME
+                } else {
+                    item.name.as_str()
+                };
+                self.room_selected = humu::config::create_room_for_workspace(
+                    &mut self.state,
+                    item.workspace_id,
+                    room_name,
+                    path.clone(),
+                );
             }
         }
     }
@@ -3801,7 +4190,10 @@ impl App {
         match tree {
             SplitTree::Leaf(pane_id) => {
                 let preset = self.pane_presets.get(pane_id)?.clone();
-                let session_id = self.agent_states.get(pane_id).and_then(|e| e.session_id.clone());
+                let session_id = self
+                    .agent_states
+                    .get(pane_id)
+                    .and_then(|e| e.session_id.clone());
                 Some(SplitNode::Leaf { preset, session_id })
             }
             SplitTree::Split {
@@ -4036,7 +4428,15 @@ impl App {
     }
 
     /// Spawn an arbitrary command in a new PTY pane without going through presets.
-    fn spawn_command(&mut self, cmd: &str, args: &[String], cwd: &std::path::Path, preset_name: &str, cols: u16, rows: u16) -> Option<PaneId> {
+    fn spawn_command(
+        &mut self,
+        cmd: &str,
+        args: &[String],
+        cwd: &std::path::Path,
+        preset_name: &str,
+        cols: u16,
+        rows: u16,
+    ) -> Option<PaneId> {
         let id = PaneId::new();
         let pane = PtyPane::spawn_with_envs(cmd, args, Some(cwd), cols, rows, &[]).ok()?;
         self.panes.insert(id, pane);
@@ -4079,13 +4479,18 @@ impl App {
             _ => return,
         };
         if !self.explorer_state.check_delta() {
-            self.show_error("delta not installed — install from https://github.com/dandavison/delta");
+            self.show_error(
+                "delta not installed — install from https://github.com/dandavison/delta",
+            );
             return;
         }
         let cwd = self.explorer_state.root.clone();
         let rel_path = entry.path.strip_prefix(&cwd).unwrap_or(&entry.path);
         let escaped_path = rel_path.display().to_string().replace('\'', "'\\''");
-        let diff_cmd = format!("git diff '{}' | delta --side-by-side --paging=always", escaped_path);
+        let diff_cmd = format!(
+            "git diff '{}' | delta --side-by-side --paging=always",
+            escaped_path
+        );
         let args = vec!["-c".to_string(), diff_cmd];
         let title = format!("diff: {}", entry.name);
         let fp = self.floating_pane_area();
@@ -4116,7 +4521,11 @@ impl App {
             if entry.kind == humu::explorer::FileKind::Directory {
                 entry.path.clone()
             } else {
-                entry.path.parent().unwrap_or(&self.explorer_state.root).to_path_buf()
+                entry
+                    .path
+                    .parent()
+                    .unwrap_or(&self.explorer_state.root)
+                    .to_path_buf()
             }
         } else {
             self.explorer_state.root.clone()
@@ -4141,7 +4550,12 @@ impl App {
             self.explorer_state.expanded_dirs.insert(parent);
             self.explorer_state.scan();
             // Select the newly created entry.
-            if let Some(idx) = self.explorer_state.entries.iter().position(|e| e.path == target) {
+            if let Some(idx) = self
+                .explorer_state
+                .entries
+                .iter()
+                .position(|e| e.path == target)
+            {
                 self.explorer_state.selected = idx;
                 let viewport = self.panel_rects.explorer.height.saturating_sub(2) as usize;
                 self.explorer_state.scroll_to_visible(viewport);
@@ -4201,7 +4615,10 @@ impl App {
                 Some(r) => {
                     // Room exists in git but not in state — create the entry.
                     match humu::config::create_room_for_workspace(
-                        &mut self.state, target_ws_id, &r.name, r.path.clone(),
+                        &mut self.state,
+                        target_ws_id,
+                        &r.name,
+                        r.path.clone(),
                     ) {
                         Some(id) => {
                             self.room_selected = Some(id);
@@ -4217,7 +4634,10 @@ impl App {
                         None => return,
                     };
                     match humu::config::create_room_for_workspace(
-                        &mut self.state, target_ws_id, DEFAULT_ROOM_NAME, ws_path,
+                        &mut self.state,
+                        target_ws_id,
+                        DEFAULT_ROOM_NAME,
+                        ws_path,
                     ) {
                         Some(id) => {
                             self.room_selected = Some(id);
@@ -4230,7 +4650,9 @@ impl App {
         };
 
         // Save last room on the current workspace before suspending.
-        if let (Some(ws_id), Some(room_id)) = (self.state.active_workspace_id, self.state.active_room_id) {
+        if let (Some(ws_id), Some(room_id)) =
+            (self.state.active_workspace_id, self.state.active_room_id)
+        {
             if let Some(ws) = self.state.ws_by_id_mut(ws_id) {
                 ws.last_room_id = Some(room_id);
             }
@@ -4258,7 +4680,6 @@ impl App {
 
         self.save_state();
     }
-
 }
 
 impl Drop for App {
@@ -4275,9 +4696,19 @@ fn ranges_overlap(a_start: u16, a_end: u16, b_start: u16, b_end: u16) -> bool {
 
 /// Compute the CSI u modifier parameter: 1 + bitmask(shift=1, alt=2, ctrl=4).
 fn csi_u_modifier(modifiers: KeyModifiers) -> u8 {
-    1 + if modifiers.contains(KeyModifiers::SHIFT) { 1 } else { 0 }
-        + if modifiers.contains(KeyModifiers::ALT) { 2 } else { 0 }
-        + if modifiers.contains(KeyModifiers::CONTROL) { 4 } else { 0 }
+    1 + if modifiers.contains(KeyModifiers::SHIFT) {
+        1
+    } else {
+        0
+    } + if modifiers.contains(KeyModifiers::ALT) {
+        2
+    } else {
+        0
+    } + if modifiers.contains(KeyModifiers::CONTROL) {
+        4
+    } else {
+        0
+    }
 }
 
 fn key_event_to_bytes(key: &KeyEvent) -> Vec<u8> {
@@ -4287,13 +4718,21 @@ fn key_event_to_bytes(key: &KeyEvent) -> Vec<u8> {
     match key.code {
         KeyCode::Char(c) if ctrl => {
             let base = vec![(c as u8) & 0x1f];
-            if alt { [b"\x1b".as_slice(), &base].concat() } else { base }
+            if alt {
+                [b"\x1b".as_slice(), &base].concat()
+            } else {
+                base
+            }
         }
         KeyCode::Char(c) => {
             let mut buf = [0u8; 4];
             let s = c.encode_utf8(&mut buf);
             let base = s.as_bytes().to_vec();
-            if alt { [b"\x1b".as_slice(), &base].concat() } else { base }
+            if alt {
+                [b"\x1b".as_slice(), &base].concat()
+            } else {
+                base
+            }
         }
         KeyCode::Enter if has_modifier => {
             // CSI u format: \x1b[13;{modifier}u
@@ -4326,7 +4765,6 @@ fn key_event_to_bytes(key: &KeyEvent) -> Vec<u8> {
         _ => vec![],
     }
 }
-
 
 fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

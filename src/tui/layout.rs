@@ -129,8 +129,7 @@ impl SplitTree {
                     *ratio = (*ratio + delta).clamp(0.1, 0.9);
                     true
                 } else {
-                    children.0.resize(target, delta)
-                        || children.1.resize(target, delta)
+                    children.0.resize(target, delta) || children.1.resize(target, delta)
                 }
             }
         }
@@ -207,7 +206,10 @@ impl TabContainer {
     }
 
     pub fn active_name(&self) -> &str {
-        self.tabs.get(self.active).map(|t| t.name.as_str()).unwrap_or("")
+        self.tabs
+            .get(self.active)
+            .map(|t| t.name.as_str())
+            .unwrap_or("")
     }
 
     pub fn tab_names(&self) -> Vec<&str> {

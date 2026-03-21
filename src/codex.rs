@@ -174,12 +174,10 @@ fn find_session_path_by_id(root: &Path, session_id: &str) -> Option<PathBuf> {
     None
 }
 
-fn find_session_path_for_cwd(
-    root: &Path,
-    cwd: &Path,
-    started_at: SystemTime,
-) -> Option<PathBuf> {
-    let slack = started_at.checked_sub(Duration::from_secs(10)).unwrap_or(SystemTime::UNIX_EPOCH);
+fn find_session_path_for_cwd(root: &Path, cwd: &Path, started_at: SystemTime) -> Option<PathBuf> {
+    let slack = started_at
+        .checked_sub(Duration::from_secs(10))
+        .unwrap_or(SystemTime::UNIX_EPOCH);
     let mut best: Option<(SystemTime, PathBuf)> = None;
 
     for path in session_files(root) {
@@ -189,7 +187,9 @@ fn find_session_path_for_cwd(
         if meta.payload.cwd != cwd {
             continue;
         }
-        let modified = fs::metadata(&path).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
+        let modified = fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
         if modified < slack {
             continue;
         }

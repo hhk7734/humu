@@ -1,10 +1,10 @@
+use crate::pty::terminal::Screen;
 use crate::tui::search::SearchMatch;
 use crate::tui::theme::{Palette, UiConfig};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
-use crate::pty::terminal::Screen;
 
 pub struct TerminalWidget<'a> {
     screen: &'a Screen,
@@ -152,11 +152,9 @@ impl Widget for TerminalWidget<'_> {
                 if px >= area.x + area.width - 1 {
                     break;
                 }
-                buf[(px, area.y + area.height - 1)].set_char(ch).set_style(
-                    Style::default()
-                        .fg(exit_color)
-                        .add_modifier(Modifier::BOLD),
-                );
+                buf[(px, area.y + area.height - 1)]
+                    .set_char(ch)
+                    .set_style(Style::default().fg(exit_color).add_modifier(Modifier::BOLD));
             }
             let exit_end = area.x + 3 + exit_label.len() as u16;
             for x in exit_end..area.x + area.width - 1 {
@@ -220,8 +218,16 @@ impl Widget for TerminalWidget<'_> {
                             style = style.add_modifier(Modifier::UNDERLINED);
                         }
                         if cell.inverse() {
-                            let real_fg = if fg == Color::Reset { self.palette.fg_primary } else { fg };
-                            let real_bg = if bg == Color::Reset { self.palette.bg_primary } else { bg };
+                            let real_fg = if fg == Color::Reset {
+                                self.palette.fg_primary
+                            } else {
+                                fg
+                            };
+                            let real_bg = if bg == Color::Reset {
+                                self.palette.bg_primary
+                            } else {
+                                bg
+                            };
                             style = style.fg(real_bg).bg(real_fg);
                         }
                         if cell.hidden() {
@@ -262,11 +268,7 @@ impl Widget for TerminalWidget<'_> {
                 if sx < inner.right() && sy < inner.bottom() {
                     let cell = &mut buf[(sx, sy)];
                     if is_active {
-                        cell.set_style(
-                            Style::default()
-                                .fg(Color::Rgb(13, 17, 23))
-                                .bg(hl_bg),
-                        );
+                        cell.set_style(Style::default().fg(Color::Rgb(13, 17, 23)).bg(hl_bg));
                     } else {
                         cell.set_style(cell.style().bg(hl_bg));
                     }
@@ -282,7 +284,11 @@ impl Widget for TerminalWidget<'_> {
                     break;
                 }
                 let from = if row == sr { sc } else { 0 };
-                let to = if row == er { ec } else { cols.saturating_sub(1) };
+                let to = if row == er {
+                    ec
+                } else {
+                    cols.saturating_sub(1)
+                };
                 for col in from..=to {
                     if col >= cols {
                         break;

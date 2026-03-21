@@ -116,5 +116,4 @@ impl Attrs {
             self.mode &= !TEXT_MODE_STRIKE;
         }
     }
-
 }

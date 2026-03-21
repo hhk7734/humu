@@ -50,12 +50,14 @@ A working context within a workspace.
   - `workspaceName` = repo name
   - `roomName` = branch name
 - Maps to: `git worktree add -b <branch> <path> <baseBranch>`
+- On success, humu immediately registers the new room in `state.yaml`, refreshes the workspace tree/cache, and switches the active room to the new worktree.
 
 ### Select
 
 - Click a room in `RoomPanel` (enters Room mode) or use `Ctrl+r`. Terminal panes switch to the selected room's context.
 - Terminal panes are room-scoped: if no room is selected, the terminal area is empty and pane/tab creation is blocked.
 - **State preservation**: Switching rooms suspends the current room's live PTY panes rather than killing them. Switching back restores panes instantly with full terminal history. See Architecture > Room Suspension for details.
+- Rooms discovered from `git worktree list` are materialized into `state.yaml` during startup and cache refresh so externally-created worktrees are selectable immediately.
 
 ### Delete
 
@@ -123,4 +125,3 @@ workspaces:
 ```
 
 Workspaces and rooms are lists with `name` and `id` fields. Room layout (tabs, panes) is stored directly in the room entry. IDs are UUIDs assigned lazily on first discovery. On startup, stale room entries (worktrees that no longer exist) are pruned. If a room exists in git but not in the state, it is created using the git-discovered branch name.
-

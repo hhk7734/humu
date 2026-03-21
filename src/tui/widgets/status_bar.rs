@@ -130,30 +130,50 @@ impl<'a> StatusBar<'a> {
         left_pointing: bool,
     ) {
         let tab_chars = self.ui_config.tab_chars();
-        let sep = if left_pointing { tab_chars.separator_left } else { tab_chars.separator };
+        let sep = if left_pointing {
+            tab_chars.separator_left
+        } else {
+            tab_chars.separator
+        };
         let normal_bg = Color::Rgb(139, 148, 158);
         let outer_bg = self.palette.bg_secondary;
         for &(key, label, active) in hints {
-            let bg = if active { self.palette.accent_cyan } else { normal_bg };
+            let bg = if active {
+                self.palette.accent_cyan
+            } else {
+                normal_bg
+            };
             let w = hint_segment_width(key, label);
             if *x + w > area.x + area.width {
                 break;
             }
             // Arrow fg/bg: left-pointing swaps the colors vs right-pointing
-            let (entry_fg, entry_bg) = if left_pointing { (bg, outer_bg) } else { (outer_bg, bg) };
-            let (exit_fg, exit_bg) = if left_pointing { (outer_bg, bg) } else { (bg, outer_bg) };
+            let (entry_fg, entry_bg) = if left_pointing {
+                (bg, outer_bg)
+            } else {
+                (outer_bg, bg)
+            };
+            let (exit_fg, exit_bg) = if left_pointing {
+                (outer_bg, bg)
+            } else {
+                (bg, outer_bg)
+            };
             // Entry arrow
             if *x < area.x + area.width {
-                buf[(*x, area.y)].set_symbol(sep).set_style(
-                    Style::default().fg(entry_fg).bg(entry_bg),
-                );
+                buf[(*x, area.y)]
+                    .set_symbol(sep)
+                    .set_style(Style::default().fg(entry_fg).bg(entry_bg));
                 *x += 1;
             }
             // Key
-            buf[(*x, area.y)].set_char(' ').set_style(Style::default().bg(bg));
+            buf[(*x, area.y)]
+                .set_char(' ')
+                .set_style(Style::default().bg(bg));
             *x += 1;
             for ch in key.chars() {
-                if *x >= area.x + area.width { break; }
+                if *x >= area.x + area.width {
+                    break;
+                }
                 buf[(*x, area.y)].set_char(ch).set_style(
                     Style::default()
                         .fg(Color::Rgb(180, 40, 40))
@@ -164,7 +184,9 @@ impl<'a> StatusBar<'a> {
             }
             // Label
             if *x < area.x + area.width {
-                buf[(*x, area.y)].set_char(' ').set_style(Style::default().bg(bg));
+                buf[(*x, area.y)]
+                    .set_char(' ')
+                    .set_style(Style::default().bg(bg));
                 *x += 1;
             }
             let label_style = if active {
@@ -176,19 +198,23 @@ impl<'a> StatusBar<'a> {
                 Style::default().fg(Color::Rgb(13, 17, 23)).bg(bg)
             };
             for ch in label.chars() {
-                if *x >= area.x + area.width { break; }
+                if *x >= area.x + area.width {
+                    break;
+                }
                 buf[(*x, area.y)].set_char(ch).set_style(label_style);
                 *x += 1;
             }
             if *x < area.x + area.width {
-                buf[(*x, area.y)].set_char(' ').set_style(Style::default().bg(bg));
+                buf[(*x, area.y)]
+                    .set_char(' ')
+                    .set_style(Style::default().bg(bg));
                 *x += 1;
             }
             // Exit arrow
             if *x < area.x + area.width {
-                buf[(*x, area.y)].set_symbol(sep).set_style(
-                    Style::default().fg(exit_fg).bg(exit_bg),
-                );
+                buf[(*x, area.y)]
+                    .set_symbol(sep)
+                    .set_style(Style::default().fg(exit_fg).bg(exit_bg));
                 *x += 1;
             }
         }
@@ -226,9 +252,11 @@ impl Widget for StatusBar<'_> {
 
         // Separator: mode_color -> bg_secondary
         if x < area.x + area.width {
-            buf[(x, area.y)]
-                .set_symbol(sep)
-                .set_style(Style::default().fg(mode_color).bg(self.palette.bg_secondary));
+            buf[(x, area.y)].set_symbol(sep).set_style(
+                Style::default()
+                    .fg(mode_color)
+                    .bg(self.palette.bg_secondary),
+            );
             x += 1;
         }
 
@@ -240,12 +268,16 @@ impl Widget for StatusBar<'_> {
                     .bg(self.palette.bg_secondary);
                 let prefix = " / ";
                 for ch in prefix.chars() {
-                    if x >= area.x + area.width { break; }
+                    if x >= area.x + area.width {
+                        break;
+                    }
                     buf[(x, area.y)].set_char(ch).set_style(text_style);
                     x += 1;
                 }
                 for ch in query.chars() {
-                    if x >= area.x + area.width { break; }
+                    if x >= area.x + area.width {
+                        break;
+                    }
                     buf[(x, area.y)].set_char(ch).set_style(text_style);
                     x += 1;
                 }
@@ -261,7 +293,9 @@ impl Widget for StatusBar<'_> {
                         .bg(self.palette.bg_secondary);
                     let msg = "  [invalid regex]";
                     for ch in msg.chars() {
-                        if x >= area.x + area.width { break; }
+                        if x >= area.x + area.width {
+                            break;
+                        }
                         buf[(x, area.y)].set_char(ch).set_style(err_style);
                         x += 1;
                     }
@@ -278,7 +312,9 @@ impl Widget for StatusBar<'_> {
                     .bg(self.palette.bg_secondary);
                 let prefix = format!(" / {} ", query);
                 for ch in prefix.chars() {
-                    if x >= area.x + area.width { break; }
+                    if x >= area.x + area.width {
+                        break;
+                    }
                     buf[(x, area.y)].set_char(ch).set_style(text_style);
                     x += 1;
                 }
@@ -300,7 +336,9 @@ impl Widget for StatusBar<'_> {
                     .fg(self.palette.fg_secondary)
                     .bg(self.palette.bg_secondary);
                 for ch in counter.chars() {
-                    if x >= area.x + area.width { break; }
+                    if x >= area.x + area.width {
+                        break;
+                    }
                     buf[(x, area.y)].set_char(ch).set_style(counter_style);
                     x += 1;
                 }
@@ -331,9 +369,9 @@ impl Widget for StatusBar<'_> {
             let ctrl_width = ctrl_label.len() as u16;
 
             if x < area.x + area.width {
-                buf[(x, area.y)].set_symbol(sep).set_style(
-                    Style::default().fg(self.palette.bg_secondary).bg(ctrl_bg),
-                );
+                buf[(x, area.y)]
+                    .set_symbol(sep)
+                    .set_style(Style::default().fg(self.palette.bg_secondary).bg(ctrl_bg));
                 x += 1;
             }
             for (i, ch) in ctrl_label.chars().enumerate() {
@@ -349,16 +387,17 @@ impl Widget for StatusBar<'_> {
             }
             x += ctrl_width;
             if x < area.x + area.width {
-                buf[(x, area.y)].set_symbol(sep).set_style(
-                    Style::default().fg(ctrl_bg).bg(self.palette.bg_secondary),
-                );
+                buf[(x, area.y)]
+                    .set_symbol(sep)
+                    .set_style(Style::default().fg(ctrl_bg).bg(self.palette.bg_secondary));
                 x += 1;
             }
         }
 
         // Key hints (none are toggles, so all inactive)
         let hints = mode_hints(self.mode);
-        let hint_refs: Vec<(&str, &str, bool)> = hints.iter().map(|&(k, l)| (k, l, false)).collect();
+        let hint_refs: Vec<(&str, &str, bool)> =
+            hints.iter().map(|&(k, l)| (k, l, false)).collect();
         self.render_hint_segments(&hint_refs, &mut x, area, buf, false);
 
         // Right-aligned hints (e.g. Alt+n in Terminal mode)
@@ -367,9 +406,10 @@ impl Widget for StatusBar<'_> {
             let sep_left = self.ui_config.tab_chars().separator_left;
             let alt_prefix = " Alt + ";
             let alt_prefix_width = 1 + alt_prefix.len() as u16 + 1; // sep + text + sep
-            let hints_width: u16 = right_hints.iter().map(|&(k, l)| {
-                hint_segment_width(k, l)
-            }).sum();
+            let hints_width: u16 = right_hints
+                .iter()
+                .map(|&(k, l)| hint_segment_width(k, l))
+                .sum();
             let total_right = alt_prefix_width + hints_width;
             let right_start = area.x + area.width.saturating_sub(total_right);
 
@@ -384,13 +424,15 @@ impl Widget for StatusBar<'_> {
 
                 // "Alt +" label (left-pointing arrows)
                 if rx < area.x + area.width {
-                    buf[(rx, area.y)].set_symbol(sep_left).set_style(
-                        Style::default().fg(alt_bg).bg(self.palette.bg_secondary),
-                    );
+                    buf[(rx, area.y)]
+                        .set_symbol(sep_left)
+                        .set_style(Style::default().fg(alt_bg).bg(self.palette.bg_secondary));
                     rx += 1;
                 }
                 for (i, ch) in alt_prefix.chars().enumerate() {
-                    if rx + i as u16 >= area.x + area.width { break; }
+                    if rx + i as u16 >= area.x + area.width {
+                        break;
+                    }
                     buf[(rx + i as u16, area.y)].set_char(ch).set_style(
                         Style::default()
                             .fg(self.palette.accent_orange)
@@ -400,9 +442,9 @@ impl Widget for StatusBar<'_> {
                 }
                 rx += alt_prefix.len() as u16;
                 if rx < area.x + area.width {
-                    buf[(rx, area.y)].set_symbol(sep_left).set_style(
-                        Style::default().fg(self.palette.bg_secondary).bg(alt_bg),
-                    );
+                    buf[(rx, area.y)]
+                        .set_symbol(sep_left)
+                        .set_style(Style::default().fg(self.palette.bg_secondary).bg(alt_bg));
                 }
             }
         }

@@ -1,8 +1,8 @@
 use crate::id::PaneId;
+use axum::Router;
 use axum::extract::Query;
 use axum::http::StatusCode;
 use axum::routing::post;
-use axum::Router;
 use serde::Deserialize;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -31,7 +31,9 @@ pub fn generate_hook_files(base_dir: &Path) -> anyhow::Result<()> {
 
     // Generate notify.sh
     let notify_path = hooks_dir.join("notify.sh");
-    std::fs::write(&notify_path, r#"#!/bin/bash
+    std::fs::write(
+        &notify_path,
+        r#"#!/bin/bash
 command -v curl &>/dev/null || exit 0
 INPUT=$(cat)
 # Try Claude's event name
@@ -53,7 +55,8 @@ curl -s --connect-timeout 1 --max-time 2 -X POST \
 
 # Gemini hooks MUST return JSON
 echo '{"status":"ok"}'
-"#)?;
+"#,
+    )?;
 
     // Make executable
     #[cfg(unix)]
@@ -76,7 +79,10 @@ echo '{"status":"ok"}'
             "PermissionRequest": [{"matcher": "*", "hooks": [{"type": "command", "command": notify_abs}]}]
         }
     });
-    std::fs::write(&claude_settings_path, serde_json::to_string_pretty(&claude_settings)?)?;
+    std::fs::write(
+        &claude_settings_path,
+        serde_json::to_string_pretty(&claude_settings)?,
+    )?;
 
     // Generate gemini-settings.json
     let gemini_settings_path = hooks_dir.join("gemini-settings.json");
@@ -89,7 +95,10 @@ echo '{"status":"ok"}'
             "AfterTool": [{"matcher": "*", "hooks": [{"type": "command", "command": notify_abs}]}]
         }
     });
-    std::fs::write(&gemini_settings_path, serde_json::to_string_pretty(&gemini_settings)?)?;
+    std::fs::write(
+        &gemini_settings_path,
+        serde_json::to_string_pretty(&gemini_settings)?,
+    )?;
 
     Ok(())
 }
@@ -138,12 +147,10 @@ impl HookServer {
                 let tx = tx_clone.clone();
                 async move {
                     let pane_id = match params.pane_id.as_deref() {
-                        Some(s) if !s.is_empty() => {
-                            match uuid::Uuid::parse_str(s) {
-                                Ok(u) => PaneId(u),
-                                Err(_) => return StatusCode::BAD_REQUEST,
-                            }
-                        }
+                        Some(s) if !s.is_empty() => match uuid::Uuid::parse_str(s) {
+                            Ok(u) => PaneId(u),
+                            Err(_) => return StatusCode::BAD_REQUEST,
+                        },
                         _ => return StatusCode::BAD_REQUEST,
                     };
                     let event_type_str = match &params.event_type {

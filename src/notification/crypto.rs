@@ -1,5 +1,5 @@
 use aes_gcm::aead::{Aead, KeyInit, OsRng, rand_core::RngCore};
-use aes_gcm::{Aes256Gcm, AeadCore};
+use aes_gcm::{AeadCore, Aes256Gcm};
 use anyhow::{Context, Result};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;

@@ -88,7 +88,9 @@ impl Widget for ExplorerPanel<'_> {
             let selector = if is_selected { "\u{25b8} " } else { "  " };
             let sel_style = Style::default().fg(self.palette.accent_blue);
             for ch in selector.chars() {
-                if x >= x_end { break; }
+                if x >= x_end {
+                    break;
+                }
                 buf[(x, y)].set_char(ch).set_style(sel_style);
                 x += 1;
             }
@@ -96,7 +98,9 @@ impl Widget for ExplorerPanel<'_> {
             // Indent
             let indent_width = entry.depth * 2;
             for _ in 0..indent_width {
-                if x >= x_end { break; }
+                if x >= x_end {
+                    break;
+                }
                 buf[(x, y)].set_char(' ');
                 x += 1;
             }
@@ -115,7 +119,9 @@ impl Widget for ExplorerPanel<'_> {
             };
             let icon_style = Style::default().fg(icon_color);
             for ch in icon.chars() {
-                if x >= x_end { break; }
+                if x >= x_end {
+                    break;
+                }
                 buf[(x, y)].set_char(ch).set_style(icon_style);
                 x += 1;
             }
@@ -134,7 +140,9 @@ impl Widget for ExplorerPanel<'_> {
             };
             let name_style = Style::default().fg(name_color);
             for ch in entry.name.chars() {
-                if x >= x_end { break; }
+                if x >= x_end {
+                    break;
+                }
                 buf[(x, y)].set_char(ch).set_style(name_style);
                 x += unicode_width(ch);
             }
@@ -147,7 +155,9 @@ impl Widget for ExplorerPanel<'_> {
                 };
                 let git_style = Style::default().fg(color);
                 for ch in indicator.chars() {
-                    if x >= x_end { break; }
+                    if x >= x_end {
+                        break;
+                    }
                     buf[(x, y)].set_char(ch).set_style(git_style);
                     x += 1;
                 }

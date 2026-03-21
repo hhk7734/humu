@@ -1,4 +1,4 @@
-use humu::hook::http::{generate_hook_files, AgentState, HookServer};
+use humu::hook::http::{AgentState, HookServer, generate_hook_files};
 
 #[tokio::test]
 async fn hook_server_starts_and_returns_port() {
@@ -62,9 +62,8 @@ fn generate_hook_files_creates_expected_files() {
 
     let settings = dir.path().join("hooks/claude-settings.json");
     assert!(settings.exists());
-    let json: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(&settings).unwrap()
-    ).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
     assert!(json["hooks"]["Stop"].is_array());
 
     #[cfg(unix)]

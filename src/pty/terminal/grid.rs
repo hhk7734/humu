@@ -33,10 +33,8 @@ impl Grid {
     pub fn allocate_rows(&mut self) {
         if self.rows.is_empty() {
             self.rows.extend(
-                std::iter::repeat_with(|| {
-                    super::row::Row::new(self.size.cols)
-                })
-                .take(usize::from(self.size.rows)),
+                std::iter::repeat_with(|| super::row::Row::new(self.size.cols))
+                    .take(usize::from(self.size.rows)),
             );
         }
     }
@@ -120,16 +118,18 @@ impl Grid {
         self.scrollback
             .iter()
             .skip(scrollback_len - self.scrollback_offset)
-            .chain(self.rows.iter().take(rows_len.saturating_sub(self.scrollback_offset)))
+            .chain(
+                self.rows
+                    .iter()
+                    .take(rows_len.saturating_sub(self.scrollback_offset)),
+            )
     }
 
     pub fn drawing_rows(&self) -> impl Iterator<Item = &super::row::Row> {
         self.rows.iter()
     }
 
-    pub fn drawing_rows_mut(
-        &mut self,
-    ) -> impl Iterator<Item = &mut super::row::Row> {
+    pub fn drawing_rows_mut(&mut self) -> impl Iterator<Item = &mut super::row::Row> {
         self.rows.iter_mut()
     }
 
@@ -141,10 +141,7 @@ impl Grid {
         self.drawing_rows().nth(usize::from(row))
     }
 
-    pub fn drawing_row_mut(
-        &mut self,
-        row: u16,
-    ) -> Option<&mut super::row::Row> {
+    pub fn drawing_row_mut(&mut self, row: u16) -> Option<&mut super::row::Row> {
         self.drawing_rows_mut().nth(usize::from(row))
     }
 
@@ -162,10 +159,7 @@ impl Grid {
         self.drawing_row(pos.row).and_then(|r| r.get(pos.col))
     }
 
-    pub fn drawing_cell_mut(
-        &mut self,
-        pos: Pos,
-    ) -> Option<&mut super::cell::Cell> {
+    pub fn drawing_cell_mut(&mut self, pos: Pos) -> Option<&mut super::cell::Cell> {
         self.drawing_row_mut(pos.row)
             .and_then(|r| r.get_mut(pos.col))
     }
@@ -314,8 +308,7 @@ impl Grid {
                     self.scrollback.pop_front();
                 }
                 if self.scrollback_offset > 0 {
-                    self.scrollback_offset =
-                        self.scrollback.len().min(self.scrollback_offset + 1);
+                    self.scrollback_offset = self.scrollback.len().min(self.scrollback_offset + 1);
                 }
             }
         }

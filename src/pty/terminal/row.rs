@@ -93,13 +93,7 @@ impl Row {
         other.clear(*other.attrs());
     }
 
-    pub fn write_contents(
-        &self,
-        contents: &mut String,
-        start: u16,
-        width: u16,
-        wrapping: bool,
-    ) {
+    pub fn write_contents(&self, contents: &mut String, start: u16, width: u16, wrapping: bool) {
         let mut prev_was_wide = false;
 
         let mut prev_col = start;

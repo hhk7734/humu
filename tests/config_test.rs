@@ -1,7 +1,7 @@
+use humu::config::RoomEntry;
 use humu::config::{HumuConfig, HumuState, SplitDirection, SplitNode, TabLayout, WorkspaceEntry};
 use humu::config::{ensure_room_id_for_workspace, prune_stale_rooms_for_workspace};
-use humu::id::{WorkspaceId, RoomId};
-use humu::config::RoomEntry;
+use humu::id::{RoomId, WorkspaceId};
 use humu::preset::{expand_env, resolve_preset};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -12,9 +12,18 @@ use tempfile::tempdir;
 #[test]
 fn default_config_has_built_in_presets() {
     let config = HumuConfig::default();
-    assert!(config.presets.contains_key("claude"), "missing 'claude' preset");
-    assert!(config.presets.contains_key("codex"), "missing 'codex' preset");
-    assert!(config.presets.contains_key("shell"), "missing 'shell' preset");
+    assert!(
+        config.presets.contains_key("claude"),
+        "missing 'claude' preset"
+    );
+    assert!(
+        config.presets.contains_key("codex"),
+        "missing 'codex' preset"
+    );
+    assert!(
+        config.presets.contains_key("shell"),
+        "missing 'shell' preset"
+    );
 }
 
 #[test]
@@ -113,8 +122,14 @@ fn split_node_nested_round_trip() {
         direction: SplitDirection::Vertical,
         ratio: 0.5,
         children: vec![
-            SplitNode::Leaf { preset: "shell".to_string(), session_id: None },
-            SplitNode::Leaf { preset: "claude".to_string(), session_id: None },
+            SplitNode::Leaf {
+                preset: "shell".to_string(),
+                session_id: None,
+            },
+            SplitNode::Leaf {
+                preset: "claude".to_string(),
+                session_id: None,
+            },
         ],
     };
 
@@ -122,7 +137,11 @@ fn split_node_nested_round_trip() {
     let parsed: SplitNode = serde_yaml::from_str(&yaml_str).expect("deserialize failed");
 
     match parsed {
-        SplitNode::Split { direction, ratio, children } => {
+        SplitNode::Split {
+            direction,
+            ratio,
+            children,
+        } => {
             assert!(matches!(direction, SplitDirection::Vertical));
             assert!((ratio - 0.5).abs() < 1e-6);
             assert_eq!(children.len(), 2);
@@ -261,8 +280,18 @@ fn prune_removes_stale_rooms() {
         path: PathBuf::from("/tmp/test"),
         last_room_id: None,
         rooms: vec![
-            RoomEntry { name: "main".to_string(), id: RoomId::new(), active_tab: None, tabs: vec![] },
-            RoomEntry { name: "deleted-branch".to_string(), id: RoomId::new(), active_tab: None, tabs: vec![] },
+            RoomEntry {
+                name: "main".to_string(),
+                id: RoomId::new(),
+                active_tab: None,
+                tabs: vec![],
+            },
+            RoomEntry {
+                name: "deleted-branch".to_string(),
+                id: RoomId::new(),
+                active_tab: None,
+                tabs: vec![],
+            },
         ],
     });
 

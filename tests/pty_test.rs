@@ -29,8 +29,7 @@ fn test_pane_detects_exit() {
 #[test]
 fn test_pane_replies_to_cursor_position_request() {
     let script = r#"printf '\033[6n'; IFS='[;' read -r -d R _ row col; printf 'ROW=%s COL=%s' "$row" "$col""#;
-    let mut pane =
-        PtyPane::spawn("bash", &["-lc".into(), script.into()], None, 80, 24).unwrap();
+    let mut pane = PtyPane::spawn("bash", &["-lc".into(), script.into()], None, 80, 24).unwrap();
 
     for _ in 0..10 {
         std::thread::sleep(Duration::from_millis(100));

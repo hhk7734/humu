@@ -3,7 +3,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::id::{WorkspaceId, RoomId};
+use crate::id::{RoomId, WorkspaceId};
 
 // ── Directory helper ──────────────────────────────────────────────────────────
 
@@ -71,7 +71,10 @@ pub struct OsNotificationConfig {
 
 impl Default for OsNotificationConfig {
     fn default() -> Self {
-        Self { enabled: true, only_unfocused: true }
+        Self {
+            enabled: true,
+            only_unfocused: true,
+        }
     }
 }
 
@@ -85,7 +88,10 @@ pub struct SoundNotificationConfig {
 
 impl Default for SoundNotificationConfig {
     fn default() -> Self {
-        Self { enabled: true, only_unfocused: false }
+        Self {
+            enabled: true,
+            only_unfocused: false,
+        }
     }
 }
 
@@ -254,7 +260,7 @@ pub struct WorkspaceEntry {
 
 impl WorkspaceEntry {
     pub fn room_by_path(&self, path: &Path) -> Option<&RoomEntry> {
-        self.rooms.iter().find(|r| r.path == path)
+        self.rooms.iter().find(|r| paths_match(&r.path, path))
     }
 
     pub fn room_by_id(&self, id: RoomId) -> Option<&RoomEntry> {
@@ -342,6 +348,21 @@ pub fn prune_stale_rooms_for_workspace(
     discovered_paths: &HashSet<PathBuf>,
 ) {
     if let Some(ws) = state.ws_by_id_mut(workspace_id) {
-        ws.rooms.retain(|r| discovered_paths.contains(&r.path));
+        ws.rooms.retain(|r| {
+            discovered_paths
+                .iter()
+                .any(|path| paths_match(&r.path, path))
+        });
+    }
+}
+
+fn paths_match(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
     }
 }

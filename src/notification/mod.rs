@@ -67,7 +67,9 @@ impl NotificationManager {
                     })
                 }
                 _ => {
-                    crate::humu_log!("telegram notification enabled but credentials missing or invalid");
+                    crate::humu_log!(
+                        "telegram notification enabled but credentials missing or invalid"
+                    );
                     None
                 }
             }
@@ -75,7 +77,11 @@ impl NotificationManager {
             None
         };
 
-        Self { os, sound, telegram }
+        Self {
+            os,
+            sound,
+            telegram,
+        }
     }
 
     pub fn notify(&self, event: NotificationEvent, focused: bool) {

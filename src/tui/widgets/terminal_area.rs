@@ -98,9 +98,11 @@ impl Widget for TabBar<'_> {
 
         // Draw "+" button
         if x + 2 < area.x + area.width {
-            buf[(x + 1, area.y)]
-                .set_char('+')
-                .set_style(Style::default().fg(self.palette.fg_muted).bg(self.palette.bg_secondary));
+            buf[(x + 1, area.y)].set_char('+').set_style(
+                Style::default()
+                    .fg(self.palette.fg_muted)
+                    .bg(self.palette.bg_secondary),
+            );
         }
     }
 }

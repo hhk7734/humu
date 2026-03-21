@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
-use humu::tui::input::{handle_key, Action, Direction, Mode};
+use humu::tui::input::{Action, Direction, Mode, handle_key};
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent {
@@ -65,7 +65,10 @@ fn terminal_ctrl_w_enters_workspace() {
 
 #[test]
 fn terminal_ctrl_q_quits() {
-    assert!(matches!(handle_key(Mode::Terminal, ctrl('q')), Action::Quit));
+    assert!(matches!(
+        handle_key(Mode::Terminal, ctrl('q')),
+        Action::Quit
+    ));
 }
 
 #[test]
@@ -118,12 +121,18 @@ fn locked_other_keys_pass_through() {
 
 #[test]
 fn pane_n_creates_new() {
-    assert!(matches!(handle_key(Mode::Pane, key(KeyCode::Char('n'))), Action::NewPane));
+    assert!(matches!(
+        handle_key(Mode::Pane, key(KeyCode::Char('n'))),
+        Action::NewPane
+    ));
 }
 
 #[test]
 fn pane_d_deletes() {
-    assert!(matches!(handle_key(Mode::Pane, key(KeyCode::Char('d'))), Action::ClosePane));
+    assert!(matches!(
+        handle_key(Mode::Pane, key(KeyCode::Char('d'))),
+        Action::ClosePane
+    ));
 }
 
 #[test]
@@ -176,7 +185,10 @@ fn pane_esc_exits() {
 
 #[test]
 fn pane_ctrl_p_exits() {
-    assert!(matches!(handle_key(Mode::Pane, ctrl('p')), Action::EnterMode(Mode::Terminal)));
+    assert!(matches!(
+        handle_key(Mode::Pane, ctrl('p')),
+        Action::EnterMode(Mode::Terminal)
+    ));
 }
 
 #[test]
@@ -199,24 +211,42 @@ fn terminal_ctrl_t_enters_tab() {
 
 #[test]
 fn tab_n_creates_new() {
-    assert!(matches!(handle_key(Mode::Tab, key(KeyCode::Char('n'))), Action::NewTab));
+    assert!(matches!(
+        handle_key(Mode::Tab, key(KeyCode::Char('n'))),
+        Action::NewTab
+    ));
 }
 
 #[test]
 fn tab_d_deletes() {
-    assert!(matches!(handle_key(Mode::Tab, key(KeyCode::Char('d'))), Action::CloseTab));
+    assert!(matches!(
+        handle_key(Mode::Tab, key(KeyCode::Char('d'))),
+        Action::CloseTab
+    ));
 }
 
 #[test]
 fn tab_arrows_prev_next() {
-    assert!(matches!(handle_key(Mode::Tab, key(KeyCode::Left)), Action::PrevTab));
-    assert!(matches!(handle_key(Mode::Tab, key(KeyCode::Right)), Action::NextTab));
+    assert!(matches!(
+        handle_key(Mode::Tab, key(KeyCode::Left)),
+        Action::PrevTab
+    ));
+    assert!(matches!(
+        handle_key(Mode::Tab, key(KeyCode::Right)),
+        Action::NextTab
+    ));
 }
 
 #[test]
 fn tab_digits_goto() {
-    assert!(matches!(handle_key(Mode::Tab, key(KeyCode::Char('1'))), Action::GoToTab(0)));
-    assert!(matches!(handle_key(Mode::Tab, key(KeyCode::Char('3'))), Action::GoToTab(2)));
+    assert!(matches!(
+        handle_key(Mode::Tab, key(KeyCode::Char('1'))),
+        Action::GoToTab(0)
+    ));
+    assert!(matches!(
+        handle_key(Mode::Tab, key(KeyCode::Char('3'))),
+        Action::GoToTab(2)
+    ));
 }
 
 #[test]
@@ -229,7 +259,10 @@ fn tab_esc_exits() {
 
 #[test]
 fn tab_ctrl_t_exits() {
-    assert!(matches!(handle_key(Mode::Tab, ctrl('t')), Action::EnterMode(Mode::Terminal)));
+    assert!(matches!(
+        handle_key(Mode::Tab, ctrl('t')),
+        Action::EnterMode(Mode::Terminal)
+    ));
 }
 
 // ── Workspace mode ──────────────────────────────────────────────────────────
@@ -256,12 +289,18 @@ fn workspace_enter_selects() {
 
 #[test]
 fn workspace_n_creates() {
-    assert!(matches!(handle_key(Mode::Workspace, key(KeyCode::Char('n'))), Action::Create));
+    assert!(matches!(
+        handle_key(Mode::Workspace, key(KeyCode::Char('n'))),
+        Action::Create
+    ));
 }
 
 #[test]
 fn workspace_d_deletes() {
-    assert!(matches!(handle_key(Mode::Workspace, key(KeyCode::Char('d'))), Action::Delete));
+    assert!(matches!(
+        handle_key(Mode::Workspace, key(KeyCode::Char('d'))),
+        Action::Delete
+    ));
 }
 
 #[test]
@@ -289,12 +328,24 @@ fn workspace_esc_exits() {
 #[test]
 fn cross_mode_switching() {
     // From Pane: Ctrl+w → Workspace, Ctrl+t → Terminal
-    assert!(matches!(handle_key(Mode::Pane, ctrl('w')), Action::EnterMode(Mode::Workspace)));
-    assert!(matches!(handle_key(Mode::Pane, ctrl('t')), Action::EnterMode(Mode::Terminal)));
+    assert!(matches!(
+        handle_key(Mode::Pane, ctrl('w')),
+        Action::EnterMode(Mode::Workspace)
+    ));
+    assert!(matches!(
+        handle_key(Mode::Pane, ctrl('t')),
+        Action::EnterMode(Mode::Terminal)
+    ));
 
     // From Tab: Ctrl+w → Workspace, Ctrl+p → Pane
-    assert!(matches!(handle_key(Mode::Tab, ctrl('w')), Action::EnterMode(Mode::Workspace)));
-    assert!(matches!(handle_key(Mode::Tab, ctrl('p')), Action::EnterMode(Mode::Pane)));
+    assert!(matches!(
+        handle_key(Mode::Tab, ctrl('w')),
+        Action::EnterMode(Mode::Workspace)
+    ));
+    assert!(matches!(
+        handle_key(Mode::Tab, ctrl('p')),
+        Action::EnterMode(Mode::Pane)
+    ));
 }
 
 // ── Shared Alt bindings across sub-modes ────────────────────────────────────
@@ -303,17 +354,26 @@ fn cross_mode_switching() {
 fn alt_overrides_in_submodes() {
     for mode in [Mode::Pane, Mode::Tab] {
         assert!(
-            matches!(handle_key(mode, alt_arrow(KeyCode::Left)), Action::MoveFocus(Direction::Left)),
+            matches!(
+                handle_key(mode, alt_arrow(KeyCode::Left)),
+                Action::MoveFocus(Direction::Left)
+            ),
             "Alt+Left should move focus left in {:?}",
             mode
         );
         assert!(
-            matches!(handle_key(mode, alt_arrow(KeyCode::Right)), Action::MoveFocus(Direction::Right)),
+            matches!(
+                handle_key(mode, alt_arrow(KeyCode::Right)),
+                Action::MoveFocus(Direction::Right)
+            ),
             "Alt+Right should move focus right in {:?}",
             mode
         );
         assert!(
-            matches!(handle_key(mode, alt_arrow(KeyCode::Down)), Action::NavigateDown),
+            matches!(
+                handle_key(mode, alt_arrow(KeyCode::Down)),
+                Action::NavigateDown
+            ),
             "Alt+Down should navigate down in {:?}",
             mode
         );
@@ -397,8 +457,20 @@ fn search_esc_cancels() {
 
 #[test]
 fn search_arrows_scroll() {
-    assert!(matches!(handle_key(Mode::Search, key(KeyCode::Up)), Action::ScrollUp));
-    assert!(matches!(handle_key(Mode::Search, key(KeyCode::Down)), Action::ScrollDown));
-    assert!(matches!(handle_key(Mode::Search, key(KeyCode::PageUp)), Action::ScrollPageUp));
-    assert!(matches!(handle_key(Mode::Search, key(KeyCode::PageDown)), Action::ScrollPageDown));
+    assert!(matches!(
+        handle_key(Mode::Search, key(KeyCode::Up)),
+        Action::ScrollUp
+    ));
+    assert!(matches!(
+        handle_key(Mode::Search, key(KeyCode::Down)),
+        Action::ScrollDown
+    ));
+    assert!(matches!(
+        handle_key(Mode::Search, key(KeyCode::PageUp)),
+        Action::ScrollPageUp
+    ));
+    assert!(matches!(
+        handle_key(Mode::Search, key(KeyCode::PageDown)),
+        Action::ScrollPageDown
+    ));
 }

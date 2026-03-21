@@ -1,4 +1,4 @@
-use humu::id::{WorkspaceId, RoomId, TabId, PaneId};
+use humu::id::{PaneId, RoomId, TabId, WorkspaceId};
 
 #[test]
 fn workspace_id_new_is_unique() {

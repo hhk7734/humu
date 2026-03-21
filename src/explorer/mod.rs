@@ -210,8 +210,16 @@ impl ExplorerState {
                 (true, false) => std::cmp::Ordering::Less,
                 (false, true) => std::cmp::Ordering::Greater,
                 _ => {
-                    let a_name = a.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-                    let b_name = b.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+                    let a_name = a
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_lowercase();
+                    let b_name = b
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_lowercase();
                     a_name.cmp(&b_name)
                 }
             }
@@ -229,11 +237,15 @@ impl ExplorerState {
                 continue;
             }
 
-            let is_symlink = child.symlink_metadata()
+            let is_symlink = child
+                .symlink_metadata()
                 .map(|m| m.file_type().is_symlink())
                 .unwrap_or(false);
             let is_dir = child.is_dir();
-            let rel_path = child.strip_prefix(&self.root).unwrap_or(&child).to_path_buf();
+            let rel_path = child
+                .strip_prefix(&self.root)
+                .unwrap_or(&child)
+                .to_path_buf();
             let expanded = is_dir && self.expanded_dirs.contains(&child);
 
             let file_git_status = if is_dir {
@@ -282,11 +294,11 @@ impl ExplorerState {
         // Use ignore crate: walks with .gitignore rules, depth=1 for direct children.
         let walker = WalkBuilder::new(dir)
             .max_depth(Some(1))
-            .hidden(false)       // show dotfiles (e.g., .claude/)
-            .git_global(true)    // respect global gitignore
-            .git_ignore(true)    // respect .gitignore
-            .git_exclude(true)   // respect .git/info/exclude
-            .follow_links(true)  // follow symlinks
+            .hidden(false) // show dotfiles (e.g., .claude/)
+            .git_global(true) // respect global gitignore
+            .git_ignore(true) // respect .gitignore
+            .git_exclude(true) // respect .git/info/exclude
+            .follow_links(true) // follow symlinks
             .build();
 
         walker

@@ -138,7 +138,11 @@ fn test_create_and_list_room() {
 
     let rooms = mgr.list(&repo).unwrap();
     assert_eq!(rooms.len(), 2);
-    assert!(rooms.iter().any(|r| r.branch == "feat/auth" && !r.is_default));
+    assert!(
+        rooms
+            .iter()
+            .any(|r| r.branch == "feat/auth" && !r.is_default)
+    );
 }
 
 #[test]

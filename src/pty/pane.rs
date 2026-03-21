@@ -1,5 +1,5 @@
 use anyhow::Result;
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::Read;
 use std::path::Path;
 use std::sync::mpsc;
@@ -66,7 +66,11 @@ impl PtyPane {
 
         let writer = pair.master.take_writer()?;
         let mut reader = pair.master.try_clone_reader()?;
-        let parser = Arc::new(Mutex::new(crate::pty::terminal::Parser::new(rows, cols, DEFAULT_SCROLLBACK_LEN)));
+        let parser = Arc::new(Mutex::new(crate::pty::terminal::Parser::new(
+            rows,
+            cols,
+            DEFAULT_SCROLLBACK_LEN,
+        )));
 
         // Read PTY output in a background thread to avoid blocking the event loop.
         let (output_tx, output_rx) = mpsc::channel();
@@ -152,7 +156,11 @@ impl PtyPane {
 
     /// Returns the mouse protocol encoding the child process has requested.
     pub fn mouse_protocol_encoding(&self) -> crate::pty::terminal::MouseProtocolEncoding {
-        self.parser.lock().unwrap().screen().mouse_protocol_encoding()
+        self.parser
+            .lock()
+            .unwrap()
+            .screen()
+            .mouse_protocol_encoding()
     }
 
     /// Returns whether the child process has requested bracketed paste mode.

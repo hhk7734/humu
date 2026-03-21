@@ -18,10 +18,23 @@ pub struct Dialog<'a> {
 }
 
 pub enum DialogField {
-    TextInput { label: String, value: String },
-    Select { label: String, options: Vec<String>, selected: usize },
-    Confirm { message: String, yes: bool },
-    Checkbox { label: String, checked: bool },
+    TextInput {
+        label: String,
+        value: String,
+    },
+    Select {
+        label: String,
+        options: Vec<String>,
+        selected: usize,
+    },
+    Confirm {
+        message: String,
+        yes: bool,
+    },
+    Checkbox {
+        label: String,
+        checked: bool,
+    },
 }
 
 impl DialogField {
@@ -219,8 +232,7 @@ impl Widget for Dialog<'_> {
 
         // Bottom hint
         if row < inner.y + inner.height {
-            let has_completions =
-                self.completion_field.is_some() && !self.completions.is_empty();
+            let has_completions = self.completion_field.is_some() && !self.completions.is_empty();
             let hint = if has_completions {
                 "Tab: complete  \u{2191}\u{2193}: move  Enter: confirm  Esc: cancel"
             } else {

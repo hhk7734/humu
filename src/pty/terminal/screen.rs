@@ -82,10 +82,7 @@ pub struct Screen {
 }
 
 impl Screen {
-    pub(super) fn new(
-        size: super::grid::Size,
-        scrollback_len: usize,
-    ) -> Self {
+    pub(super) fn new(size: super::grid::Size, scrollback_len: usize) -> Self {
         let mut grid = super::grid::Grid::new(size, scrollback_len);
         grid.allocate_rows();
         Self {
@@ -159,11 +156,7 @@ impl Screen {
     /// text format.
     ///
     /// Newlines will not be included.
-    pub fn rows(
-        &self,
-        start: u16,
-        width: u16,
-    ) -> impl Iterator<Item = String> + '_ {
+    pub fn rows(&self, start: u16, width: u16) -> impl Iterator<Item = String> + '_ {
         self.grid().visible_rows().map(move |row| {
             let mut contents = String::new();
             row.write_contents(&mut contents, start, width, false);
@@ -986,15 +979,10 @@ impl Screen {
                 &[29] => self.attrs.set_strike(false),
                 &[27] => self.attrs.set_inverse(false),
                 &[n] if (30..=37).contains(&n) => {
-                    self.attrs.fgcolor =
-                        super::attrs::Color::Idx(to_u8!(n) - 30);
+                    self.attrs.fgcolor = super::attrs::Color::Idx(to_u8!(n) - 30);
                 }
                 &[38, 2, r, g, b] | &[38, 2, 0, r, g, b] => {
-                    self.attrs.fgcolor = super::attrs::Color::Rgb(
-                        to_u8!(r),
-                        to_u8!(g),
-                        to_u8!(b),
-                    );
+                    self.attrs.fgcolor = super::attrs::Color::Rgb(to_u8!(r), to_u8!(g), to_u8!(b));
                 }
                 &[38, 5, i] => {
                     self.attrs.fgcolor = super::attrs::Color::Idx(to_u8!(i));
@@ -1009,12 +997,10 @@ impl Screen {
                             g = b;
                             b = next_param_u8!();
                         }
-                        self.attrs.fgcolor =
-                            super::attrs::Color::Rgb(r, g, b);
+                        self.attrs.fgcolor = super::attrs::Color::Rgb(r, g, b);
                     }
                     &[5] => {
-                        self.attrs.fgcolor =
-                            super::attrs::Color::Idx(next_param_u8!());
+                        self.attrs.fgcolor = super::attrs::Color::Idx(next_param_u8!());
                     }
                     ns => {
                         if log::log_enabled!(log::Level::Debug) {
@@ -1037,15 +1023,10 @@ impl Screen {
                     self.attrs.fgcolor = super::attrs::Color::Default;
                 }
                 &[n] if (40..=47).contains(&n) => {
-                    self.attrs.bgcolor =
-                        super::attrs::Color::Idx(to_u8!(n) - 40);
+                    self.attrs.bgcolor = super::attrs::Color::Idx(to_u8!(n) - 40);
                 }
                 &[48, 2, r, g, b] | &[48, 2, 0, r, g, b] => {
-                    self.attrs.bgcolor = super::attrs::Color::Rgb(
-                        to_u8!(r),
-                        to_u8!(g),
-                        to_u8!(b),
-                    );
+                    self.attrs.bgcolor = super::attrs::Color::Rgb(to_u8!(r), to_u8!(g), to_u8!(b));
                 }
                 &[48, 5, i] => {
                     self.attrs.bgcolor = super::attrs::Color::Idx(to_u8!(i));
@@ -1060,12 +1041,10 @@ impl Screen {
                             g = b;
                             b = next_param_u8!();
                         }
-                        self.attrs.bgcolor =
-                            super::attrs::Color::Rgb(r, g, b);
+                        self.attrs.bgcolor = super::attrs::Color::Rgb(r, g, b);
                     }
                     &[5] => {
-                        self.attrs.bgcolor =
-                            super::attrs::Color::Idx(next_param_u8!());
+                        self.attrs.bgcolor = super::attrs::Color::Idx(next_param_u8!());
                     }
                     ns => {
                         if log::log_enabled!(log::Level::Debug) {
@@ -1088,12 +1067,10 @@ impl Screen {
                     self.attrs.bgcolor = super::attrs::Color::Default;
                 }
                 &[n] if (90..=97).contains(&n) => {
-                    self.attrs.fgcolor =
-                        super::attrs::Color::Idx(to_u8!(n) - 82);
+                    self.attrs.fgcolor = super::attrs::Color::Idx(to_u8!(n) - 82);
                 }
                 &[n] if (100..=107).contains(&n) => {
-                    self.attrs.bgcolor =
-                        super::attrs::Color::Idx(to_u8!(n) - 92);
+                    self.attrs.bgcolor = super::attrs::Color::Idx(to_u8!(n) - 92);
                 }
                 ns => {
                     if log::log_enabled!(log::Level::Debug) {
@@ -1186,13 +1163,7 @@ impl vte::Perform for Screen {
         );
     }
 
-    fn csi_dispatch(
-        &mut self,
-        params: &vte::Params,
-        intermediates: &[u8],
-        _ignore: bool,
-        c: char,
-    ) {
+    fn csi_dispatch(&mut self, params: &vte::Params, intermediates: &[u8], _ignore: bool, c: char) {
         match intermediates.first() {
             None => match c {
                 '@' => self.ich(canonicalize_params_1(params, 1)),
@@ -1214,17 +1185,10 @@ impl vte::Perform for Screen {
                 'h' => self.sm(params),
                 'l' => self.rm(params),
                 'm' => self.sgr(params),
-                'r' => self.decstbm(canonicalize_params_decstbm(
-                    params,
-                    self.grid().size(),
-                )),
+                'r' => self.decstbm(canonicalize_params_decstbm(params, self.grid().size())),
                 _ => {
                     if log::log_enabled!(log::Level::Debug) {
-                        log::debug!(
-                            "unhandled csi sequence: CSI {} {}",
-                            param_str(params),
-                            c
-                        );
+                        log::debug!("unhandled csi sequence: CSI {} {}", param_str(params), c);
                     }
                 }
             },
@@ -1235,11 +1199,7 @@ impl vte::Perform for Screen {
                 'l' => self.decrst(params),
                 _ => {
                     if log::log_enabled!(log::Level::Debug) {
-                        log::debug!(
-                            "unhandled csi sequence: CSI ? {} {}",
-                            param_str(params),
-                            c
-                        );
+                        log::debug!("unhandled csi sequence: CSI ? {} {}", param_str(params), c);
                     }
                 }
             },
@@ -1263,22 +1223,13 @@ impl vte::Perform for Screen {
             (Some(&b"2"), Some(s)) => self.osc2(s),
             _ => {
                 if log::log_enabled!(log::Level::Debug) {
-                    log::debug!(
-                        "unhandled osc sequence: OSC {}",
-                        osc_param_str(params),
-                    );
+                    log::debug!("unhandled osc sequence: OSC {}", osc_param_str(params),);
                 }
             }
         }
     }
 
-    fn hook(
-        &mut self,
-        params: &vte::Params,
-        intermediates: &[u8],
-        _ignore: bool,
-        action: char,
-    ) {
+    fn hook(&mut self, params: &vte::Params, intermediates: &[u8], _ignore: bool, action: char) {
         if log::log_enabled!(log::Level::Debug) {
             intermediates.first().map_or_else(
                 || {
@@ -1303,18 +1254,10 @@ impl vte::Perform for Screen {
 
 fn canonicalize_params_1(params: &vte::Params, default: u16) -> u16 {
     let first = params.iter().next().map_or(0, |x| *x.first().unwrap_or(&0));
-    if first == 0 {
-        default
-    } else {
-        first
-    }
+    if first == 0 { default } else { first }
 }
 
-fn canonicalize_params_2(
-    params: &vte::Params,
-    default1: u16,
-    default2: u16,
-) -> (u16, u16) {
+fn canonicalize_params_2(params: &vte::Params, default1: u16, default2: u16) -> (u16, u16) {
     let mut iter = params.iter();
     let first = iter.next().map_or(0, |x| *x.first().unwrap_or(&0));
     let first = if first == 0 { default1 } else { first };
@@ -1325,10 +1268,7 @@ fn canonicalize_params_2(
     (first, second)
 }
 
-fn canonicalize_params_decstbm(
-    params: &vte::Params,
-    size: super::grid::Size,
-) -> (u16, u16) {
+fn canonicalize_params_decstbm(params: &vte::Params, size: super::grid::Size) -> (u16, u16) {
     let mut iter = params.iter();
     let top = iter.next().map_or(0, |x| *x.first().unwrap_or(&0));
     let top = if top == 0 { 1 } else { top };

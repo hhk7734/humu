@@ -180,7 +180,14 @@ fn search_recursive(
             // Partial match — recurse into the directory with remaining chars.
             let remaining: String = query.chars().skip(consumed).collect();
             let child_dir = dir.join(&name);
-            search_recursive(&child_dir, &remaining, used_tilde, depth + 1, total_score, results);
+            search_recursive(
+                &child_dir,
+                &remaining,
+                used_tilde,
+                depth + 1,
+                total_score,
+                results,
+            );
         }
     }
 }

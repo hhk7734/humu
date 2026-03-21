@@ -69,7 +69,11 @@ impl Widget for PresetSelector<'_> {
             } else {
                 Style::default().fg(self.palette.fg_primary)
             };
-            let prefix = if i == self.selected { " \u{25b8} " } else { "   " };
+            let prefix = if i == self.selected {
+                " \u{25b8} "
+            } else {
+                "   "
+            };
             buf.set_string(
                 inner.x,
                 inner.y + i as u16,

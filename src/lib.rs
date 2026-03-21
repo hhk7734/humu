@@ -1,9 +1,9 @@
-pub mod id;
 pub mod codex;
 pub mod config;
 pub mod explorer;
 pub mod git;
 pub mod hook;
+pub mod id;
 pub mod log;
 pub mod notification;
 pub mod preset;

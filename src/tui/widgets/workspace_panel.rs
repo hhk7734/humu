@@ -5,6 +5,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Widget};
+use std::path::PathBuf;
 
 /// Kinds of items in the workspace tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,6 +22,7 @@ pub struct WorkspaceTreeItem {
     pub active: bool,
     pub workspace_id: WorkspaceId,
     pub room_id: Option<RoomId>,
+    pub room_path: Option<PathBuf>,
     pub git_status: RoomGitStatus,
 }
 
@@ -113,10 +115,14 @@ impl Widget for WorkspacePanel<'_> {
         // Find scroll offset so selected item is visible.
         let scroll_offset = if let Some(selected_idx) = self.selected {
             let sel_start = visual_starts.get(selected_idx).copied().unwrap_or(0);
-            let sel_height = self.items.get(selected_idx).map(|item| match item.kind {
-                TreeItemKind::Workspace => 1,
-                TreeItemKind::Room => 2,
-            }).unwrap_or(1);
+            let sel_height = self
+                .items
+                .get(selected_idx)
+                .map(|item| match item.kind {
+                    TreeItemKind::Workspace => 1,
+                    TreeItemKind::Room => 2,
+                })
+                .unwrap_or(1);
             let sel_end = sel_start + sel_height;
             if sel_end > viewport_height {
                 sel_end.saturating_sub(viewport_height)
@@ -181,7 +187,9 @@ impl Widget for WorkspacePanel<'_> {
                     let suffix_len = if item.active { 2 } else { 0 };
                     let name_budget = max_width.saturating_sub(prefix_len + suffix_len);
 
-                    let display_name = if item.name.chars().count() > name_budget && name_budget >= 3 {
+                    let display_name = if item.name.chars().count() > name_budget
+                        && name_budget >= 3
+                    {
                         let truncated: String = item.name.chars().take(name_budget - 3).collect();
                         format!("{truncated}...")
                     } else {
@@ -213,7 +221,9 @@ impl Widget for WorkspacePanel<'_> {
                     let suffix_len = if item.active { 2 } else { 0 };
                     let name_budget = max_width.saturating_sub(indent_len + suffix_len);
 
-                    let display_name = if item.name.chars().count() > name_budget && name_budget >= 3 {
+                    let display_name = if item.name.chars().count() > name_budget
+                        && name_budget >= 3
+                    {
                         let truncated: String = item.name.chars().take(name_budget - 3).collect();
                         format!("{truncated}...")
                     } else {
@@ -236,7 +246,8 @@ impl Widget for WorkspacePanel<'_> {
                     let (ahead, behind) = item.git_status.ahead_behind.unwrap_or((0, 0));
                     let (ins, del) = item.git_status.diff_stat.unwrap_or((0, 0));
                     let untracked = item.git_status.untracked_count;
-                    let has_changes = ahead > 0 || behind > 0 || untracked > 0 || ins > 0 || del > 0;
+                    let has_changes =
+                        ahead > 0 || behind > 0 || untracked > 0 || ins > 0 || del > 0;
 
                     if y < inner.y + inner.height {
                         // Fill background for active room stats line

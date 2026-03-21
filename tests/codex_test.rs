@@ -15,7 +15,8 @@ fn codex_tracker_discovers_session_and_reports_working_then_idle() {
     fs::create_dir_all(&cwd).unwrap();
 
     let session_id = "019d015a-ab86-7680-84a1-f48751186599";
-    let session_path = sessions_root.join(format!("rollout-2026-03-18T23-30-12-{session_id}.jsonl"));
+    let session_path =
+        sessions_root.join(format!("rollout-2026-03-18T23-30-12-{session_id}.jsonl"));
     fs::write(
         &session_path,
         format!(
@@ -62,7 +63,8 @@ fn codex_tracker_finds_known_session_id_without_cwd_matching() {
     fs::create_dir_all(&sessions_root).unwrap();
 
     let session_id = "019d0159-ac86-7092-80e6-2062bac8e3b8";
-    let session_path = sessions_root.join(format!("rollout-2026-03-18T23-29-07-{session_id}.jsonl"));
+    let session_path =
+        sessions_root.join(format!("rollout-2026-03-18T23-29-07-{session_id}.jsonl"));
     fs::write(
         &session_path,
         concat!(

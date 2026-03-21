@@ -101,8 +101,14 @@ pub struct TabChars {
 }
 
 impl TabChars {
-    pub const POWERLINE: Self = Self { separator: "\u{e0b0}", separator_left: "\u{e0b2}" };
-    pub const PLAIN: Self = Self { separator: "│", separator_left: "│" };
+    pub const POWERLINE: Self = Self {
+        separator: "\u{e0b0}",
+        separator_left: "\u{e0b2}",
+    };
+    pub const PLAIN: Self = Self {
+        separator: "│",
+        separator_left: "│",
+    };
 }
 
 impl UiConfig {
