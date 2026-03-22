@@ -12,10 +12,11 @@ humu (single binary)
 ├── Git Layer
 │   ├── Workspace manager (clone / init / register)
 │   └── Room manager (worktree add / remove / list)
-├── PTY Layer (portable-pty)
-│   └── Spawn shell / claude / gemini / codex processes per pane
-├── Terminal Emulation (third_party/vt100/, vte-based vendored module)
-│   └── Parse PTY output → screen buffer → ratatui cells
+├── Terminal Runtime Layer
+│   ├── `PtyRuntime` (portable-pty lifecycle, raw read/write, resize, exit polling)
+│   ├── `TerminalEmulator` (vendored vt100 parser, query replies, screen state)
+│   ├── `TerminalInputRouter` (mouse/key/paste routing decisions)
+│   └── `PtyPane` facade (pane-facing helpers consumed by `App`)
 ├── Hook Layer (axum HTTP server)
 │   └── HTTP server at 127.0.0.1:<random port> for Claude/Gemini events
 ├── Codex Tracking Layer
@@ -71,6 +72,8 @@ User keystrokes → ratatui/crossterm → PTY input
 ```
 
 Terminal emulation uses a vendored module at `third_party/vt100/` built on the `vte` crate and re-exported through `crate::pty::terminal`. The module implements `vte::Perform` on a custom `Screen` struct with grid, cell, and attribute tracking.
+
+`PtyRuntime` owns PTY spawn, reader thread, raw byte writes, resize, and exit polling. `TerminalEmulator` owns the vendored `vt100` parser, scrollback, alternate-screen state, mouse mode, bracketed paste mode, and terminal query replies. `TerminalInputRouter` translates mouse, key, and paste events into explicit actions such as PTY writes, local scrollback movement, and selection updates. `PtyPane` composes runtime and emulator into the narrow pane-facing API used by `App` for rendering and state snapshots.
 
 PTY reads run in a background thread with `mpsc::channel`, using `try_recv()` in the main event loop to avoid blocking. Resize events propagate to the PTY via `SIGWINCH`. Each parser is created with 10,000 lines of scrollback, and `Parser::set_scrollback(offset)` shifts the viewport into history. Scrollback auto-resets to live view on new output or keypress.
 
@@ -154,7 +157,7 @@ The runtime state (`RoomState`: panes, tabs, pane_presets, focused_pane, fullscr
 2. **Cold restore**: If no suspended state exists (e.g., after restart), rebuild from the persisted layout in `state.yaml`, spawning new PTY processes.
 3. **Default**: If no persisted layout exists either, create a single shell tab.
 
-Suspended panes continue running in the background — their reader threads accumulate output in unbounded `mpsc` channels, which is drained on restore. `PaneId` remains globally unique (monotonically increasing `next_pane_id` is never saved/restored per room). `agent_states` is global since hook events can arrive for any pane.
+Suspended panes continue running in the background — their reader threads accumulate output in unbounded `mpsc` channels, which is drained on restore. Hot restore keeps the same `PtyPane` runtime objects alive, while cold restore rebuilds panes from persisted `SplitNode` layout and respawns presets with any saved `session_id`. `PaneId` remains globally unique (monotonically increasing `next_pane_id` is never saved/restored per room). `agent_states` is global since hook events can arrive for any pane.
 
 On graceful shutdown, all suspended rooms have their layouts persisted to `state.yaml` before PTY processes are dropped.
 

@@ -159,17 +159,20 @@ Clicking a panel enters the corresponding mode: workspace tree → Workspace mod
 
 **Status bar hint clicks**: Clicking a key hint segment in the status bar triggers the corresponding action (e.g., clicking the "PANE" hint in Terminal mode enters Pane mode). Multi-key hints like arrow navigation are not clickable. Works across all modes including Search mode hints (NEXT, PREV, CASE, WRAP).
 
-**Mouse forwarding**: When a child process enables mouse tracking (e.g., vim, htop), all mouse events (click, drag, release, scroll) are forwarded as SGR escape sequences with pane-relative coordinates. Humu's own click handling (panel selection, tab switching) still runs on Down events to maintain focus.
+**Mouse forwarding**: When a child process enables mouse tracking (e.g., vim, htop), mouse events targeting an actual terminal pane are forwarded as SGR escape sequences with pane-relative coordinates. Humu's own click handling (panel selection, tab switching, status-bar hints) still runs first on Down events to maintain focus. Clicks on the tab bar or other non-pane UI regions are not reinterpreted as terminal input.
 
 **Text selection**: When the child process has no mouse tracking (e.g., plain shell, Claude Code), mouse drag selects text from the vt100 screen with a dark blue highlight. On mouse release, selected text is copied to the system clipboard via OSC 52 escape sequence.
 
-**Bracketed paste**: Multi-line paste from the system clipboard is forwarded as a single block. If the child process has requested bracketed paste mode, the text is wrapped in `\x1b[200~`...`\x1b[201~` sequences. In EnterSearch mode, pasted text is appended to the search query.
+**Bracketed paste**: Multi-line paste from the system clipboard is forwarded as a single block through the terminal input router. If the child process has requested bracketed paste mode, the text is wrapped in `\x1b[200~`...`\x1b[201~` sequences. In EnterSearch mode, pasted text is appended to the search query.
 
 **Keyboard enhancement**: On terminals that support the Kitty keyboard protocol, humu enables `DISAMBIGUATE_ESCAPE_CODES`, `REPORT_ALL_KEYS_AS_ESCAPE_CODES`, `REPORT_ALTERNATE_KEYS`, and `REPORT_EVENT_TYPES` so modified keys arrive as CSI u events with minimal ambiguity. Modified Enter and Tab are forwarded as CSI u sequences (`\x1b[{codepoint};{modifier}u`). Alt+char is forwarded with the standard ESC prefix. For Ctrl-modified Hangul 2-set jamo emitted by IMEs, humu normalizes the jamo to the corresponding QWERTY letter before dispatching shortcuts or forwarding bytes to the PTY, so `Ctrl+ㅊ` behaves like `Ctrl+C`. For keyboard navigation and passthrough, humu handles both key `Press` and auto-repeat events, while ignoring `Release` so held arrow keys keep moving without an extra action when the key is lifted. Gracefully degrades on unsupported terminals.
 
 **Scroll wheel** on terminal panes:
-- **Programs with mouse reporting** (vim, less, tmux): scroll events are forwarded as proper mouse escape sequences (SGR or default encoding) with pane-relative coordinates, except when the pane is on the alternate screen. Alternate-screen panes keep humu-managed scrollback so fullscreen TUIs such as Codex can still be reviewed with wheel scroll and `PageUp/PageDown`.
+- **Programs with mouse reporting** (vim, less, tmux): scroll events are forwarded as proper mouse escape sequences (SGR or default encoding) with pane-relative coordinates, except when the pane is on the alternate screen. Alternate-screen panes keep humu-managed scrollback so fullscreen TUIs can still be reviewed with wheel scroll.
 - **Plain shell / no mouse reporting**: scrolls through the vt100 scrollback buffer (10,000 lines). A yellow `↑N` indicator appears in the pane's bottom border showing lines scrolled back. Scrollback auto-resets to live view on new output or keypress.
+- **PageUp/PageDown**: the same router keeps these keys local when the pane has no mouse reporting or is on the alternate screen; otherwise they are forwarded to the PTY after resetting local scrollback.
+
+`App` does not inspect parser internals directly. Terminal rendering goes through the pane facade (`PtyPane`), while terminal mouse/key/paste decisions go through `TerminalInputRouter`, which returns explicit actions such as PTY writes, local scrollback changes, and selection updates.
 
 **Scroll wheel** on list panels:
 - **Workspace panel**: focuses Workspace mode, moves the selection up/down by one item per wheel tick, and auto-scrolls long trees so the selection stays visible.

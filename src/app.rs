@@ -14,6 +14,7 @@ use humu::git::room::{RoomGitStatus, RoomManager};
 use humu::git::workspace::WorkspaceManager;
 use humu::hook::http::{AgentState, HookEvent, HookServer, generate_hook_files};
 use humu::id::{RoomId, TabId, WorkspaceId};
+use humu::pty::input::{InputAction, InputRoute, route_floating_mouse, route_mouse, route_paste, route_passthrough};
 use humu::pty::pane::PtyPane;
 use humu::tui::completion::complete_path;
 use humu::tui::input::{
@@ -44,6 +45,13 @@ const PRESET_CLAUDE: &str = "claude";
 const PRESET_GEMINI: &str = "gemini";
 const PRESET_CODEX: &str = "codex";
 const DEFAULT_ROOM_NAME: &str = "local";
+
+fn append_codex_args(args: &mut Vec<String>, session_id: Option<String>) {
+    if let Some(sid) = session_id {
+        args.push("resume".to_string());
+        args.push(sid);
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusedPanel {
@@ -84,7 +92,6 @@ pub struct PanelRects {
 #[derive(Debug, Clone)]
 pub struct TextSelection {
     pub pane_id: PaneId,
-    pub pane_rect: Rect,
     /// Start position in vt100 screen coordinates (row, col).
     pub start: (u16, u16),
     /// Current end position in vt100 screen coordinates (row, col).
@@ -936,6 +943,71 @@ impl App {
         }
     }
 
+    fn apply_input_route(&mut self, pane_id: PaneId, pane_rect: Option<Rect>, route: InputRoute) -> bool {
+        let InputRoute::Handled(actions) = route else {
+            return false;
+        };
+
+        let mut finish_selection = false;
+
+        for action in actions {
+            match action {
+                InputAction::Write(bytes) => {
+                    if let Some(pane) = self.panes.get_mut(&pane_id) {
+                        let _ = pane.write_input(&bytes);
+                    }
+                }
+                InputAction::AdjustScrollback { lines, up } => {
+                    if let Some(pane) = self.panes.get(&pane_id) {
+                        if up {
+                            pane.scrollback_up(lines);
+                        } else {
+                            pane.scrollback_down(lines);
+                        }
+                    }
+                }
+                InputAction::ResetScrollback => {
+                    if let Some(pane) = self.panes.get(&pane_id) {
+                        pane.reset_scrollback();
+                    }
+                }
+                InputAction::StartSelection { row, col } => {
+                    if pane_rect.is_some() {
+                        self.selection = Some(TextSelection {
+                            pane_id,
+                            start: (row, col),
+                            end: (row, col),
+                        });
+                    }
+                }
+                InputAction::UpdateSelection { row, col } => {
+                    if let Some(ref mut sel) = self.selection
+                        && sel.pane_id == pane_id
+                    {
+                        sel.end = (row, col);
+                    }
+                }
+                InputAction::FinishSelection => {
+                    finish_selection = true;
+                }
+            }
+        }
+
+        if finish_selection {
+            if let Some(ref sel) = self.selection
+                && sel.pane_id == pane_id
+                && sel.start != sel.end
+            {
+                self.copy_selection_to_clipboard();
+            }
+            if self.selection.as_ref().is_some_and(|sel| sel.pane_id == pane_id) {
+                self.selection = None;
+            }
+        }
+
+        true
+    }
+
     /// Forward a mouse event to the floating pane's PTY. Returns true if handled.
     fn forward_mouse_to_floating_pane(
         &mut self,
@@ -953,62 +1025,9 @@ impl App {
             Some(p) => p,
             None => return false,
         };
-
-        // If child has no mouse reporting, convert scroll to arrow keys
-        // and consume other mouse events.
-        if pane.mouse_protocol_mode() == humu::pty::terminal::MouseProtocolMode::None {
-            let lines_per_tick = 3;
-            match mouse.kind {
-                MouseEventKind::ScrollUp => {
-                    for _ in 0..lines_per_tick {
-                        let _ = pane.write_input(b"k");
-                    }
-                }
-                MouseEventKind::ScrollDown => {
-                    for _ in 0..lines_per_tick {
-                        let _ = pane.write_input(b"j");
-                    }
-                }
-                _ => {}
-            }
-            return true;
-        }
-
-        // Pane-relative coordinates (inside border)
-        let col = mouse.column.saturating_sub(popup_area.x + 1) as u32;
-        let row = mouse.row.saturating_sub(popup_area.y + 1) as u32;
-
-        let (button, press) = match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) => (0u32, true),
-            MouseEventKind::Down(MouseButton::Right) => (2, true),
-            MouseEventKind::Down(MouseButton::Middle) => (1, true),
-            MouseEventKind::Up(MouseButton::Left) => (0, false),
-            MouseEventKind::Up(MouseButton::Right) => (2, false),
-            MouseEventKind::Up(MouseButton::Middle) => (1, false),
-            MouseEventKind::Drag(MouseButton::Left) => (32, true),
-            MouseEventKind::Drag(MouseButton::Right) => (34, true),
-            MouseEventKind::Drag(MouseButton::Middle) => (33, true),
-            MouseEventKind::ScrollUp => (64, true),
-            MouseEventKind::ScrollDown => (65, true),
-            MouseEventKind::Moved => (35, true),
-            _ => return false,
-        };
-
-        let encoding = pane.mouse_protocol_encoding();
-        let seq = match encoding {
-            humu::pty::terminal::MouseProtocolEncoding::Sgr => {
-                let suffix = if press { 'M' } else { 'm' };
-                format!("\x1b[<{};{};{}{}", button, col + 1, row + 1, suffix)
-            }
-            _ => {
-                let b = (button + 32) as u8;
-                let c = ((col + 33).min(255)) as u8;
-                let r = ((row + 33).min(255)) as u8;
-                format!("\x1b[M{}{}{}", b as char, c as char, r as char)
-            }
-        };
-        let _ = pane.write_input(seq.as_bytes());
-        true
+        let state = pane.input_state();
+        let _ = pane;
+        self.apply_input_route(pane_id, None, route_floating_mouse(*mouse, popup_area, &state))
     }
 
     fn show_error(&mut self, message: impl Into<String>) {
@@ -2114,9 +2133,8 @@ impl App {
                 frame.render_widget(Clear, popup_area);
 
                 if let Some(pane) = self.panes.get(pane_id) {
-                    let parser = pane.parser_ref().lock().unwrap();
-                    let screen = parser.screen();
-                    let tw = TerminalWidget::new(screen, title, &self.palette, &self.ui_config)
+                    let screen = pane.screen_snapshot();
+                    let tw = TerminalWidget::new(&screen, title, &self.palette, &self.ui_config)
                         .focus(true)
                         .pane_count(1);
                     frame.render_widget(tw, popup_area);
@@ -2341,7 +2359,7 @@ impl App {
                 .map(|t| t.pane_ids().len())
                 .unwrap_or(1);
             if let Some(pane) = self.panes.get(&fs_id) {
-                let screen = pane.screen();
+                let screen = pane.screen_snapshot();
                 let preset_name = self
                     .pane_presets
                     .get(&fs_id)
@@ -2388,7 +2406,7 @@ impl App {
                 .collect();
             for (pane_id, rect) in rects {
                 if let Some(pane) = self.panes.get(&pane_id) {
-                    let screen = pane.screen();
+                    let screen = pane.screen_snapshot();
                     let is_focused =
                         self.focused_pane == Some(pane_id) && self.focus == FocusedPanel::Terminal;
                     let preset_name = self
@@ -2576,8 +2594,7 @@ impl App {
             Action::ScrollUp => {
                 if let Some(pane_id) = self.focused_pane {
                     if let Some(pane) = self.panes.get(&pane_id) {
-                        let current = pane.scrollback();
-                        pane.set_scrollback(current.saturating_add(1));
+                        pane.scrollback_up(1);
                     }
                 }
                 if self.search_state.is_some() {
@@ -2587,8 +2604,7 @@ impl App {
             Action::ScrollDown => {
                 if let Some(pane_id) = self.focused_pane {
                     if let Some(pane) = self.panes.get(&pane_id) {
-                        let current = pane.scrollback();
-                        pane.set_scrollback(current.saturating_sub(1));
+                        pane.scrollback_down(1);
                     }
                 }
                 if self.search_state.is_some() {
@@ -2599,8 +2615,7 @@ impl App {
                 if let Some(pane_id) = self.focused_pane {
                     if let Some(pane) = self.panes.get(&pane_id) {
                         let page = pane.rows() as usize;
-                        let current = pane.scrollback();
-                        pane.set_scrollback(current.saturating_add(page));
+                        pane.scrollback_up(page);
                     }
                 }
                 if self.search_state.is_some() {
@@ -2611,8 +2626,7 @@ impl App {
                 if let Some(pane_id) = self.focused_pane {
                     if let Some(pane) = self.panes.get(&pane_id) {
                         let page = pane.rows() as usize;
-                        let current = pane.scrollback();
-                        pane.set_scrollback(current.saturating_sub(page));
+                        pane.scrollback_down(page);
                     }
                 }
                 if self.search_state.is_some() {
@@ -2682,67 +2696,74 @@ impl App {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.pty_mouse_active = false;
                 self.selection = None;
+                let pos = Position::new(mouse.column, mouse.row);
                 self.handle_click(mouse.column, mouse.row);
-                if self.try_forward_mouse(&mouse) {
-                    self.pty_mouse_active = true;
-                } else {
-                    // Start text selection if click is on a terminal pane.
-                    let pos = Position::new(mouse.column, mouse.row);
-                    if self.panel_rects.terminal.contains(pos) {
-                        if let Some((pane_id, pane_rect)) = self.pane_at(pos) {
-                            let col = mouse.column.saturating_sub(pane_rect.x + 1);
-                            let row = mouse.row.saturating_sub(pane_rect.y + 1);
-                            self.selection = Some(TextSelection {
-                                pane_id,
-                                pane_rect,
-                                start: (row, col),
-                                end: (row, col),
-                            });
-                        }
-                    }
+                if self.pane_at(pos).is_some() && self.try_forward_mouse(&mouse) {
+                    self.pty_mouse_active = self
+                        .focused_pane
+                        .and_then(|pane_id| self.panes.get(&pane_id))
+                        .is_some_and(|pane| {
+                            pane.input_state().mouse_mode
+                                != humu::pty::terminal::MouseProtocolMode::None
+                        });
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                if self.pty_mouse_active {
-                    self.try_forward_mouse(&mouse);
-                } else if let Some(ref mut sel) = self.selection {
-                    let col = mouse.column.saturating_sub(sel.pane_rect.x + 1);
-                    let row = mouse.row.saturating_sub(sel.pane_rect.y + 1);
-                    sel.end = (row, col);
+                if self.pty_mouse_active || self.selection.is_some() {
+                    let _ = self.try_forward_mouse(&mouse);
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                if self.pty_mouse_active {
-                    self.try_forward_mouse(&mouse);
-                    self.pty_mouse_active = false;
-                } else if let Some(ref sel) = self.selection {
-                    // Copy selected text to clipboard via OSC 52.
-                    if sel.start != sel.end {
-                        self.copy_selection_to_clipboard();
-                    }
-                    self.selection = None;
+                if self.pty_mouse_active || self.selection.is_some() {
+                    let _ = self.try_forward_mouse(&mouse);
                 }
+                self.pty_mouse_active = false;
             }
             MouseEventKind::Down(_) | MouseEventKind::Up(_) => {
-                self.try_forward_mouse(&mouse);
+                let pos = Position::new(mouse.column, mouse.row);
+                if self.pane_at(pos).is_some() || self.pty_mouse_active || self.selection.is_some() {
+                    let _ = self.try_forward_mouse(&mouse);
+                }
             }
             MouseEventKind::Drag(_) => {
                 if self.pty_mouse_active {
-                    self.try_forward_mouse(&mouse);
+                    let _ = self.try_forward_mouse(&mouse);
                 }
             }
             MouseEventKind::ScrollUp => {
-                if !self.try_forward_mouse(&mouse) {
+                if self.pane_at(Position::new(mouse.column, mouse.row)).is_none()
+                    || !self.try_forward_mouse(&mouse)
+                {
                     self.handle_scroll(mouse.column, mouse.row, true);
                 }
             }
             MouseEventKind::ScrollDown => {
-                if !self.try_forward_mouse(&mouse) {
+                if self.pane_at(Position::new(mouse.column, mouse.row)).is_none()
+                    || !self.try_forward_mouse(&mouse)
+                {
                     self.handle_scroll(mouse.column, mouse.row, false);
                 }
             }
             _ => {}
         }
+    }
+
+    fn focused_pane_context(&self, mouse: &crossterm::event::MouseEvent) -> Option<(PaneId, Rect)> {
+        let pane_id = self.focused_pane?;
+        let pane_rect = self
+            .pane_at(Position::new(mouse.column, mouse.row))
+            .map(|(_, rect)| rect)
+            .or_else(|| {
+                let pane_area = self.terminal_pane_area();
+                self.tabs.active_tree().and_then(|t| {
+                    t.compute_rects(pane_area)
+                        .into_iter()
+                        .find(|(id, _)| *id == pane_id)
+                        .map(|(_, rect)| rect)
+                })
+            })
+            .unwrap_or_else(|| self.terminal_pane_area());
+        Some((pane_id, pane_rect))
     }
 
     fn selection_for_pane(&self, pane_id: PaneId) -> Option<(u16, u16, u16, u16)> {
@@ -2767,7 +2788,7 @@ impl App {
             Some(p) => p,
             None => return,
         };
-        let screen = pane.screen();
+        let screen = pane.screen_snapshot();
         let (start_row, start_col, end_row, end_col) = if sel.start <= sel.end {
             (sel.start.0, sel.start.1, sel.end.0, sel.end.1)
         } else {
@@ -2969,70 +2990,27 @@ impl App {
     /// Try to forward a mouse event to the focused pane's PTY.
     /// Returns true if the event was forwarded (child has mouse reporting enabled).
     fn try_forward_mouse(&mut self, mouse: &crossterm::event::MouseEvent) -> bool {
-        let pane_id = match self.focused_pane {
-            Some(id) => id,
+        let (pane_id, pane_rect) = match self.focused_pane_context(mouse) {
+            Some(ctx) => ctx,
             None => return false,
         };
-
-        // Find the focused pane's rect for coordinate translation.
-        let pane_rect = self
-            .pane_at(Position::new(mouse.column, mouse.row))
-            .map(|(_, rect)| rect)
-            .or_else(|| {
-                // Pane not at mouse position (drag outside) — find focused pane's rect.
-                let pane_area = self.terminal_pane_area();
-                self.tabs.active_tree().and_then(|t| {
-                    t.compute_rects(pane_area)
-                        .into_iter()
-                        .find(|(id, _)| *id == pane_id)
-                        .map(|(_, rect)| rect)
-                })
-            })
-            .unwrap_or_else(|| self.terminal_pane_area());
-
-        let pane = match self.panes.get_mut(&pane_id) {
+        let pane = match self.panes.get(&pane_id) {
             Some(p) => p,
             None => return false,
         };
-
-        if pane.mouse_protocol_mode() == humu::pty::terminal::MouseProtocolMode::None {
-            return false;
-        }
-
-        let encoding = pane.mouse_protocol_encoding();
-        let col = mouse.column.saturating_sub(pane_rect.x + 1) as u32;
-        let row = mouse.row.saturating_sub(pane_rect.y + 1) as u32;
-
-        let (button, press) = match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) => (0u32, true),
-            MouseEventKind::Down(MouseButton::Right) => (2, true),
-            MouseEventKind::Down(MouseButton::Middle) => (1, true),
-            MouseEventKind::Up(MouseButton::Left) => (0, false),
-            MouseEventKind::Up(MouseButton::Right) => (2, false),
-            MouseEventKind::Up(MouseButton::Middle) => (1, false),
-            MouseEventKind::Drag(MouseButton::Left) => (32, true),
-            MouseEventKind::Drag(MouseButton::Right) => (34, true),
-            MouseEventKind::Drag(MouseButton::Middle) => (33, true),
-            MouseEventKind::ScrollUp => (64, true),
-            MouseEventKind::ScrollDown => (65, true),
-            MouseEventKind::Moved => (35, true),
-            _ => return false,
-        };
-
-        let seq = match encoding {
-            humu::pty::terminal::MouseProtocolEncoding::Sgr => {
-                let suffix = if press { 'M' } else { 'm' };
-                format!("\x1b[<{};{};{}{}", button, col + 1, row + 1, suffix)
-            }
-            _ => {
-                let b = (button + 32) as u8;
-                let c = ((col + 33).min(255)) as u8;
-                let r = ((row + 33).min(255)) as u8;
-                format!("\x1b[M{}{}{}", b as char, c as char, r as char)
-            }
-        };
-        let _ = pane.write_input(seq.as_bytes());
-        true
+        let state = pane.input_state();
+        let handled = self.apply_input_route(
+            pane_id,
+            Some(pane_rect),
+            route_mouse(
+            *mouse,
+            pane_rect,
+            &state,
+            self.pty_mouse_active,
+            self.selection.as_ref().is_some_and(|sel| sel.pane_id == pane_id),
+        ),
+        );
+        handled
     }
 
     /// Handle mouse scroll within the terminal area.
@@ -3071,46 +3049,28 @@ impl App {
             None => return,
         };
 
-        let pane = match self.panes.get_mut(&pane_id) {
+        let pane = match self.panes.get(&pane_id) {
             Some(p) => p,
             None => return,
         };
-
-        // Read pane mode via thin accessors (avoids cloning full Screen).
-        let mouse_mode = pane.mouse_protocol_mode();
-        let alternate_screen = pane.alternate_screen();
-
-        if mouse_mode != humu::pty::terminal::MouseProtocolMode::None && !alternate_screen {
-            // Child process wants mouse events — send proper mouse escape sequences.
-            let encoding = pane.mouse_protocol_encoding();
-            // Translate terminal-absolute coordinates to pane-relative.
-            let col = x.saturating_sub(pane_rect.x + 1) as u32; // inside border
-            let row = y.saturating_sub(pane_rect.y + 1) as u32;
-            let button: u32 = if up { 64 } else { 65 }; // 64 = scroll up, 65 = scroll down
-
-            let seq = match encoding {
-                humu::pty::terminal::MouseProtocolEncoding::Sgr => {
-                    format!("\x1b[<{};{};{}M", button, col + 1, row + 1)
-                }
-                _ => {
-                    // Default/UTF-8 encoding: \x1b[M + (button+32) + (col+33) + (row+33)
-                    let b = (button + 32) as u8;
-                    let c = ((col + 33).min(255)) as u8;
-                    let r = ((row + 33).min(255)) as u8;
-                    format!("\x1b[M{}{}{}", b as char, c as char, r as char)
-                }
-            };
-            let _ = pane.write_input(seq.as_bytes());
-        } else {
-            // No mouse reporting — adjust scrollback offset.
-            let lines_per_tick: usize = 3;
-            let current = pane.scrollback();
-            if up {
-                pane.set_scrollback(current.saturating_add(lines_per_tick));
-            } else {
-                pane.set_scrollback(current.saturating_sub(lines_per_tick));
-            }
-        }
+        let state = pane.input_state();
+        let route = route_mouse(
+            crossterm::event::MouseEvent {
+                kind: if up {
+                    MouseEventKind::ScrollUp
+                } else {
+                    MouseEventKind::ScrollDown
+                },
+                column: x,
+                row: y,
+                modifiers: KeyModifiers::NONE,
+            },
+            pane_rect,
+            &state,
+            self.pty_mouse_active,
+            false,
+        );
+        self.apply_input_route(pane_id, Some(pane_rect), route);
         // Re-run search so highlights track the new viewport.
         if self.search_state.is_some() {
             self.run_search();
@@ -3416,10 +3376,7 @@ impl App {
                 extra_args.push(sid);
             }
         } else if preset_name == PRESET_CODEX {
-            if let Some(sid) = session_id {
-                extra_args.push("resume".to_string());
-                extra_args.push(sid);
-            }
+            append_codex_args(&mut extra_args, session_id);
         }
 
         if preset_name == PRESET_CLAUDE || preset_name == PRESET_GEMINI {
@@ -3679,32 +3636,13 @@ impl App {
             return;
         }
 
-        if let Some(pane) = self.panes.get_mut(&pane_id) {
+        if let Some(pane) = self.panes.get(&pane_id) {
             // Page Up/Down: scroll humu's scrollback buffer when the child is
             // on the normal screen without mouse reporting, or whenever the
             // child is on the alternate screen (for example Codex's TUI).
-            if matches!(key.code, KeyCode::PageUp | KeyCode::PageDown)
-                && (pane.mouse_protocol_mode() == humu::pty::terminal::MouseProtocolMode::None
-                    || pane.alternate_screen())
-            {
-                let page = pane.rows() as usize;
-                let current = pane.scrollback();
-                if key.code == KeyCode::PageUp {
-                    pane.set_scrollback(current.saturating_add(page));
-                } else {
-                    pane.set_scrollback(current.saturating_sub(page));
-                }
-                return;
-            }
-
-            // Reset scrollback to live view when the user types.
-            if pane.scrollback() > 0 {
-                pane.set_scrollback(0);
-            }
-            let bytes = key_event_to_bytes(&key);
-            if !bytes.is_empty() {
-                let _ = pane.write_input(&bytes);
-            }
+            let route = route_passthrough(key, &pane.input_state());
+            let _ = pane;
+            self.apply_input_route(pane_id, None, route);
         }
     }
 
@@ -3757,18 +3695,10 @@ impl App {
         if pane.exit_status().is_some() {
             return;
         }
-        if pane.scrollback() > 0 {
-            pane.set_scrollback(0);
-        }
-        if pane.bracketed_paste() {
-            let mut buf = Vec::with_capacity(12 + text.len());
-            buf.extend_from_slice(b"\x1b[200~");
-            buf.extend_from_slice(text.as_bytes());
-            buf.extend_from_slice(b"\x1b[201~");
-            let _ = pane.write_input(&buf);
-        } else {
-            let _ = pane.write_input(text.as_bytes());
-        }
+        let state = pane.input_state();
+        let _ = pane;
+        let route = route_paste(text, &state);
+        self.apply_input_route(pane_id, None, route);
     }
 
     fn navigate(&mut self, delta: i32) {
@@ -4433,7 +4363,8 @@ impl App {
             Some(p) => p,
             None => return,
         };
-        let rows = humu::tui::search::extract_rows(pane.parser_ref());
+        let screen = pane.screen_snapshot();
+        let rows = humu::tui::search::extract_rows(&screen);
         if let Some(ref mut state) = self.search_state {
             state.execute(&rows);
             self.scroll_to_active_match();
@@ -5227,5 +5158,172 @@ mod tests {
         assert_eq!(app.selected_tree_index, 1);
         assert_eq!(app.mode, Mode::Workspace);
         assert_eq!(app.focus, FocusedPanel::Workspace);
+    }
+
+    #[test]
+    fn workspace_click_does_not_start_terminal_selection() {
+        let (mut app, _ws_id, _local_room_id, _feature_room_id) = workspace_room_fixture();
+        let pane_id = PaneId::new();
+        let pane = PtyPane::spawn("true", &[], None, 80, 24).unwrap();
+        app.panes.insert(pane_id, pane);
+        app.tabs.add_tab("shell".into(), SplitTree::leaf(pane_id));
+        app.focused_pane = Some(pane_id);
+
+        app.handle_mouse(left_click(2, 2));
+
+        assert!(app.selection.is_none());
+        assert_eq!(app.focus, FocusedPanel::Workspace);
+    }
+
+    #[test]
+    fn tab_bar_click_does_not_start_terminal_selection() {
+        let (mut app, _ws_id, _local_room_id, _feature_room_id) = workspace_room_fixture();
+        let pane_id = PaneId::new();
+        let pane = PtyPane::spawn("true", &[], None, 80, 24).unwrap();
+        app.panes.insert(pane_id, pane);
+        app.pane_presets.insert(pane_id, "shell".to_string());
+        app.tabs.add_tab("shell".into(), SplitTree::leaf(pane_id));
+        app.focused_pane = Some(pane_id);
+
+        app.handle_mouse(left_click(app.panel_rects.tab_bar.x + 1, app.panel_rects.tab_bar.y));
+
+        assert!(app.selection.is_none());
+    }
+
+    #[test]
+    fn layout_hot_restore_reuses_suspended_room_state() {
+        let (mut app, ws_id, local_room_id, _feature_room_id) = workspace_room_fixture();
+        let pane_id = PaneId::new();
+        let pane = PtyPane::spawn("true", &[], None, 80, 24).unwrap();
+        app.panes.insert(pane_id, pane);
+        app.pane_presets.insert(pane_id, "shell".to_string());
+        app.tabs.add_tab("shell".into(), SplitTree::leaf(pane_id));
+        app.focused_pane = Some(pane_id);
+
+        app.suspend_current_room();
+
+        assert!(app.panes.is_empty());
+        assert!(app
+            .suspended_rooms
+            .contains_key(&(ws_id, local_room_id)));
+
+        app.restore_room(ws_id, local_room_id);
+
+        assert!(!app.suspended_rooms.contains_key(&(ws_id, local_room_id)));
+        assert!(app.panes.contains_key(&pane_id));
+        assert_eq!(app.pane_presets.get(&pane_id).map(String::as_str), Some("shell"));
+        assert_eq!(app.focused_pane, Some(pane_id));
+    }
+
+    #[test]
+    fn layout_cold_restore_spawns_persisted_presets() {
+        let (mut app, ws_id, _local_room_id, feature_room_id) = workspace_room_fixture();
+        app.state.active_workspace_id = Some(ws_id);
+        app.state.active_room_id = Some(feature_room_id);
+        app.tabs = TabContainer::new();
+        app.panes.clear();
+        app.pane_presets.clear();
+        app.focused_pane = None;
+        app.suspended_rooms.clear();
+
+        app.config
+            .presets
+            .get_mut("shell")
+            .unwrap()
+            .command = "sh".to_string();
+        app.config
+            .presets
+            .get_mut("shell")
+            .unwrap()
+            .args = vec!["-c".to_string(), "true".to_string()];
+
+        if let Some(claude) = app.config.presets.get_mut("claude") {
+            claude.command = "sh".to_string();
+            claude.args = vec!["-c".to_string(), "true".to_string()];
+        }
+
+        let ws_entry = app.state.ws_by_id_mut(ws_id).unwrap();
+        let room_entry = ws_entry.room_by_id_mut(feature_room_id).unwrap();
+        room_entry.active_tab = Some(0);
+        room_entry.tabs = vec![TabLayout {
+            name: "restored".to_string(),
+            split: SplitNode::Split {
+                direction: CfgDir::Vertical,
+                ratio: 0.5,
+                children: vec![
+                    SplitNode::Leaf {
+                        preset: "shell".to_string(),
+                        session_id: None,
+                    },
+                    SplitNode::Leaf {
+                        preset: "claude".to_string(),
+                        session_id: None,
+                    },
+                ],
+            },
+        }];
+
+        app.restore_room(ws_id, feature_room_id);
+
+        let presets: std::collections::HashSet<_> = app.pane_presets.values().cloned().collect();
+        assert_eq!(app.tabs.len(), 1);
+        assert_eq!(app.tabs.active_name(), "restored");
+        assert!(presets.contains("shell"));
+        assert!(presets.contains("claude"));
+    }
+
+    #[test]
+    fn codex_restore_preserves_session_id_on_cold_restore() {
+        let (mut app, ws_id, _local_room_id, feature_room_id) = workspace_room_fixture();
+        app.state.active_workspace_id = Some(ws_id);
+        app.state.active_room_id = Some(feature_room_id);
+        app.tabs = TabContainer::new();
+        app.panes.clear();
+        app.pane_presets.clear();
+        app.focused_pane = None;
+        app.suspended_rooms.clear();
+
+        if let Some(codex) = app.config.presets.get_mut("codex") {
+            codex.command = "sh".to_string();
+            codex.args = vec!["-c".to_string(), "true".to_string()];
+        }
+
+        let ws_entry = app.state.ws_by_id_mut(ws_id).unwrap();
+        let room_entry = ws_entry.room_by_id_mut(feature_room_id).unwrap();
+        room_entry.active_tab = Some(0);
+        room_entry.tabs = vec![TabLayout {
+            name: "codex".to_string(),
+            split: SplitNode::Leaf {
+                preset: "codex".to_string(),
+                session_id: Some("session-xyz".to_string()),
+            },
+        }];
+
+        app.restore_room(ws_id, feature_room_id);
+
+        let pane_id = app.focused_pane.expect("focused pane after codex restore");
+        assert_eq!(
+            app.agent_states
+                .get(&pane_id)
+                .and_then(|entry| entry.session_id.as_deref()),
+            Some("session-xyz")
+        );
+        assert_eq!(app.pane_presets.get(&pane_id).map(String::as_str), Some("codex"));
+    }
+
+    #[test]
+    fn codex_spawn_args_preserve_existing_args_before_resume() {
+        let mut args = vec!["--yolo".to_string()];
+
+        append_codex_args(&mut args, Some("session-123".to_string()));
+
+        assert_eq!(
+            args,
+            vec![
+                "--yolo".to_string(),
+                "resume".to_string(),
+                "session-123".to_string(),
+            ]
+        );
     }
 }

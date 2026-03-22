@@ -1,23 +1,9 @@
 use anyhow::Result;
-use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
-use std::io::Read;
 use std::path::Path;
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
-use std::thread;
-
-const DEFAULT_SCROLLBACK_LEN: usize = 10_000;
 
 pub struct PtyPane {
-    master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn std::io::Write + Send>,
-    output_rx: mpsc::Receiver<Vec<u8>>,
-    parser: Arc<Mutex<crate::pty::terminal::Parser>>,
-    output_tail: Vec<u8>,
-    child: Box<dyn portable_pty::Child + Send + Sync>,
-    exit_code: Option<i32>,
-    cols: u16,
-    rows: u16,
+    runtime: crate::pty::runtime::PtyRuntime,
+    emulator: crate::pty::emulator::TerminalEmulator,
 }
 
 impl PtyPane {
@@ -39,217 +25,119 @@ impl PtyPane {
         rows: u16,
         envs: &[(String, String)],
     ) -> Result<Self> {
-        let pty_system = native_pty_system();
-        let pair = pty_system.openpty(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })?;
-
-        let mut cmd = CommandBuilder::new(command);
-        cmd.args(args);
-        if let Some(dir) = cwd {
-            cmd.cwd(dir);
-        }
-        // Override TERM so child processes use capabilities humu actually
-        // supports. Inheriting the outer terminal's TERM (e.g. "alacritty")
-        // causes programs to assume features like Kitty graphics protocol
-        // that humu's VT220-class emulation does not provide.
-        cmd.env("TERM", "xterm-256color");
-        for (k, v) in envs {
-            cmd.env(k, v);
-        }
-
-        let child = pair.slave.spawn_command(cmd)?;
-        drop(pair.slave);
-
-        let writer = pair.master.take_writer()?;
-        let mut reader = pair.master.try_clone_reader()?;
-        let parser = Arc::new(Mutex::new(crate::pty::terminal::Parser::new(
-            rows,
-            cols,
-            DEFAULT_SCROLLBACK_LEN,
-        )));
-
-        // Read PTY output in a background thread to avoid blocking the event loop.
-        let (output_tx, output_rx) = mpsc::channel();
-        thread::spawn(move || {
-            let mut buf = [0u8; 4096];
-            loop {
-                match reader.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if output_tx.send(buf[..n].to_vec()).is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
+        let runtime =
+            crate::pty::runtime::PtyRuntime::spawn_with_envs(command, args, cwd, cols, rows, envs)?;
 
         Ok(Self {
-            master: pair.master,
-            writer,
-            output_rx,
-            parser,
-            output_tail: Vec::new(),
-            child,
-            exit_code: None,
-            cols,
-            rows,
+            runtime,
+            emulator: crate::pty::emulator::TerminalEmulator::new(rows, cols),
         })
     }
 
-    /// Drain any PTY output received from the background reader thread.
     pub fn process_output(&mut self) -> Result<()> {
-        while let Ok(data) = self.output_rx.try_recv() {
-            let queries = detect_terminal_queries(&self.output_tail, &data);
-            {
-                let mut parser = self.parser.lock().unwrap();
-                parser.process(&data);
-                if queries.cpr > 0 {
-                    let (row, col) = parser.screen().cursor_position();
-                    let response = format!("\x1b[{};{}R", row + 1, col + 1);
-                    use std::io::Write;
-                    for _ in 0..queries.cpr {
-                        self.writer.write_all(response.as_bytes())?;
-                    }
-                }
-            }
-            // DA1: report as VT220 with ANSI color
-            if queries.da1 > 0 {
-                use std::io::Write;
-                for _ in 0..queries.da1 {
-                    self.writer.write_all(b"\x1b[?62;22c")?;
-                }
-            }
-            // DA2: generic terminal, no version
-            if queries.da2 > 0 {
-                use std::io::Write;
-                for _ in 0..queries.da2 {
-                    self.writer.write_all(b"\x1b[>0;0;0c")?;
-                }
-            }
-            update_output_tail(&mut self.output_tail, &data);
-        }
-        self.check_exit();
-        Ok(())
+        self.emulator.process_output(&mut self.runtime)
     }
 
-    /// Set the scrollback offset (0 = live view, N = N rows back in history).
-    /// vt100 internally clamps to scrollback buffer length.
     pub fn set_scrollback(&self, offset: usize) {
-        self.parser.lock().unwrap().set_scrollback(offset);
+        self.emulator.set_scrollback(offset);
     }
 
-    /// Returns the current scrollback offset.
     pub fn scrollback(&self) -> usize {
-        self.parser.lock().unwrap().screen().scrollback()
+        self.emulator.scrollback()
     }
 
-    /// Returns the mouse protocol mode the child process has requested.
+    pub fn input_state(&self) -> crate::pty::input::PaneInputState {
+        crate::pty::input::PaneInputState {
+            mouse_mode: self.mouse_protocol_mode(),
+            mouse_encoding: self.mouse_protocol_encoding(),
+            alternate_screen: self.alternate_screen(),
+            bracketed_paste: self.bracketed_paste(),
+            rows: self.rows(),
+        }
+    }
+
+    /// Returns true when the child has requested mouse reporting.
+    pub fn should_forward_mouse_events(&self) -> bool {
+        self.mouse_protocol_mode() != crate::pty::terminal::MouseProtocolMode::None
+    }
+
+    /// Returns true when mouse wheel input should be forwarded to the child.
+    /// When the child is using the alternate screen, humu keeps wheel input as
+    /// local scrollback so PTY apps that draw their own viewport keep working.
+    pub fn should_forward_mouse_wheel_events(&self) -> bool {
+        self.should_forward_mouse_events() && !self.alternate_screen()
+    }
+
+    /// Returns true when PageUp/PageDown should stay local to humu.
+    pub fn should_use_local_scrollback_for_page_keys(&self) -> bool {
+        self.mouse_protocol_mode() == crate::pty::terminal::MouseProtocolMode::None
+            || self.alternate_screen()
+    }
+
     pub fn mouse_protocol_mode(&self) -> crate::pty::terminal::MouseProtocolMode {
-        self.parser.lock().unwrap().screen().mouse_protocol_mode()
+        self.emulator.mouse_protocol_mode()
     }
 
-    /// Returns the mouse protocol encoding the child process has requested.
     pub fn mouse_protocol_encoding(&self) -> crate::pty::terminal::MouseProtocolEncoding {
-        self.parser
-            .lock()
-            .unwrap()
-            .screen()
-            .mouse_protocol_encoding()
+        self.emulator.mouse_protocol_encoding()
     }
 
-    /// Returns whether the child process has requested bracketed paste mode.
     pub fn bracketed_paste(&self) -> bool {
-        self.parser.lock().unwrap().screen().bracketed_paste()
+        self.emulator.bracketed_paste()
     }
 
-    /// Returns whether the child process is currently using the alternate screen.
     pub fn alternate_screen(&self) -> bool {
-        self.parser.lock().unwrap().screen().alternate_screen()
+        self.emulator.alternate_screen()
+    }
+
+    /// Get a snapshot of the terminal screen.
+    pub fn screen_snapshot(&self) -> crate::pty::terminal::Screen {
+        self.emulator.screen()
     }
 
     /// Write input to the PTY (user keystrokes).
     pub fn write_input(&mut self, data: &[u8]) -> Result<()> {
-        use std::io::Write;
-        self.writer.write_all(data)?;
-        Ok(())
+        self.runtime.write(data)
     }
 
     /// Resize the PTY and vt100 parser.
     pub fn resize(&mut self, cols: u16, rows: u16) -> Result<()> {
-        self.cols = cols;
-        self.rows = rows;
-        self.master.resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })?;
-        self.parser.lock().unwrap().set_size(rows, cols);
+        self.runtime.resize(cols, rows)?;
+        self.emulator.resize(cols, rows);
         Ok(())
     }
 
-    /// Get a snapshot of the terminal screen.
     pub fn screen(&self) -> crate::pty::terminal::Screen {
-        self.parser.lock().unwrap().screen().clone()
-    }
-
-    /// Returns a reference to the parser Arc for search operations.
-    pub fn parser_ref(&self) -> &std::sync::Arc<std::sync::Mutex<crate::pty::terminal::Parser>> {
-        &self.parser
+        self.screen_snapshot()
     }
 
     /// Get exit status if the process has exited.
     pub fn exit_status(&mut self) -> Option<i32> {
-        self.check_exit();
-        self.exit_code
-    }
-
-    fn check_exit(&mut self) {
-        if self.exit_code.is_some() {
-            return;
-        }
-        if let Ok(Some(status)) = self.child.try_wait() {
-            self.exit_code = Some(status.exit_code() as i32);
-        }
+        self.runtime.exit_status()
     }
 
     pub fn cols(&self) -> u16 {
-        self.cols
+        self.runtime.cols()
     }
 
     pub fn rows(&self) -> u16 {
-        self.rows
+        self.runtime.rows()
     }
-}
 
-struct TerminalQueries {
-    cpr: usize,
-    da1: usize,
-    da2: usize,
-}
-
-fn detect_terminal_queries(tail: &[u8], data: &[u8]) -> TerminalQueries {
-    let mut combined = Vec::with_capacity(tail.len() + data.len());
-    combined.extend_from_slice(tail);
-    combined.extend_from_slice(data);
-    TerminalQueries {
-        cpr: combined.windows(4).filter(|w| *w == b"\x1b[6n").count(),
-        da1: combined.windows(3).filter(|w| *w == b"\x1b[c").count()
-            + combined.windows(4).filter(|w| *w == b"\x1b[0c").count(),
-        da2: combined.windows(4).filter(|w| *w == b"\x1b[>c").count()
-            + combined.windows(5).filter(|w| *w == b"\x1b[>0c").count(),
+    /// Reset the scrollback viewport to the live screen.
+    pub fn reset_scrollback(&self) {
+        self.set_scrollback(0);
     }
-}
 
-fn update_output_tail(tail: &mut Vec<u8>, data: &[u8]) {
-    const MAX_TAIL_LEN: usize = 4;
-    tail.clear();
-    let keep = data.len().min(MAX_TAIL_LEN);
-    tail.extend_from_slice(&data[data.len() - keep..]);
+    /// Scroll the viewport up by the given number of lines.
+    pub fn scrollback_up(&self, lines: usize) {
+        let current = self.scrollback();
+        self.set_scrollback(current.saturating_add(lines));
+    }
+
+    /// Scroll the viewport down by the given number of lines.
+    pub fn scrollback_down(&self, lines: usize) {
+        let current = self.scrollback();
+        self.set_scrollback(current.saturating_sub(lines));
+    }
 }

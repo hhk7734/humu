@@ -1,14 +1,14 @@
 use humu::tui::layout::{PaneId, SplitTree, TabContainer};
 
 #[test]
-fn test_single_pane() {
+fn layout_single_pane() {
     let id = PaneId::new();
     let tree = SplitTree::leaf(id);
     assert_eq!(tree.pane_ids(), vec![id]);
 }
 
 #[test]
-fn test_split_vertical() {
+fn layout_split_vertical() {
     let a = PaneId::new();
     let b = PaneId::new();
     let mut tree = SplitTree::leaf(a);
@@ -17,7 +17,7 @@ fn test_split_vertical() {
 }
 
 #[test]
-fn test_split_horizontal() {
+fn layout_split_horizontal() {
     let a = PaneId::new();
     let b = PaneId::new();
     let mut tree = SplitTree::leaf(a);
@@ -26,7 +26,7 @@ fn test_split_horizontal() {
 }
 
 #[test]
-fn test_remove_pane() {
+fn layout_remove_pane() {
     let a = PaneId::new();
     let b = PaneId::new();
     let mut tree = SplitTree::leaf(a);
@@ -36,7 +36,7 @@ fn test_remove_pane() {
 }
 
 #[test]
-fn test_tab_container() {
+fn layout_tab_container() {
     let mut tabs = TabContainer::new();
     tabs.add_tab("shell".into(), SplitTree::leaf(PaneId::new()));
     tabs.add_tab("claude".into(), SplitTree::leaf(PaneId::new()));

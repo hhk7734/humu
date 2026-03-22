@@ -1,4 +1,13 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+use crossterm::event::{
+    KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
+};
+use ratatui::layout::Rect;
+use humu::pty::input::{
+    InputAction, InputRoute, PaneInputState, route_floating_mouse, route_mouse, route_paste,
+    route_passthrough,
+};
+use humu::pty::terminal::{MouseProtocolEncoding, MouseProtocolMode};
 use humu::tui::input::{Action, Direction, Mode, handle_key};
 
 fn key(code: KeyCode) -> KeyEvent {
@@ -34,6 +43,36 @@ fn shift_arrow(code: KeyCode) -> KeyEvent {
         modifiers: KeyModifiers::SHIFT,
         kind: KeyEventKind::Press,
         state: KeyEventState::NONE,
+    }
+}
+
+fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+    MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
+fn pane_state(
+    mouse_mode: MouseProtocolMode,
+    alternate_screen: bool,
+    bracketed_paste: bool,
+) -> PaneInputState {
+    PaneInputState {
+        mouse_mode,
+        mouse_encoding: MouseProtocolEncoding::Sgr,
+        alternate_screen,
+        bracketed_paste,
+        rows: 24,
+    }
+}
+
+fn assert_handled(route: InputRoute) -> Vec<InputAction> {
+    match route {
+        InputRoute::Handled(actions) => actions,
+        InputRoute::NotHandled => panic!("expected handled route"),
     }
 }
 
@@ -77,6 +116,205 @@ fn terminal_plain_key_passes_through() {
         handle_key(Mode::Terminal, key(KeyCode::Char('a'))),
         Action::PassThrough(_)
     ));
+}
+
+// ── PTY input routing ──────────────────────────────────────────────────────
+
+#[test]
+fn mouse_reporting_app_writes_mouse_sequence() {
+    let route = route_mouse(
+        mouse(MouseEventKind::Down(MouseButton::Left), 1, 1),
+        Rect::new(0, 0, 10, 10),
+        &pane_state(MouseProtocolMode::AnyMotion, false, false),
+        false,
+        false,
+    );
+
+    assert_eq!(
+        assert_handled(route),
+        vec![InputAction::Write(b"\x1b[<0;1;1M".to_vec())]
+    );
+}
+
+#[test]
+fn non_mouse_app_starts_local_selection_on_left_down() {
+    let route = route_mouse(
+        mouse(MouseEventKind::Down(MouseButton::Left), 2, 3),
+        Rect::new(0, 0, 10, 10),
+        &pane_state(MouseProtocolMode::None, false, false),
+        false,
+        false,
+    );
+
+    assert_eq!(
+        assert_handled(route),
+        vec![InputAction::StartSelection { row: 2, col: 1 }]
+    );
+}
+
+#[test]
+fn non_mouse_app_updates_local_selection_on_drag() {
+    let route = route_mouse(
+        mouse(MouseEventKind::Drag(MouseButton::Left), 4, 5),
+        Rect::new(0, 0, 10, 10),
+        &pane_state(MouseProtocolMode::None, false, false),
+        false,
+        true,
+    );
+
+    assert_eq!(
+        assert_handled(route),
+        vec![InputAction::UpdateSelection { row: 4, col: 3 }]
+    );
+}
+
+#[test]
+fn non_mouse_app_finishes_local_selection_on_release() {
+    let route = route_mouse(
+        mouse(MouseEventKind::Up(MouseButton::Left), 4, 5),
+        Rect::new(0, 0, 10, 10),
+        &pane_state(MouseProtocolMode::None, false, false),
+        false,
+        true,
+    );
+
+    assert_eq!(assert_handled(route), vec![InputAction::FinishSelection]);
+}
+
+#[test]
+fn alternate_screen_app_keeps_page_keys_local() {
+    let route = route_passthrough(
+        KeyEvent {
+            code: KeyCode::PageUp,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        },
+        &pane_state(MouseProtocolMode::AnyMotion, true, false),
+    );
+
+    assert_eq!(
+        assert_handled(route),
+        vec![InputAction::AdjustScrollback { lines: 24, up: true }]
+    );
+}
+
+#[test]
+fn non_mouse_app_keeps_page_keys_local() {
+    let route = route_passthrough(
+        KeyEvent {
+            code: KeyCode::PageDown,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        },
+        &pane_state(MouseProtocolMode::None, false, false),
+    );
+
+    assert_eq!(
+        assert_handled(route),
+        vec![InputAction::AdjustScrollback { lines: 24, up: false }]
+    );
+}
+
+#[test]
+fn unmapped_passthrough_key_still_resets_scrollback() {
+    let route = route_passthrough(
+        KeyEvent {
+            code: KeyCode::Insert,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        },
+        &pane_state(MouseProtocolMode::None, false, false),
+    );
+
+    assert_eq!(assert_handled(route), vec![InputAction::ResetScrollback]);
+}
+
+#[test]
+fn mouse_reporting_app_forwards_wheel_events() {
+    let route = route_mouse(
+        mouse(MouseEventKind::ScrollUp, 1, 1),
+        Rect::new(0, 0, 10, 10),
+        &pane_state(MouseProtocolMode::AnyMotion, false, false),
+        false,
+        false,
+    );
+
+    assert_eq!(
+        assert_handled(route),
+        vec![InputAction::Write(b"\x1b[<64;1;1M".to_vec())]
+    );
+}
+
+#[test]
+fn non_mouse_app_uses_local_scrollback_for_wheel_events() {
+    let route = route_mouse(
+        mouse(MouseEventKind::ScrollDown, 1, 1),
+        Rect::new(0, 0, 10, 10),
+        &pane_state(MouseProtocolMode::None, false, false),
+        false,
+        false,
+    );
+
+    assert_eq!(
+        assert_handled(route),
+        vec![InputAction::AdjustScrollback { lines: 3, up: false }]
+    );
+}
+
+#[test]
+fn alternate_screen_app_uses_local_scrollback_for_wheel_events() {
+    let route = route_mouse(
+        mouse(MouseEventKind::ScrollUp, 1, 1),
+        Rect::new(0, 0, 10, 10),
+        &pane_state(MouseProtocolMode::AnyMotion, true, false),
+        false,
+        false,
+    );
+
+    assert_eq!(
+        assert_handled(route),
+        vec![InputAction::AdjustScrollback { lines: 3, up: true }]
+    );
+}
+
+#[test]
+fn floating_non_mouse_wheel_is_translated_to_jk() {
+    let route = route_floating_mouse(
+        mouse(MouseEventKind::ScrollDown, 1, 1),
+        Rect::new(0, 0, 10, 10),
+        &pane_state(MouseProtocolMode::None, false, false),
+    );
+
+    assert_eq!(
+        assert_handled(route),
+        vec![InputAction::Write(b"jjj".to_vec())]
+    );
+}
+
+#[test]
+fn bracketed_paste_is_wrapped() {
+    let route = route_paste("hello", &pane_state(MouseProtocolMode::None, false, true));
+
+    assert_eq!(
+        assert_handled(route),
+        vec![
+            InputAction::ResetScrollback,
+            InputAction::Write(b"\x1b[200~hello\x1b[201~".to_vec()),
+        ]
+    );
+}
+
+#[test]
+fn plain_paste_is_forwarded_raw() {
+    let route = route_paste("hello", &pane_state(MouseProtocolMode::None, false, false));
+
+    assert_eq!(
+        assert_handled(route),
+        vec![InputAction::ResetScrollback, InputAction::Write(b"hello".to_vec())]
+    );
 }
 
 #[test]

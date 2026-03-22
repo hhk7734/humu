@@ -141,8 +141,8 @@ impl SearchState {
     }
 }
 
-/// Extract text from a vt100 parser's current viewport (including scrollback
-/// position), returning `(text, byte-to-col mapping)` per row.
+/// Extract text from a vt100 screen snapshot's current viewport (including
+/// scrollback position), returning `(text, byte-to-col mapping)` per row.
 /// Row 0 = top of the current viewport. Searches the visible content at
 /// the current scrollback offset.
 ///
@@ -150,13 +150,7 @@ impl SearchState {
 /// `set_scrollback(N)` API panics when N > viewport_height due to an
 /// unsigned subtraction in `visible_rows()`. Scrollback is clamped in
 /// `PtyPane::set_scrollback` to prevent this.
-pub fn extract_rows(
-    parser: &std::sync::Arc<std::sync::Mutex<crate::pty::terminal::Parser>>,
-) -> Vec<(String, Vec<usize>)> {
-    let guard = parser.lock().unwrap();
-    let screen = guard.screen().clone();
-    drop(guard);
-
+pub fn extract_rows(screen: &crate::pty::terminal::Screen) -> Vec<(String, Vec<usize>)> {
     let (screen_rows, screen_cols) = screen.size();
     let screen_rows = screen_rows as usize;
     let screen_cols = screen_cols as usize;
