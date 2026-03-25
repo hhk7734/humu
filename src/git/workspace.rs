@@ -1,7 +1,7 @@
 use crate::config::{HumuState, WorkspaceEntry};
 use crate::id::WorkspaceId;
 use anyhow::{Result, bail};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Default)]
@@ -111,4 +111,41 @@ impl WorkspaceManager {
 
         Ok(())
     }
+}
+
+pub fn default_clone_target_dir(home: &Path, url: &str) -> Result<PathBuf> {
+    let repo_path = clone_repo_path(url)?;
+    let mut segments = repo_path.split('/').filter(|segment| !segment.is_empty());
+    let mut collected: Vec<&str> = segments.by_ref().collect();
+    if collected.len() < 2 {
+        bail!("could not derive clone path from URL: {url}");
+    }
+
+    let repo = collected.pop().unwrap().trim_end_matches(".git");
+    let owner = collected.pop().unwrap();
+    if owner.is_empty() || repo.is_empty() {
+        bail!("could not derive clone path from URL: {url}");
+    }
+
+    Ok(home.join(".humu").join("projects").join(owner).join(repo))
+}
+
+fn clone_repo_path(url: &str) -> Result<&str> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        bail!("URL is required for Clone");
+    }
+
+    if let Some((_, rest)) = trimmed.split_once("://") {
+        let (_, path) = rest
+            .split_once('/')
+            .ok_or_else(|| anyhow::anyhow!("could not derive clone path from URL: {url}"))?;
+        return Ok(path);
+    }
+
+    if let Some((_, path)) = trimmed.split_once(':') {
+        return Ok(path);
+    }
+
+    bail!("could not derive clone path from URL: {url}");
 }

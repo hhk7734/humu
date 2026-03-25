@@ -11,10 +11,12 @@ use humu::config::{
     HumuConfig, HumuState, SplitDirection as CfgDir, SplitNode, TabLayout, WorkspaceEntry, humu_dir,
 };
 use humu::git::room::{RoomGitStatus, RoomManager};
-use humu::git::workspace::WorkspaceManager;
+use humu::git::workspace::{WorkspaceManager, default_clone_target_dir};
 use humu::hook::http::{AgentState, HookEvent, HookServer, generate_hook_files};
 use humu::id::{RoomId, TabId, WorkspaceId};
-use humu::pty::input::{InputAction, InputRoute, route_floating_mouse, route_mouse, route_paste, route_passthrough};
+use humu::pty::input::{
+    InputAction, InputRoute, route_floating_mouse, route_mouse, route_passthrough, route_paste,
+};
 use humu::pty::pane::PtyPane;
 use humu::tui::completion::complete_path;
 use humu::tui::input::{
@@ -45,6 +47,20 @@ const PRESET_CLAUDE: &str = "claude";
 const PRESET_GEMINI: &str = "gemini";
 const PRESET_CODEX: &str = "codex";
 const DEFAULT_ROOM_NAME: &str = "local";
+
+fn expand_workspace_path(path_str: &str) -> PathBuf {
+    let expanded = if path_str.starts_with("~/") || path_str == "~" {
+        if let Some(home) = dirs::home_dir() {
+            format!("{}{}", home.display(), &path_str[1..])
+        } else {
+            path_str.to_string()
+        }
+    } else {
+        path_str.to_string()
+    };
+
+    PathBuf::from(expanded.trim_end_matches('/'))
+}
 
 fn append_codex_args(args: &mut Vec<String>, session_id: Option<String>) {
     if let Some(sid) = session_id {
@@ -943,7 +959,12 @@ impl App {
         }
     }
 
-    fn apply_input_route(&mut self, pane_id: PaneId, pane_rect: Option<Rect>, route: InputRoute) -> bool {
+    fn apply_input_route(
+        &mut self,
+        pane_id: PaneId,
+        pane_rect: Option<Rect>,
+        route: InputRoute,
+    ) -> bool {
         let InputRoute::Handled(actions) = route else {
             return false;
         };
@@ -1000,7 +1021,11 @@ impl App {
             {
                 self.copy_selection_to_clipboard();
             }
-            if self.selection.as_ref().is_some_and(|sel| sel.pane_id == pane_id) {
+            if self
+                .selection
+                .as_ref()
+                .is_some_and(|sel| sel.pane_id == pane_id)
+            {
                 self.selection = None;
             }
         }
@@ -1027,7 +1052,11 @@ impl App {
         };
         let state = pane.input_state();
         let _ = pane;
-        self.apply_input_route(pane_id, None, route_floating_mouse(*mouse, popup_area, &state))
+        self.apply_input_route(
+            pane_id,
+            None,
+            route_floating_mouse(*mouse, popup_area, &state),
+        )
     }
 
     fn show_error(&mut self, message: impl Into<String>) {
@@ -1594,23 +1623,6 @@ impl App {
             DialogField::TextInput { value, .. } => value.clone(),
             _ => String::new(),
         };
-        if path_str.is_empty() {
-            self.show_error("Path is required");
-            return;
-        }
-        // Expand ~ to the user's home directory (Rust's Path doesn't do this).
-        let expanded = if path_str.starts_with("~/") || path_str == "~" {
-            if let Some(home) = dirs::home_dir() {
-                format!("{}{}", home.display(), &path_str[1..])
-            } else {
-                path_str.clone()
-            }
-        } else {
-            path_str.clone()
-        };
-        // Strip trailing slash so Path resolves correctly.
-        let trimmed = expanded.trim_end_matches('/');
-        let path = std::path::Path::new(trimmed);
         let mgr = WorkspaceManager::new();
         let result = match mode_idx {
             0 => {
@@ -1623,14 +1635,44 @@ impl App {
                     self.show_error("URL is required for Clone");
                     return;
                 }
+                let path_buf = if path_str.is_empty() {
+                    let Some(home) = dirs::home_dir() else {
+                        self.show_error(
+                            "Could not determine home directory for default clone path",
+                        );
+                        return;
+                    };
+                    match default_clone_target_dir(&home, &url) {
+                        Ok(path) => path,
+                        Err(e) => {
+                            self.show_error(e.to_string());
+                            return;
+                        }
+                    }
+                } else {
+                    expand_workspace_path(&path_str)
+                };
+                let path = path_buf.as_path();
                 mgr.clone_remote(&mut self.state, &url, path)
             }
             1 => {
                 // Existing
+                if path_str.is_empty() {
+                    self.show_error("Path is required");
+                    return;
+                }
+                let path_buf = expand_workspace_path(&path_str);
+                let path = path_buf.as_path();
                 mgr.register(&mut self.state, path)
             }
             _ => {
                 // New
+                if path_str.is_empty() {
+                    self.show_error("Path is required");
+                    return;
+                }
+                let path_buf = expand_workspace_path(&path_str);
+                let path = path_buf.as_path();
                 mgr.init(&mut self.state, path)
             }
         };
@@ -2721,7 +2763,8 @@ impl App {
             }
             MouseEventKind::Down(_) | MouseEventKind::Up(_) => {
                 let pos = Position::new(mouse.column, mouse.row);
-                if self.pane_at(pos).is_some() || self.pty_mouse_active || self.selection.is_some() {
+                if self.pane_at(pos).is_some() || self.pty_mouse_active || self.selection.is_some()
+                {
                     let _ = self.try_forward_mouse(&mouse);
                 }
             }
@@ -2731,14 +2774,18 @@ impl App {
                 }
             }
             MouseEventKind::ScrollUp => {
-                if self.pane_at(Position::new(mouse.column, mouse.row)).is_none()
+                if self
+                    .pane_at(Position::new(mouse.column, mouse.row))
+                    .is_none()
                     || !self.try_forward_mouse(&mouse)
                 {
                     self.handle_scroll(mouse.column, mouse.row, true);
                 }
             }
             MouseEventKind::ScrollDown => {
-                if self.pane_at(Position::new(mouse.column, mouse.row)).is_none()
+                if self
+                    .pane_at(Position::new(mouse.column, mouse.row))
+                    .is_none()
                     || !self.try_forward_mouse(&mouse)
                 {
                     self.handle_scroll(mouse.column, mouse.row, false);
@@ -3003,12 +3050,14 @@ impl App {
             pane_id,
             Some(pane_rect),
             route_mouse(
-            *mouse,
-            pane_rect,
-            &state,
-            self.pty_mouse_active,
-            self.selection.as_ref().is_some_and(|sel| sel.pane_id == pane_id),
-        ),
+                *mouse,
+                pane_rect,
+                &state,
+                self.pty_mouse_active,
+                self.selection
+                    .as_ref()
+                    .is_some_and(|sel| sel.pane_id == pane_id),
+            ),
         );
         handled
     }
@@ -5161,6 +5210,36 @@ mod tests {
     }
 
     #[test]
+    fn workspace_create_existing_mode_still_requires_path() {
+        let mut app = test_app_with_workspace_tree(HumuState::default(), vec![], HashMap::new());
+
+        app.execute_workspace_create(vec![
+            DialogField::Select {
+                label: "Mode".to_string(),
+                options: vec![
+                    "Clone".to_string(),
+                    "Existing".to_string(),
+                    "New".to_string(),
+                ],
+                selected: 1,
+            },
+            DialogField::TextInput {
+                label: "Path".to_string(),
+                value: String::new(),
+            },
+            DialogField::TextInput {
+                label: "URL (Clone only)".to_string(),
+                value: String::new(),
+            },
+        ]);
+
+        assert!(matches!(
+            app.popup,
+            PopupState::ErrorDialog { ref message } if message == "Path is required"
+        ));
+    }
+
+    #[test]
     fn workspace_click_does_not_start_terminal_selection() {
         let (mut app, _ws_id, _local_room_id, _feature_room_id) = workspace_room_fixture();
         let pane_id = PaneId::new();
@@ -5185,7 +5264,10 @@ mod tests {
         app.tabs.add_tab("shell".into(), SplitTree::leaf(pane_id));
         app.focused_pane = Some(pane_id);
 
-        app.handle_mouse(left_click(app.panel_rects.tab_bar.x + 1, app.panel_rects.tab_bar.y));
+        app.handle_mouse(left_click(
+            app.panel_rects.tab_bar.x + 1,
+            app.panel_rects.tab_bar.y,
+        ));
 
         assert!(app.selection.is_none());
     }
@@ -5203,15 +5285,16 @@ mod tests {
         app.suspend_current_room();
 
         assert!(app.panes.is_empty());
-        assert!(app
-            .suspended_rooms
-            .contains_key(&(ws_id, local_room_id)));
+        assert!(app.suspended_rooms.contains_key(&(ws_id, local_room_id)));
 
         app.restore_room(ws_id, local_room_id);
 
         assert!(!app.suspended_rooms.contains_key(&(ws_id, local_room_id)));
         assert!(app.panes.contains_key(&pane_id));
-        assert_eq!(app.pane_presets.get(&pane_id).map(String::as_str), Some("shell"));
+        assert_eq!(
+            app.pane_presets.get(&pane_id).map(String::as_str),
+            Some("shell")
+        );
         assert_eq!(app.focused_pane, Some(pane_id));
     }
 
@@ -5226,16 +5309,9 @@ mod tests {
         app.focused_pane = None;
         app.suspended_rooms.clear();
 
-        app.config
-            .presets
-            .get_mut("shell")
-            .unwrap()
-            .command = "sh".to_string();
-        app.config
-            .presets
-            .get_mut("shell")
-            .unwrap()
-            .args = vec!["-c".to_string(), "true".to_string()];
+        app.config.presets.get_mut("shell").unwrap().command = "sh".to_string();
+        app.config.presets.get_mut("shell").unwrap().args =
+            vec!["-c".to_string(), "true".to_string()];
 
         if let Some(claude) = app.config.presets.get_mut("claude") {
             claude.command = "sh".to_string();
@@ -5308,7 +5384,10 @@ mod tests {
                 .and_then(|entry| entry.session_id.as_deref()),
             Some("session-xyz")
         );
-        assert_eq!(app.pane_presets.get(&pane_id).map(String::as_str), Some("codex"));
+        assert_eq!(
+            app.pane_presets.get(&pane_id).map(String::as_str),
+            Some("codex")
+        );
     }
 
     #[test]

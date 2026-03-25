@@ -1,7 +1,8 @@
 use humu::config::HumuState;
 use humu::git::room::RoomManager;
-use humu::git::workspace::WorkspaceManager;
+use humu::git::workspace::{WorkspaceManager, default_clone_target_dir};
 use std::os::unix::fs::symlink;
+use std::path::Path;
 use tempfile::TempDir;
 
 #[test]
@@ -124,6 +125,39 @@ fn test_delete_workspace_removes_repo() {
 
     assert!(state.ws_by_id(ws_id).is_none());
     assert!(!project_path.exists());
+}
+
+#[test]
+fn test_default_clone_target_dir_from_https_url() {
+    let home = Path::new("/home/tester");
+
+    let target = default_clone_target_dir(home, "https://github.com/hhk7734/humu.git").unwrap();
+
+    assert_eq!(
+        target,
+        Path::new("/home/tester/.humu/projects/hhk7734/humu")
+    );
+}
+
+#[test]
+fn test_default_clone_target_dir_from_ssh_url() {
+    let home = Path::new("/home/tester");
+
+    let target = default_clone_target_dir(home, "git@github.com:openai/codex.git").unwrap();
+
+    assert_eq!(
+        target,
+        Path::new("/home/tester/.humu/projects/openai/codex")
+    );
+}
+
+#[test]
+fn test_default_clone_target_dir_rejects_unparseable_url() {
+    let home = Path::new("/home/tester");
+
+    let result = default_clone_target_dir(home, "https://github.com/humu.git");
+
+    assert!(result.is_err());
 }
 
 fn git_init_with_commit(repo_path: &std::path::Path) {
