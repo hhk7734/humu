@@ -99,6 +99,11 @@ Three creation modes:
 2. **Existing repo** — user points to an existing local git directory
 3. **New project** — user provides a directory path → `git init <path>`
 
+All successful workspace-add flows converge through workspace registration. After
+registration, humu checks for `<workspace>/mise.toml` and runs
+`mise trust <workspace>/mise.toml` as a best-effort post-add hook. Failures are
+logged but do not fail workspace creation.
+
 Workspace name is derived from the repo directory name. If a name collision occurs, humu appends a numeric suffix (e.g., `infra`, `infra-2`). The path field supports fuzzy filesystem autocomplete with cross-segment matching.
 
 On creation, humu auto-selects the new workspace and its default room (main branch).

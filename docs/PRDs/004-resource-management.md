@@ -26,6 +26,11 @@ Workspace name is derived from the repo directory name. If multiple workspaces s
 
 Workspace registration rejects duplicate repository paths using the canonicalized filesystem path. This blocks both exact path re-use and alternate spellings such as symlinks that resolve to an already-registered repository.
 
+After a workspace is successfully added, humu checks for `<workspace>/mise.toml`.
+If present, humu runs `mise trust <workspace>/mise.toml` as a best-effort
+follow-up. Failures are reported via humu's logging path but do not block or
+roll back workspace creation.
+
 On creation, humu auto-selects the new workspace and its default room (main branch), so the terminal is immediately usable.
 
 ### Select

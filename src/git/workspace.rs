@@ -14,6 +14,18 @@ impl WorkspaceManager {
 
     /// Register an existing git repo as a workspace.
     pub fn register(&self, state: &mut HumuState, path: &Path) -> Result<WorkspaceId> {
+        self.register_with_trust_runner(state, path, trust_mise_file_if_present)
+    }
+
+    fn register_with_trust_runner<F>(
+        &self,
+        state: &mut HumuState,
+        path: &Path,
+        trust: F,
+    ) -> Result<WorkspaceId>
+    where
+        F: FnOnce(&Path) -> Result<()>,
+    {
         let path = std::fs::canonicalize(path)?;
         if !path.join(".git").exists() {
             bail!("not a git repository: {}", path.display());
@@ -38,6 +50,13 @@ impl WorkspaceManager {
             last_room_id: None,
             rooms: vec![],
         });
+        let workspace_path = &state.workspaces.last().unwrap().path;
+        if let Err(error) = trust(workspace_path) {
+            crate::humu_log!(
+                "failed to trust mise config for {}: {error}",
+                workspace_path.display()
+            );
+        }
         Ok(id)
     }
 
@@ -148,4 +167,57 @@ fn clone_repo_path(url: &str) -> Result<&str> {
     }
 
     bail!("could not derive clone path from URL: {url}");
+}
+
+pub fn trust_mise_file_if_present(workspace_path: &Path) -> Result<()> {
+    trust_mise_file_if_present_with(workspace_path, run_mise_trust)
+}
+
+pub fn trust_mise_file_if_present_with<F>(workspace_path: &Path, trust: F) -> Result<()>
+where
+    F: FnOnce(&Path) -> Result<()>,
+{
+    let mise_file = workspace_path.join("mise.toml");
+    if !mise_file.exists() {
+        return Ok(());
+    }
+
+    trust(&mise_file)
+}
+
+fn run_mise_trust(mise_file: &Path) -> Result<()> {
+    let output = Command::new("mise").arg("trust").arg(mise_file).output()?;
+    if !output.status.success() {
+        bail!(
+            "mise trust failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::HumuState;
+    use tempfile::TempDir;
+
+    #[test]
+    fn register_succeeds_even_if_mise_trust_fails() {
+        let dir = TempDir::new().unwrap();
+        std::process::Command::new("git")
+            .args(["init", dir.path().to_str().unwrap()])
+            .output()
+            .unwrap();
+        std::fs::write(dir.path().join("mise.toml"), "tools = {}\n").unwrap();
+
+        let mut state = HumuState::default();
+        let mgr = WorkspaceManager::new();
+
+        let ws_id = mgr
+            .register_with_trust_runner(&mut state, dir.path(), |_| bail!("boom"))
+            .unwrap();
+
+        assert!(state.ws_by_id(ws_id).is_some());
+    }
 }

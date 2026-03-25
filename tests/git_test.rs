@@ -1,6 +1,8 @@
 use humu::config::HumuState;
 use humu::git::room::RoomManager;
-use humu::git::workspace::{WorkspaceManager, default_clone_target_dir};
+use humu::git::workspace::{
+    WorkspaceManager, default_clone_target_dir, trust_mise_file_if_present_with,
+};
 use std::os::unix::fs::symlink;
 use std::path::Path;
 use tempfile::TempDir;
@@ -158,6 +160,36 @@ fn test_default_clone_target_dir_rejects_unparseable_url() {
     let result = default_clone_target_dir(home, "https://github.com/humu.git");
 
     assert!(result.is_err());
+}
+
+#[test]
+fn test_trust_mise_file_skips_missing_config() {
+    let dir = TempDir::new().unwrap();
+    let mut called = false;
+
+    trust_mise_file_if_present_with(dir.path(), |_| {
+        called = true;
+        Ok(())
+    })
+    .unwrap();
+
+    assert!(!called);
+}
+
+#[test]
+fn test_trust_mise_file_runs_when_present() {
+    let dir = TempDir::new().unwrap();
+    let mise_file = dir.path().join("mise.toml");
+    std::fs::write(&mise_file, "tools = {}\n").unwrap();
+    let mut called_with = None;
+
+    trust_mise_file_if_present_with(dir.path(), |path| {
+        called_with = Some(path.to_path_buf());
+        Ok(())
+    })
+    .unwrap();
+
+    assert_eq!(called_with, Some(mise_file));
 }
 
 fn git_init_with_commit(repo_path: &std::path::Path) {
