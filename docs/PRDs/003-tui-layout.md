@@ -33,6 +33,8 @@ Three panels plus a status bar. The left panel is a single workspace tree: each 
 - **Splits within tabs**: Vertical and horizontal splits, nested. One tab might be a single Claude pane; another might be a vertical split with shell + cargo watch.
 - **Pane borders**: Rounded (`╭╮╯╰`), focused pane in `accent_blue`, unfocused in `fg_muted`. Title in top border (preset name). Exited panes are automatically closed.
 
+When a client attaches to an existing daemon session, the tab bar and active split tree are hydrated from the server snapshot first so the visible layout, focused pane, and fullscreen state match the daemon-owned session state.
+
 ## Preset Selector
 
 When creating a new tab or pane, a popup lists available presets from `config.yaml`. Navigate with arrow keys, select with `Enter`, dismiss with `Esc`. Blocked if no room is selected. After a preset is selected, the mode transitions to Terminal so the user can immediately interact with the new pane.

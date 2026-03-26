@@ -54,6 +54,7 @@ struct SessionRuntimeState {
     pane_sessions: HashMap<PaneId, String>,
     panes_by_session: HashMap<String, HashMap<PaneId, RegisteredPane>>,
     agent_states: HashMap<PaneId, AgentStateEntry>,
+    session_snapshots: HashMap<String, FullSnapshot>,
     recorded_updates: Vec<RuntimeUpdateRecord>,
 }
 
@@ -71,6 +72,7 @@ impl SessionRuntimeState {
             pane_sessions: HashMap::new(),
             panes_by_session: HashMap::new(),
             agent_states: HashMap::new(),
+            session_snapshots: HashMap::new(),
             recorded_updates: Vec::new(),
         }
     }
@@ -101,6 +103,7 @@ impl SessionRuntimeState {
         for pane_id in pane_ids {
             self.remove_pane(pane_id);
         }
+        self.session_snapshots.remove(session_name);
     }
 
     fn update_session_focus(&mut self, session_name: &str, focused: bool) {
@@ -159,6 +162,12 @@ impl SessionRuntimeState {
     }
 
     fn snapshot_for_session(&self, session_name: &str, mut base: FullSnapshot) -> FullSnapshot {
+        if let Some(snapshot) = self.session_snapshots.get(session_name) {
+            let mut snapshot = snapshot.clone();
+            snapshot.session_name = session_name.to_string();
+            return snapshot;
+        }
+
         let Some(panes) = self.panes_by_session.get(session_name) else {
             return base;
         };
@@ -497,6 +506,15 @@ impl SessionRuntime {
             .lock()
             .expect("session runtime state lock")
             .clear_session_panes(session_name);
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn set_session_snapshot(&self, session_name: &str, snapshot: FullSnapshot) {
+        self.state
+            .lock()
+            .expect("session runtime state lock")
+            .session_snapshots
+            .insert(session_name.to_string(), snapshot);
     }
 
     pub fn update_session_focus(&self, session_name: &str, focused: bool) {

@@ -19,7 +19,9 @@ use humu::pty::input::{
 };
 use humu::pty::pane::PtyPane;
 use humu::shared::protocol::{ClientRequest, FrameDecoder, ServerResponse, encode_frame};
-use humu::shared::render::{AgentStatus, FullSnapshot};
+use humu::shared::render::{
+    AgentStatus, FullSnapshot, SplitDirectionSnapshot, SplitTreeSnapshot,
+};
 use humu::tui::completion::complete_path;
 use humu::tui::input::{
     Action, Direction as NavDirection, Mode, handle_key, hint_click_action, hint_click_action_right,
@@ -567,6 +569,96 @@ impl App {
         }
     }
 
+    fn split_tree_from_snapshot(tree: &SplitTreeSnapshot) -> Option<SplitTree> {
+        match tree {
+            SplitTreeSnapshot::Leaf { pane_id } => Some(SplitTree::leaf(*pane_id)),
+            SplitTreeSnapshot::Split {
+                direction,
+                ratio,
+                children,
+            } => {
+                if children.len() < 2 {
+                    return None;
+                }
+                let left = Self::split_tree_from_snapshot(&children[0])?;
+                let right = Self::split_tree_from_snapshot(&children[1])?;
+                let direction = match direction {
+                    SplitDirectionSnapshot::Vertical => SplitDirection::Vertical,
+                    SplitDirectionSnapshot::Horizontal => SplitDirection::Horizontal,
+                };
+                Some(SplitTree::Split {
+                    direction,
+                    ratio: *ratio,
+                    children: Box::new((left, right)),
+                })
+            }
+        }
+    }
+
+    fn split_tree_from_pane_ids(pane_ids: &[PaneId]) -> Option<SplitTree> {
+        let mut pane_ids = pane_ids.iter().copied();
+        let first = pane_ids.next()?;
+        let mut tree = SplitTree::leaf(first);
+        for (index, pane_id) in pane_ids.enumerate() {
+            let direction = if index % 2 == 0 {
+                SplitDirection::Horizontal
+            } else {
+                SplitDirection::Vertical
+            };
+            tree = SplitTree::Split {
+                direction,
+                ratio: 0.5,
+                children: Box::new((tree, SplitTree::leaf(pane_id))),
+            };
+        }
+        Some(tree)
+    }
+
+    fn restore_snapshot_layout(&mut self, snapshot: &FullSnapshot) {
+        if snapshot.tabs.is_empty() {
+            self.tabs = TabContainer::new();
+            self.focused_pane = None;
+            self.fullscreen_pane = None;
+            return;
+        }
+
+        let active_index = snapshot.active_tab_index.unwrap_or(0);
+        let mut tabs = TabContainer::new();
+        for (index, tab) in snapshot.tabs.iter().enumerate() {
+            let tree = if index == active_index {
+                snapshot
+                    .split_tree
+                    .as_ref()
+                    .and_then(Self::split_tree_from_snapshot)
+            } else {
+                None
+            }
+            .or_else(|| Self::split_tree_from_pane_ids(&tab.pane_ids));
+
+            if let Some(tree) = tree {
+                tabs.add_tab(tab.name.clone(), tree);
+            }
+        }
+
+        if tabs.is_empty() {
+            self.tabs = TabContainer::new();
+            self.focused_pane = snapshot.focused_pane_id;
+            self.fullscreen_pane = snapshot.fullscreen_pane_id;
+            return;
+        }
+
+        let active_index = active_index.min(tabs.len() - 1);
+        tabs.set_active(active_index);
+        self.tabs = tabs;
+        self.focused_pane = snapshot.focused_pane_id;
+        self.fullscreen_pane = snapshot.fullscreen_pane_id;
+
+        for (pane_id, pane) in &snapshot.panes {
+            self.pane_presets
+                .insert(*pane_id, pane.preset_name.clone());
+        }
+    }
+
     fn hydrate_attached_snapshot(&mut self) {
         let Some(snapshot) = self.attached_snapshot.take() else {
             return;
@@ -641,6 +733,8 @@ impl App {
                     .insert(pane_ids[0], AgentStateEntry { state, session_id });
             }
         }
+
+        self.restore_snapshot_layout(&snapshot);
     }
 
     pub fn run(&mut self) -> Result<()> {
@@ -5253,6 +5347,11 @@ impl App {
 
     pub fn test_persist_layout(&mut self) {
         self.persist_layout();
+    }
+
+    pub fn test_hydrate_attached_snapshot(&mut self, snapshot: FullSnapshot) {
+        self.attached_snapshot = Some(snapshot);
+        self.hydrate_attached_snapshot();
     }
 
     pub fn test_state_path(&self) -> &std::path::Path {

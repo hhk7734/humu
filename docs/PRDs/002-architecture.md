@@ -150,6 +150,8 @@ Tab and pane layout is stored directly in each room entry in `state.yaml` and re
 
 Layout is persisted via **event-driven persistence** — `persist_layout()` is called on every structural mutation (tab add/remove, pane split/close), not on a timer or only at shutdown. This ensures crash safety: if humu is killed unexpectedly, the layout reflects the last structural change. When all tabs are closed, the room's tabs list is cleared so that a restart creates a fresh default shell instead of restoring stale panes.
 
+When humu attaches to a daemon session, the daemon-provided `FullSnapshot` is treated as the source of truth for the active tab tree, focus, fullscreen pane, and per-pane preset mapping. The foreground client hydrates its local `TabContainer` from that snapshot rather than maintaining a separate authoritative copy of the active session layout.
+
 Workspaces and rooms are stored as lists with `name` and `id` fields. Lookups use linear search by name or UUID.
 
 ### Room Suspension (Hot Restore)
