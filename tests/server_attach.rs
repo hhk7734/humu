@@ -20,6 +20,8 @@ fn support_can_spawn_isolated_humu_home() {
     assert!(env.home.path().exists());
 }
 
+// Linux-only: verifies scoped process cleanup via pid liveness.
+#[cfg(target_os = "linux")]
 #[test]
 fn support_scopes_background_process_cleanup() {
     let _: fn(&support::TestEnv) -> support::ScopedChild = support::spawn_humu_server;
@@ -37,6 +39,9 @@ fn support_scopes_background_process_cleanup() {
     assert!(!support::process_is_alive(pid));
 }
 
+// Linux-only: inspects procfs for cwd and validates server runtime artifacts land
+// in the isolated humu home used by the helper.
+#[cfg(target_os = "linux")]
 #[test]
 fn support_spawn_humu_server_applies_isolated_stdio_contract() {
     let env = support::isolated_humu_home();
@@ -51,15 +56,21 @@ fn support_spawn_humu_server_applies_isolated_stdio_contract() {
     assert_eq!(cwd, env.cwd());
 
     let hook_file = env.humu_dir().join("hooks/claude-settings.json");
+    let log_file = env.log_path();
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
-        if hook_file.exists() {
+        if hook_file.exists() && log_file.exists() {
             break;
         }
         std::thread::sleep(Duration::from_millis(25));
     }
 
     assert!(hook_file.exists(), "expected isolated hook file at {:?}", hook_file);
+    assert!(log_file.exists(), "expected isolated log file at {:?}", log_file);
+    assert!(env.hook_port_path().starts_with(env.humu_dir()));
+    assert!(env.server_socket_path().starts_with(env.humu_dir()));
+    assert!(env.server_lock_path().starts_with(env.humu_dir()));
+    assert!(env.server_metadata_path().starts_with(env.humu_dir()));
 }
 
 #[test]

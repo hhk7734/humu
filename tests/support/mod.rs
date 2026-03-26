@@ -50,6 +50,10 @@ impl TestEnv {
         self.humu_dir().join("port")
     }
 
+    pub fn log_path(&self) -> PathBuf {
+        self.humu_dir().join("humu.log")
+    }
+
     pub fn server_socket_path(&self) -> PathBuf {
         self.humu_dir().join("server.sock")
     }
@@ -323,6 +327,8 @@ pub fn run_humu_attach(env: &TestEnv, session: &str) -> ExitStatus {
         .expect("run humu attach")
 }
 
+// Linux-only helper used by Linux-only pid-liveness tests.
+#[cfg(target_os = "linux")]
 pub fn process_is_alive(pid: u32) -> bool {
     Command::new("kill")
         .arg("-0")
