@@ -273,6 +273,114 @@ fn unauthorized_unregister_is_rejected_without_session_ownership() {
     );
 }
 
+#[test]
+fn unauthorized_force_detach_is_rejected_without_session_ownership() {
+    let env = support::isolated_humu_home();
+    let _daemon = support::spawn_humu_server(&env);
+    wait_for_ping(&env);
+
+    let mut owner = attach_default_session(&env);
+
+    let mut attacker = UnixStream::connect(env.server_socket_path()).expect("connect attacker");
+    let force_detach = send_request(
+        &mut attacker,
+        ClientRequest::ForceDetachSession {
+            name: "default".to_string(),
+        },
+    );
+    assert!(matches!(force_detach, ServerResponse::Error { .. }));
+
+    let mut probe = UnixStream::connect(env.server_socket_path()).expect("connect probe");
+    probe.write_all(
+        &encode_frame(&ClientRequest::AttachSession {
+            name: "default".to_string(),
+            cols: 120,
+            rows: 40,
+        })
+        .expect("encode probe attach"),
+    )
+    .expect("write probe attach");
+    let probe_attach = read_framed_message(&mut probe).expect("read probe attach");
+    assert!(matches!(probe_attach, ServerResponse::AlreadyAttached { .. }));
+
+    let detached = send_request(&mut owner, ClientRequest::Detach);
+    assert!(matches!(detached, ServerResponse::Detached { .. }));
+}
+
+#[test]
+fn cross_session_pane_id_reuse_is_rejected() {
+    let env = support::isolated_humu_home();
+    let _daemon = support::spawn_humu_server(&env);
+    wait_for_ping(&env);
+
+    let mut owner = attach_default_session(&env);
+    let pane_id = PaneId::new();
+    let registered = send_request(
+        &mut owner,
+        ClientRequest::RegisterPane {
+            pane_id,
+            preset_name: "shell".to_string(),
+            cwd: None,
+            session_id: Some("owned-session".to_string()),
+            started_at_unix_secs: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_secs(),
+        },
+    );
+    assert!(matches!(registered, ServerResponse::Ack));
+
+    let mut other = UnixStream::connect(env.server_socket_path()).expect("connect other client");
+    let created = send_request(
+        &mut other,
+        ClientRequest::CreateSession {
+            name: "other".to_string(),
+        },
+    );
+    assert!(matches!(created, ServerResponse::SessionCreated { .. }));
+    other
+        .write_all(
+            &encode_frame(&ClientRequest::AttachSession {
+                name: "other".to_string(),
+                cols: 120,
+                rows: 40,
+            })
+            .expect("encode other attach"),
+        )
+        .expect("write other attach");
+    let other_attach = read_framed_message(&mut other).expect("read other attach");
+    assert!(matches!(other_attach, ServerResponse::Attached { .. }));
+
+    let hijack = send_request(
+        &mut other,
+        ClientRequest::RegisterPane {
+            pane_id,
+            preset_name: "shell".to_string(),
+            cwd: None,
+            session_id: Some("stolen-session".to_string()),
+            started_at_unix_secs: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_secs(),
+        },
+    );
+    assert!(matches!(hijack, ServerResponse::Error { .. }));
+
+    let detached_other = send_request(&mut other, ClientRequest::Detach);
+    assert!(matches!(detached_other, ServerResponse::Detached { .. }));
+
+    let detached_owner = send_request(&mut owner, ClientRequest::Detach);
+    assert!(matches!(detached_owner, ServerResponse::Detached { .. }));
+    drop(owner);
+
+    let snapshot = snapshot_default_session(&env);
+    assert!(
+        snapshot.panes.contains_key(&pane_id),
+        "cross-session pane-id reuse replaced the original pane: {:?}",
+        snapshot.panes
+    );
+}
+
 #[tokio::test]
 async fn daemon_session_snapshot_retains_hook_and_codex_updates_after_detach() {
     let env = support::isolated_humu_home();

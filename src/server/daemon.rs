@@ -467,11 +467,19 @@ fn handle_request(
             }
         }
         ClientRequest::ForceDetachSession { name } => {
-            sessions.detach(&name);
-            runtime.detach_session(&name);
-            if attached_session.as_deref() == Some(name.as_str()) {
-                *attached_session = None;
+            let Some(current_session) = attached_session.as_deref() else {
+                return Ok(ServerResponse::Error {
+                    message: "force detach requires an attached session".to_string(),
+                });
+            };
+            if current_session != name {
+                return Ok(ServerResponse::Error {
+                    message: "cannot force detach outside the attached session".to_string(),
+                });
             }
+            sessions.detach_owned(&name, client_id);
+            runtime.detach_session(&name);
+            *attached_session = None;
             Ok(ServerResponse::Detached { session_name: name })
         }
         ClientRequest::RegisterPane {
@@ -486,6 +494,13 @@ fn handle_request(
                     message: "register pane requires an attached session".to_string(),
                 });
             };
+            if let Some(owner_session) = runtime.pane_session_name(pane_id)
+                && owner_session != session_name
+            {
+                return Ok(ServerResponse::Error {
+                    message: "cannot register a pane id owned by another session".to_string(),
+                });
+            }
             runtime.register_pane(
                 session_name,
                 pane_id,
