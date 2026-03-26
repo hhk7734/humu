@@ -34,7 +34,7 @@ use humu::tui::widgets::terminal_widget::TerminalWidget;
 use humu::tui::widgets::workspace_panel::{TreeItemKind, WorkspacePanel, WorkspaceTreeItem};
 use ratatui::Terminal;
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write, stdout};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
@@ -298,7 +298,8 @@ impl App {
         let tabs = TabContainer::new();
         let panes = HashMap::new();
         let pane_presets = HashMap::new();
-        let (server_stream, hook_port, attached_snapshot) = Self::connect_default_daemon_session();
+        let (server_stream, hook_port, attached_snapshot) =
+            Self::connect_default_daemon_session()?;
 
         let ui_config = humu::tui::theme::UiConfig {
             simplified_ui: config.ui.simplified_ui,
@@ -346,10 +347,11 @@ impl App {
     }
 
     #[cfg(not(test))]
-    fn connect_default_daemon_session() -> (Option<UnixStream>, Option<u16>, Option<FullSnapshot>) {
+    fn connect_default_daemon_session(
+    ) -> Result<(Option<UnixStream>, Option<u16>, Option<FullSnapshot>)> {
         if let Err(err) = crate::server::daemon::run(true) {
             humu::humu_log!("failed to start daemon runtime: {err}");
-            return (None, None, None);
+            return Ok((None, None, None));
         }
 
         let hook_port = std::fs::read_to_string(humu_dir().join("port"))
@@ -362,7 +364,7 @@ impl App {
                 "failed to connect to daemon socket {}",
                 socket_path.display()
             );
-            return (None, hook_port, None);
+            return Ok((None, hook_port, None));
         };
 
         let attach = ClientRequest::AttachSession {
@@ -374,30 +376,48 @@ impl App {
             .write_all(&encode_frame(&attach).expect("encode daemon attach"))
             .is_err()
         {
-            return (None, hook_port, None);
+            return Ok((None, hook_port, None));
         }
         match Self::read_daemon_response(&mut stream) {
             Ok(ServerResponse::Attached { snapshot, .. }) => {
-                (Some(stream), hook_port, Some(snapshot))
+                Ok((Some(stream), hook_port, Some(snapshot)))
             }
-            Ok(ServerResponse::AlreadyAttached { .. }) => {
-                humu::humu_log!("daemon session already attached; continuing without runtime sync");
-                (None, hook_port, None)
+            Ok(ServerResponse::AlreadyAttached {
+                session_name,
+                owner_pid,
+                attached_at,
+            }) => {
+                let mut details = Vec::new();
+                if let Some(pid) = owner_pid {
+                    details.push(format!("pid {pid}"));
+                }
+                if let Some(attached_at) = attached_at {
+                    details.push(format!("attached at {attached_at}"));
+                }
+                let suffix = if details.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", details.join(", "))
+                };
+                Err(anyhow::anyhow!(
+                    "session \"{session_name}\" is already attached{suffix}"
+                ))
             }
             Ok(other) => {
                 humu::humu_log!("unexpected daemon attach response: {other:?}");
-                (None, hook_port, None)
+                Ok((None, hook_port, None))
             }
             Err(err) => {
                 humu::humu_log!("failed to read daemon attach response: {err}");
-                (None, hook_port, None)
+                Ok((None, hook_port, None))
             }
         }
     }
 
     #[cfg(test)]
-    fn connect_default_daemon_session() -> (Option<UnixStream>, Option<u16>, Option<FullSnapshot>) {
-        (None, None, None)
+    fn connect_default_daemon_session(
+    ) -> Result<(Option<UnixStream>, Option<u16>, Option<FullSnapshot>)> {
+        Ok((None, None, None))
     }
 
     fn read_daemon_response(stream: &mut UnixStream) -> anyhow::Result<ServerResponse> {
@@ -459,6 +479,30 @@ impl App {
 
     fn unregister_pane_with_daemon(&mut self, pane_id: PaneId) {
         let _ = self.send_daemon_request(ClientRequest::UnregisterPane { pane_id });
+    }
+
+    fn unregister_all_panes_with_daemon(&mut self) {
+        let mut seen = HashSet::new();
+        let mut pane_ids = Vec::new();
+
+        for pane_id in self.panes.keys().copied() {
+            if seen.insert(pane_id) {
+                pane_ids.push(pane_id);
+            }
+        }
+        for pane_id in self
+            .suspended_rooms
+            .values()
+            .flat_map(|room_state| room_state.panes.keys().copied())
+        {
+            if seen.insert(pane_id) {
+                pane_ids.push(pane_id);
+            }
+        }
+
+        for pane_id in pane_ids {
+            self.unregister_pane_with_daemon(pane_id);
+        }
     }
 
     fn hydrate_attached_snapshot(&mut self) {
@@ -4915,6 +4959,7 @@ impl App {
 
 impl Drop for App {
     fn drop(&mut self) {
+        self.unregister_all_panes_with_daemon();
         let _ = self.send_daemon_request(ClientRequest::Detach);
     }
 }

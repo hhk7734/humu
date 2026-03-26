@@ -73,6 +73,46 @@ fn attach_default_session(env: &support::TestEnv) -> UnixStream {
     stream
 }
 
+fn snapshot_default_session(env: &support::TestEnv) -> humu::shared::render::FullSnapshot {
+    let mut stream = UnixStream::connect(env.server_socket_path()).expect("connect daemon");
+    stream
+        .write_all(
+            &encode_frame(&ClientRequest::AttachSession {
+                name: "default".to_string(),
+                cols: 120,
+                rows: 40,
+            })
+            .expect("encode attach"),
+        )
+        .expect("write attach");
+    let response = read_framed_message(&mut stream).expect("read attach response");
+    let snapshot = match response {
+        ServerResponse::Attached { snapshot, .. } => snapshot,
+        other => panic!("unexpected attach response: {other:?}"),
+    };
+    let detached = send_request(&mut stream, ClientRequest::Detach);
+    assert!(matches!(
+        detached,
+        ServerResponse::Detached { ref session_name } if session_name == "default"
+    ));
+    snapshot
+}
+
+fn wait_for_app_exit(app: &mut support::PtyHarness, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if !app.child_is_alive() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    assert!(
+        !app.child_is_alive(),
+        "app did not exit before timeout; output: {}",
+        app.output_string()
+    );
+}
+
 fn send_request(stream: &mut UnixStream, request: ClientRequest) -> ServerResponse {
     stream
         .write_all(&encode_frame(&request).expect("encode request"))
@@ -157,6 +197,24 @@ fn foreground_app_leaves_daemon_hook_port_ownership_intact() {
         .parse::<u16>()
         .expect("parse port after app exit");
     assert_eq!(after_drop, daemon_port);
+}
+
+#[test]
+fn second_foreground_attach_is_refused_cleanly() {
+    let env = support::isolated_humu_home();
+    let _daemon = support::spawn_humu_server(&env);
+    wait_for_ping(&env);
+
+    let mut first = support::spawn_humu_attach(&env, "default");
+    assert!(first.wait_for_output("\u{1b}[?1049h", Duration::from_secs(2)));
+
+    let mut second = support::spawn_humu_attach(&env, "default");
+    wait_for_app_exit(&mut second, Duration::from_secs(2));
+    let output = second.output_string();
+    assert!(
+        output.contains("already attached"),
+        "expected already-attached error, got: {output}"
+    );
 }
 
 #[tokio::test]
@@ -409,6 +467,135 @@ async fn foreground_attach_rehydrates_runtime_agent_state_from_daemon_snapshot()
         app.wait_for_output("shell ⠋", Duration::from_secs(2)),
         "expected rehydrated spinner in attach UI, got output: {}",
         app.output_string()
+    );
+}
+
+#[tokio::test]
+async fn graceful_foreground_exit_cleans_runtime_registrations_between_attach_cycles() {
+    let env = support::isolated_humu_home();
+    fs::write(
+        env.config_path(),
+        "presets:\n  shell:\n    command: /bin/sh\n    args:\n      - -lc\n      - sleep 60\n",
+    )
+    .expect("write quiet shell config");
+
+    let mut state = support::migrated_state_fixture();
+    let default_session = state.ensure_session("default");
+    default_session.active_workspace_id = Some(support::workspace_id("humu"));
+    default_session.active_room_id = Some(support::room_id("main"));
+    default_session.tabs_by_room.insert(
+        support::room_id("main"),
+        humu::config::PersistedRoomLayout {
+            active_tab: 0,
+            tabs: vec![humu::config::TabLayout {
+                name: "shell".to_string(),
+                split: humu::config::SplitNode::Leaf {
+                    preset: "shell".to_string(),
+                    session_id: Some("cycle-session".to_string()),
+                },
+            }],
+        },
+    );
+    support::persistence::save_state(&env.state_path(), &state).expect("save state fixture");
+
+    let _daemon = support::spawn_humu_server(&env);
+    wait_for_ping(&env);
+
+    let mut first = support::spawn_humu_attach(&env, "default");
+    assert!(first.wait_for_output("\u{1b}[?1049h", Duration::from_secs(2)));
+    first.write_input(b"\x11");
+    wait_for_app_exit(&mut first, Duration::from_secs(2));
+
+    let snapshot = snapshot_default_session(&env);
+    assert!(
+        !snapshot.panes.values().any(|pane| {
+            pane.preset_name == "shell"
+                && pane.agent_state.as_ref().is_some_and(|state| {
+                    state.session_id.as_deref() == Some("cycle-session")
+                })
+        }),
+        "graceful exit left stale runtime pane registrations behind: {:?}",
+        snapshot.panes
+    );
+
+    let hook_port = fs::read_to_string(env.hook_port_path())
+        .expect("read hook port")
+        .trim()
+        .parse::<u16>()
+        .expect("parse hook port");
+    let seeded_pane_id = PaneId::new();
+    let mut seed_stream = attach_default_session(&env);
+    let registered = send_request(
+        &mut seed_stream,
+        ClientRequest::RegisterPane {
+            pane_id: seeded_pane_id,
+            preset_name: "shell".to_string(),
+            cwd: None,
+            session_id: Some("cycle-session".to_string()),
+            started_at_unix_secs: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_secs(),
+        },
+    );
+    assert!(matches!(registered, ServerResponse::Ack));
+    let detached = send_request(&mut seed_stream, ClientRequest::Detach);
+    assert!(matches!(detached, ServerResponse::Detached { .. }));
+    drop(seed_stream);
+
+    let hook_response = reqwest::Client::new()
+        .post(format!(
+            "http://127.0.0.1:{hook_port}/hook?paneId={seeded_pane_id}&eventType=PostToolUse&sessionId=cycle-session"
+        ))
+        .send()
+        .await
+        .expect("send seeded hook event");
+    assert_eq!(hook_response.status(), 200);
+
+    wait_for(
+        || {
+            snapshot_default_session(&env).panes.values().any(|pane| {
+                pane.preset_name == "shell"
+                    && pane.agent_state.as_ref().is_some_and(|state| {
+                        state.status == AgentStatus::Working
+                            && state.session_id.as_deref() == Some("cycle-session")
+                    })
+            })
+        },
+        Duration::from_secs(5),
+    );
+
+    let mut second = support::spawn_humu_attach(&env, "default");
+    assert!(second.wait_for_output("\u{1b}[?1049h", Duration::from_secs(2)));
+    assert!(
+        second.wait_for_output("shell ⠋", Duration::from_secs(2)),
+        "expected rehydrated spinner after repeated attach cycle, got output: {}",
+        second.output_string()
+    );
+    second.write_input(b"\x11");
+    wait_for_app_exit(&mut second, Duration::from_secs(2));
+
+    let final_snapshot = snapshot_default_session(&env);
+    let remaining_cycle_panes = final_snapshot
+        .panes
+        .iter()
+        .filter(|(_, pane)| {
+            pane.preset_name == "shell"
+                && pane.agent_state.as_ref().is_some_and(|state| {
+                    state.session_id.as_deref() == Some("cycle-session")
+                })
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        remaining_cycle_panes.len() == 1
+            && remaining_cycle_panes[0].0 == &seeded_pane_id
+            && remaining_cycle_panes[0]
+                .1
+                .agent_state
+                .as_ref()
+                .is_some_and(|state| state.status == AgentStatus::Working),
+        "second graceful exit left stale runtime pane registrations behind: {:?}",
+        final_snapshot.panes
     );
 }
 
