@@ -37,6 +37,25 @@ fn support_scopes_background_process_cleanup() {
 }
 
 #[test]
+fn support_spawn_humu_server_applies_isolated_stdio_contract() {
+    let env = support::isolated_humu_home();
+    let mut child = support::spawn_humu_server(&env);
+    let pid = child.process_id().expect("server helper pid");
+
+    assert!(child.stdin().is_none());
+    assert!(child.stdout().is_some());
+    assert!(child.stderr().is_some());
+
+    let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).expect("server cwd");
+    assert_eq!(cwd, env.cwd());
+
+    let environ = std::fs::read(format!("/proc/{pid}/environ")).expect("server environ");
+    let environ = String::from_utf8_lossy(&environ);
+    assert!(environ.contains(&format!("HOME={}", env.humu_dir().display())));
+    assert!(environ.contains(&format!("HUMU_DIR={}", env.humu_dir().display())));
+}
+
+#[test]
 fn client_request_round_trips_with_all_core_variants() {
     let requests = vec![
         ClientRequest::Ping,
