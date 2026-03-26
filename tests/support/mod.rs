@@ -7,6 +7,7 @@ use humu::id::{RoomId, WorkspaceId};
 use humu::tui::layout::{PaneId, SplitTree};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::Read;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
@@ -77,9 +78,68 @@ pub struct PtyHarness {
     output: Vec<u8>,
 }
 
+pub struct ScopedChild {
+    child: Child,
+    reap_on_drop: bool,
+}
+
+impl ScopedChild {
+    pub fn process_id(&self) -> Option<u32> {
+        Some(self.child.id())
+    }
+
+    pub fn child_is_alive(&mut self) -> bool {
+        self.try_wait().is_none()
+    }
+
+    pub fn try_wait(&mut self) -> Option<ExitStatus> {
+        match self.child.try_wait().expect("query child status") {
+            Some(status) => {
+                self.reap_on_drop = false;
+                Some(status)
+            }
+            None => None,
+        }
+    }
+
+    pub fn wait(&mut self) -> ExitStatus {
+        let status = self.child.wait().expect("wait for child");
+        self.reap_on_drop = false;
+        status
+    }
+
+    pub fn kill(&mut self) {
+        if self.try_wait().is_none() {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+        self.reap_on_drop = false;
+    }
+
+    pub fn stdout(&mut self) -> Option<&mut std::process::ChildStdout> {
+        self.child.stdout.as_mut()
+    }
+
+    pub fn stderr(&mut self) -> Option<&mut std::process::ChildStderr> {
+        self.child.stderr.as_mut()
+    }
+
+    pub fn stdin(&mut self) -> Option<&mut std::process::ChildStdin> {
+        self.child.stdin.as_mut()
+    }
+}
+
+impl Drop for ScopedChild {
+    fn drop(&mut self) {
+        if self.reap_on_drop {
+            self.kill();
+        }
+    }
+}
+
 impl PtyHarness {
-    pub fn spawn(
-        command: &str,
+    pub fn spawn<S: AsRef<OsStr>>(
+        command: S,
         args: &[String],
         cwd: Option<&Path>,
         cols: u16,
@@ -220,28 +280,57 @@ pub fn humu_attach_command(env: &TestEnv, session: &str) -> Command {
     command
 }
 
-pub fn spawn_humu_server(env: &TestEnv) -> Child {
-    humu_server_command(env)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn humu server")
+pub fn spawn_scoped_command(mut command: Command) -> ScopedChild {
+    let child = command.spawn().expect("spawn scoped child");
+    ScopedChild {
+        child,
+        reap_on_drop: true,
+    }
 }
 
-pub fn spawn_humu_attach(env: &TestEnv, session: &str) -> Child {
-    humu_attach_command(env, session)
-        .stdin(Stdio::piped())
+pub fn spawn_humu_server(env: &TestEnv) -> ScopedChild {
+    let mut command = humu_server_command(env);
+    command
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn humu attach")
+        .stderr(Stdio::piped());
+    spawn_scoped_command(command)
+}
+
+pub fn spawn_humu_attach(env: &TestEnv, session: &str) -> PtyHarness {
+    spawn_humu_attach_with_size(env, session, 80, 24)
+}
+
+pub fn spawn_humu_attach_with_size(
+    env: &TestEnv,
+    session: &str,
+    cols: u16,
+    rows: u16,
+) -> PtyHarness {
+    PtyHarness::spawn(
+        humu_binary().as_os_str(),
+        &["attach".to_string(), session.to_string()],
+        Some(env.cwd()),
+        cols,
+        rows,
+        &test_env_vars(env),
+    )
 }
 
 pub fn run_humu_attach(env: &TestEnv, session: &str) -> ExitStatus {
     humu_attach_command(env, session)
         .status()
         .expect("run humu attach")
+}
+
+pub fn process_is_alive(pid: u32) -> bool {
+    Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 pub fn spawn_sleeping_shell() -> PtyHarness {
@@ -253,6 +342,19 @@ pub fn spawn_sleeping_shell() -> PtyHarness {
         24,
         &[],
     )
+}
+
+fn test_env_vars(env: &TestEnv) -> Vec<(String, String)> {
+    vec![
+        (
+            "HOME".to_string(),
+            env.humu_dir().as_os_str().to_string_lossy().into_owned(),
+        ),
+        (
+            "HUMU_DIR".to_string(),
+            env.humu_dir().as_os_str().to_string_lossy().into_owned(),
+        ),
+    ]
 }
 
 pub fn workspace_id(name: &str) -> WorkspaceId {

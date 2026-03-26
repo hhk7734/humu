@@ -6,6 +6,7 @@ use humu::shared::protocol::{
     ServerEvent, ServerResponse, SessionListEntry,
 };
 use humu::shared::render::{ColorSnapshot, DetachReason, FullSnapshot};
+use std::process::Command;
 use uuid::Uuid;
 
 fn pane_id(raw: &str) -> PaneId {
@@ -16,6 +17,23 @@ fn pane_id(raw: &str) -> PaneId {
 fn support_can_spawn_isolated_humu_home() {
     let env = support::isolated_humu_home();
     assert!(env.home.path().exists());
+}
+
+#[test]
+fn support_scopes_background_process_cleanup() {
+    let _: fn(&support::TestEnv) -> support::ScopedChild = support::spawn_humu_server;
+
+    let pid = {
+        let mut command = Command::new("bash");
+        command.arg("-lc").arg("sleep 60");
+        let child = support::spawn_scoped_command(command);
+        let pid = child.process_id().expect("scoped child pid");
+        assert!(support::process_is_alive(pid));
+        pid
+    };
+
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert!(!support::process_is_alive(pid));
 }
 
 #[test]
