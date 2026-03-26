@@ -114,6 +114,8 @@ The default `humu` command performs server discovery and auto-launch before atta
 - A session owns all runtime state needed to keep work alive after client detach
 - Workspaces and room registries remain global, shared machine state
 - Session-local state is scoped separately from the global workspace registry
+- Persisted room layouts are session-owned state keyed by room ID
+- `RoomEntry.tabs` and `RoomEntry.active_tab` remain legacy migration fields only and are cleared on save
 - Session state includes:
   - active workspace and room
   - tabs and split layout
@@ -154,6 +156,12 @@ The default `humu` command performs server discovery and auto-launch before atta
 - Search mode cursor and current match navigation intent
 
 The client must not own any state required to keep a task alive after detach.
+
+### Persistence migration
+
+- The singleton pre-session layout format is migrated into a `default` session record during load
+- The `default` session becomes the immediate source of truth for current `App` layout restore and save paths before the daemon/client split lands
+- Named sessions persist independent room selection and layout maps without reusing workspace-room registry fields
 
 ### Shared model layer
 

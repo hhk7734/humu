@@ -8,7 +8,8 @@ use crossterm::terminal::{
 };
 use humu::codex::CodexTracker;
 use humu::config::{
-    HumuConfig, HumuState, SplitDirection as CfgDir, SplitNode, TabLayout, WorkspaceEntry, humu_dir,
+    HumuConfig, HumuState, PersistedRoomLayout, SplitDirection as CfgDir, SplitNode, TabLayout,
+    WorkspaceEntry, humu_dir,
 };
 use humu::git::room::{RoomGitStatus, RoomManager};
 use humu::git::workspace::{WorkspaceManager, default_clone_target_dir};
@@ -585,17 +586,7 @@ impl App {
             self.tabs = room_state.tabs;
             self.pane_presets = room_state.pane_presets;
             let layout = self.save_layout();
-            if let Some(ws) = self.state.ws_by_id_mut(ws_id) {
-                if let Some(room) = ws.room_by_id_mut(room_id) {
-                    if let Some((active_tab, tabs)) = layout {
-                        room.active_tab = Some(active_tab);
-                        room.tabs = tabs;
-                    } else {
-                        room.active_tab = None;
-                        room.tabs.clear();
-                    }
-                }
-            }
+            self.persist_room_layout(ws_id, room_id, layout);
             self.panes.clear();
         }
 
@@ -3811,17 +3802,11 @@ impl App {
         self.room_selected = self.state.active_room_id;
 
         // Restore layout if saved
-        if let (Some(ws_id), Some(room_id)) =
+        if let (Some(_ws_id), Some(room_id)) =
             (self.state.active_workspace_id, self.state.active_room_id)
         {
-            if let Some(ws) = self.state.ws_by_id(ws_id) {
-                if let Some(room) = ws.room_by_id(room_id) {
-                    if !room.tabs.is_empty() {
-                        let active_tab = room.active_tab.unwrap_or(0);
-                        let tabs = room.tabs.clone();
-                        self.restore_layout(active_tab, tabs);
-                    }
-                }
+            if let Some(layout) = self.room_layout(room_id) {
+                self.restore_layout(layout.active_tab, layout.tabs);
             }
         }
     }
@@ -4276,6 +4261,41 @@ impl App {
         Some((self.tabs.active_index(), tabs))
     }
 
+    fn room_layout(&self, room_id: RoomId) -> Option<PersistedRoomLayout> {
+        self.state
+            .session_by_name(HumuState::DEFAULT_SESSION_NAME)
+            .and_then(|session| session.tabs_by_room.get(&room_id))
+            .cloned()
+    }
+
+    fn persist_room_layout(
+        &mut self,
+        ws_id: WorkspaceId,
+        room_id: RoomId,
+        layout: Option<(usize, Vec<TabLayout>)>,
+    ) {
+        {
+            let session = self.state.ensure_session(HumuState::DEFAULT_SESSION_NAME);
+            match layout {
+                Some((active_tab, tabs)) => {
+                    session
+                        .tabs_by_room
+                        .insert(room_id, PersistedRoomLayout { active_tab, tabs });
+                }
+                None => {
+                    session.tabs_by_room.remove(&room_id);
+                }
+            }
+        }
+
+        if let Some(ws_entry) = self.state.ws_by_id_mut(ws_id)
+            && let Some(room_entry) = ws_entry.room_by_id_mut(room_id)
+        {
+            room_entry.active_tab = None;
+            room_entry.tabs.clear();
+        }
+    }
+
     /// Recursively convert a runtime `SplitTree` to the serializable `SplitNode`.
     fn split_tree_to_node(&self, tree: &SplitTree) -> Option<SplitNode> {
         match tree {
@@ -4319,17 +4339,7 @@ impl App {
             None => return,
         };
         let layout = self.save_layout();
-        if let Some(ws_entry) = self.state.ws_by_id_mut(ws_id) {
-            if let Some(room_entry) = ws_entry.room_by_id_mut(room_id) {
-                if let Some((active_tab, tabs)) = layout {
-                    room_entry.active_tab = Some(active_tab);
-                    room_entry.tabs = tabs;
-                } else {
-                    room_entry.active_tab = None;
-                    room_entry.tabs.clear();
-                }
-            }
-        }
+        self.persist_room_layout(ws_id, room_id, layout);
     }
 
     /// Sync layout to state and flush to disk.
@@ -4485,15 +4495,8 @@ impl App {
             }
         } else {
             // Cold restore from persisted layout, or create default.
-            let room_layout = self
-                .state
-                .ws_by_id(ws_id)
-                .and_then(|ws| ws.room_by_id(room_id))
-                .filter(|r| !r.tabs.is_empty())
-                .map(|r| (r.active_tab.unwrap_or(0), r.tabs.clone()));
-
-            if let Some((active_tab, tabs)) = room_layout {
-                self.restore_layout(active_tab, tabs);
+            if let Some(layout) = self.room_layout(room_id) {
+                self.restore_layout(layout.active_tab, layout.tabs);
             } else {
                 // No saved layout — create a default shell tab.
                 self.panes.clear();
@@ -5075,6 +5078,70 @@ fn should_handle_key_event(key: &KeyEvent) -> bool {
 }
 
 #[cfg(test)]
+impl App {
+    pub fn test_with_state(state: HumuState, state_path: PathBuf) -> Self {
+        let config = HumuConfig::default();
+        let notification_manager =
+            humu::notification::NotificationManager::from_config(&config.notifications);
+
+        Self {
+            config,
+            state,
+            mode: Mode::Terminal,
+            focus: FocusedPanel::Terminal,
+            workspace_selected: None,
+            room_selected: None,
+            running: true,
+            panes: HashMap::new(),
+            tabs: TabContainer::new(),
+            focused_pane: None,
+            pane_presets: HashMap::new(),
+            popup: PopupState::None,
+            agent_states: HashMap::new(),
+            hook_rx: None,
+            hook_port: None,
+            panel_rects: PanelRects {
+                workspace: Rect::new(0, 0, 24, 8),
+                terminal: Rect::new(24, 0, 56, 20),
+                explorer: Rect::new(80, 0, 20, 20),
+                tab_bar: Rect::new(24, 0, 56, 1),
+                status_bar: Rect::new(0, 20, 100, 1),
+            },
+            panel_widths: [24, 20],
+            pty_mouse_active: false,
+            is_focused: true,
+            selection: None,
+            fullscreen_pane: None,
+            palette: humu::tui::theme::Palette::GITHUB_DARK,
+            ui_config: humu::tui::theme::UiConfig {
+                simplified_ui: false,
+                rounded_corners: true,
+            },
+            spin_tick: 0,
+            suspended_rooms: HashMap::new(),
+            search_state: None,
+            explorer_state: humu::explorer::ExplorerState::new(PathBuf::new()),
+            room_cache: HashMap::new(),
+            workspace_tree_cache: Vec::new(),
+            selected_tree_index: 0,
+            workspace_mode_entered: None,
+            state_path,
+            notification_manager,
+            config_path: PathBuf::from("/tmp/humu-test-config.yaml"),
+            codex_tracker: CodexTracker::new(PathBuf::from("/tmp/humu-test-codex")),
+        }
+    }
+
+    pub fn test_persist_layout(&mut self) {
+        self.persist_layout();
+    }
+
+    pub fn test_state_path(&self) -> &std::path::Path {
+        &self.state_path
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
@@ -5230,6 +5297,7 @@ mod tests {
                     },
                 ],
             }],
+            sessions: vec![],
             panel_widths: Some([24, 20]),
         };
 
@@ -5505,26 +5573,30 @@ mod tests {
             claude.args = vec!["-c".to_string(), "true".to_string()];
         }
 
-        let ws_entry = app.state.ws_by_id_mut(ws_id).unwrap();
-        let room_entry = ws_entry.room_by_id_mut(feature_room_id).unwrap();
-        room_entry.active_tab = Some(0);
-        room_entry.tabs = vec![TabLayout {
-            name: "restored".to_string(),
-            split: SplitNode::Split {
-                direction: CfgDir::Vertical,
-                ratio: 0.5,
-                children: vec![
-                    SplitNode::Leaf {
-                        preset: "shell".to_string(),
-                        session_id: None,
+        let session = app.state.ensure_session(HumuState::DEFAULT_SESSION_NAME);
+        session.tabs_by_room.insert(
+            feature_room_id,
+            humu::config::PersistedRoomLayout {
+                active_tab: 0,
+                tabs: vec![TabLayout {
+                    name: "restored".to_string(),
+                    split: SplitNode::Split {
+                        direction: CfgDir::Vertical,
+                        ratio: 0.5,
+                        children: vec![
+                            SplitNode::Leaf {
+                                preset: "shell".to_string(),
+                                session_id: None,
+                            },
+                            SplitNode::Leaf {
+                                preset: "claude".to_string(),
+                                session_id: None,
+                            },
+                        ],
                     },
-                    SplitNode::Leaf {
-                        preset: "claude".to_string(),
-                        session_id: None,
-                    },
-                ],
+                }],
             },
-        }];
+        );
 
         app.restore_room(ws_id, feature_room_id);
 
@@ -5551,16 +5623,20 @@ mod tests {
             codex.args = vec!["-c".to_string(), "true".to_string()];
         }
 
-        let ws_entry = app.state.ws_by_id_mut(ws_id).unwrap();
-        let room_entry = ws_entry.room_by_id_mut(feature_room_id).unwrap();
-        room_entry.active_tab = Some(0);
-        room_entry.tabs = vec![TabLayout {
-            name: "codex".to_string(),
-            split: SplitNode::Leaf {
-                preset: "codex".to_string(),
-                session_id: Some("session-xyz".to_string()),
+        let session = app.state.ensure_session(HumuState::DEFAULT_SESSION_NAME);
+        session.tabs_by_room.insert(
+            feature_room_id,
+            humu::config::PersistedRoomLayout {
+                active_tab: 0,
+                tabs: vec![TabLayout {
+                    name: "codex".to_string(),
+                    split: SplitNode::Leaf {
+                        preset: "codex".to_string(),
+                        session_id: Some("session-xyz".to_string()),
+                    },
+                }],
             },
-        }];
+        );
 
         app.restore_room(ws_id, feature_room_id);
 

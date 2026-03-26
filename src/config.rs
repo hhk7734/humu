@@ -230,6 +230,35 @@ pub struct TabLayout {
     pub split: SplitNode,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct PersistedRoomLayout {
+    #[serde(default)]
+    pub active_tab: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tabs: Vec<TabLayout>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct SessionSize {
+    pub cols: u16,
+    pub rows: u16,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SessionState {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_workspace_id: Option<WorkspaceId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_room_id: Option<RoomId>,
+    #[serde(default)]
+    pub tabs_by_room: HashMap<RoomId, PersistedRoomLayout>,
+    #[serde(default)]
+    pub attached: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_size: Option<SessionSize>,
+}
+
 // ── RoomEntry ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -280,6 +309,8 @@ pub struct HumuState {
     pub active_room_id: Option<RoomId>,
     #[serde(default)]
     pub workspaces: Vec<WorkspaceEntry>,
+    #[serde(default)]
+    pub sessions: Vec<SessionState>,
     /// Panel widths: [workspace_panel, explorer_panel]. Persisted across restarts.
     #[serde(default, deserialize_with = "deserialize_panel_widths")]
     pub panel_widths: Option<[u16; 2]>,
@@ -298,6 +329,8 @@ where
 }
 
 impl HumuState {
+    pub const DEFAULT_SESSION_NAME: &str = "default";
+
     pub fn ws_by_id(&self, id: WorkspaceId) -> Option<&WorkspaceEntry> {
         self.workspaces.iter().find(|w| w.id == id)
     }
@@ -306,16 +339,88 @@ impl HumuState {
         self.workspaces.iter_mut().find(|w| w.id == id)
     }
 
+    pub fn session_by_name(&self, name: &str) -> Option<&SessionState> {
+        self.sessions.iter().find(|session| session.name == name)
+    }
+
+    pub fn session_by_name_mut(&mut self, name: &str) -> Option<&mut SessionState> {
+        self.sessions.iter_mut().find(|session| session.name == name)
+    }
+
+    pub fn ensure_session(&mut self, name: &str) -> &mut SessionState {
+        if let Some(index) = self.sessions.iter().position(|session| session.name == name) {
+            return &mut self.sessions[index];
+        }
+
+        self.sessions.push(SessionState {
+            name: name.to_string(),
+            ..SessionState::default()
+        });
+        self.sessions
+            .last_mut()
+            .expect("session list contains newly pushed session")
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let state: Self = serde_yaml::from_str(&content)?;
-        Ok(state)
+        Ok(state.migrate_legacy_layout_state())
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        let contents = serde_yaml::to_string(self)?;
+        let contents = serde_yaml::to_string(&self.persistable_state())?;
         std::fs::write(path, contents)?;
         Ok(())
+    }
+
+    pub fn migrate_legacy_layout_state(mut self) -> Self {
+        let legacy_active_workspace_id = self.active_workspace_id;
+        let legacy_active_room_id = self.active_room_id;
+        let mut legacy_layouts = Vec::new();
+
+        for workspace in &mut self.workspaces {
+            for room in &mut workspace.rooms {
+                if !room.tabs.is_empty() {
+                    legacy_layouts.push((
+                        room.id,
+                        PersistedRoomLayout {
+                            active_tab: room.active_tab.unwrap_or(0),
+                            tabs: std::mem::take(&mut room.tabs),
+                        },
+                    ));
+                }
+                room.active_tab = None;
+                room.tabs.clear();
+            }
+        }
+
+        let (active_workspace_id, active_room_id) = {
+            let session = self.ensure_session(Self::DEFAULT_SESSION_NAME);
+            if session.active_workspace_id.is_none() {
+                session.active_workspace_id = legacy_active_workspace_id;
+            }
+            if session.active_room_id.is_none() {
+                session.active_room_id = legacy_active_room_id;
+            }
+            for (room_id, layout) in legacy_layouts {
+                session.tabs_by_room.entry(room_id).or_insert(layout);
+            }
+            (session.active_workspace_id, session.active_room_id)
+        };
+
+        self.active_workspace_id = active_workspace_id;
+        self.active_room_id = active_room_id;
+        self
+    }
+
+    pub fn persistable_state(&self) -> Self {
+        let mut state = self.clone().migrate_legacy_layout_state();
+        let active_workspace_id = state.active_workspace_id;
+        let active_room_id = state.active_room_id;
+        let session = state.ensure_session(Self::DEFAULT_SESSION_NAME);
+        session.active_workspace_id = active_workspace_id;
+        session.active_room_id = active_room_id;
+        state
     }
 }
 
