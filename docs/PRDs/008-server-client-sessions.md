@@ -110,7 +110,8 @@ Task 4 implementation status:
 
 - `humu server` starts the daemon shell, writes `server.json`, binds `server.sock`, answers `Ping`, maintains the startup lock under `server.lock`, and `humu server --daemon` now launches that shell in a background child and returns after readiness
 - Attached sessions are released both on explicit `Detach` and on socket disconnect, so Task 4 no longer wedges a session lock after the client goes away
-- `humu attach` remains a reachable fallback to the current in-process TUI until the real attach client lands, while `humu list-sessions` and `humu detach --force` already exercise daemon discovery/version checks and attached sessions surface owning PID metadata when available
+- `humu attach` remains a reachable fallback to the current in-process TUI until the real attach client lands, but the fallback path only supports the default session and rejects named-session requests explicitly
+- `humu list-sessions` and `humu detach --force` already exercise daemon discovery/version checks, attached sessions surface owning PID metadata when available, and daemon startup readiness now requires a matching protocol version rather than any responding socket
 - The default `humu` command still runs the current in-process `App::new()?.run()` path until the attachable client is ready
 
 ## Session Model

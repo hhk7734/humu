@@ -275,6 +275,38 @@ fn list_sessions_refuses_protocol_version_mismatch() {
 }
 
 #[test]
+fn attach_fallback_rejects_named_sessions() {
+    let env = support::isolated_humu_home();
+    let output = support::humu_command(&env)
+        .arg("attach")
+        .arg("review")
+        .output()
+        .expect("run humu attach review");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("only supports the default session"));
+}
+
+#[test]
+fn server_startup_refuses_protocol_version_mismatch() {
+    let env = support::isolated_humu_home();
+    let handle = spawn_version_mismatched_server(&env);
+
+    let output = support::humu_command(&env)
+        .arg("server")
+        .arg("--daemon")
+        .output()
+        .expect("run humu server --daemon");
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("protocol version mismatch"));
+
+    handle.join().expect("fake server thread").expect("fake server run");
+}
+
+#[test]
 fn daemon_attach_rejects_second_connection_for_same_session() {
     let env = support::isolated_humu_home();
     let _child = support::spawn_humu_server(&env);

@@ -78,7 +78,7 @@ fn run_foreground() -> Result<()> {
     log::init();
     generate_hook_files(&humu_dir()).context("generate hook files for daemon shell")?;
 
-    if ping_protocol_version(&paths).is_ok() {
+    if existing_daemon_ready(&paths, "server startup")? {
         return Ok(());
     }
 
@@ -100,7 +100,7 @@ fn run_foreground() -> Result<()> {
 
 fn launch_daemonized_server() -> Result<()> {
     let paths = DaemonPaths::default();
-    if ping_protocol_version(&paths).is_ok() {
+    if existing_daemon_ready(&paths, "daemonized server startup")? {
         return Ok(());
     }
 
@@ -124,7 +124,7 @@ fn spawn_daemon_child() -> Result<Child> {
 fn wait_for_daemon_ready(paths: &DaemonPaths, child: &mut Child) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        if ping_protocol_version(paths).is_ok() {
+        if existing_daemon_ready(paths, "daemonized server readiness")? {
             return Ok(());
         }
         if let Some(status) = child.try_wait().context("poll daemonized child status")? {
@@ -134,6 +134,17 @@ fn wait_for_daemon_ready(paths: &DaemonPaths, child: &mut Child) -> Result<()> {
             bail!("timed out waiting for daemonized server startup");
         }
         thread::sleep(Duration::from_millis(25));
+    }
+}
+
+fn existing_daemon_ready(paths: &DaemonPaths, context_label: &str) -> Result<bool> {
+    match ping_protocol_version(paths) {
+        Ok(protocol_version) if protocol_version == PROTOCOL_VERSION => Ok(true),
+        Ok(protocol_version) => bail!(
+            "protocol version mismatch for {context_label}: client={} server={protocol_version}",
+            PROTOCOL_VERSION
+        ),
+        Err(_) => Ok(false),
     }
 }
 
@@ -214,7 +225,7 @@ fn acquire_startup_lock(paths: &DaemonPaths) -> Result<Option<StartupLock>> {
                     let _ = fs::remove_file(&paths.lock_path);
                     continue;
                 }
-                if ping_protocol_version(paths).is_ok() {
+                if existing_daemon_ready(paths, "daemon startup lock wait")? {
                     return Ok(None);
                 }
                 if Instant::now() >= deadline {
@@ -241,7 +252,7 @@ fn lock_holder_is_dead(lock_path: &PathBuf) -> Result<bool> {
 }
 
 fn cleanup_stale_runtime_files(paths: &DaemonPaths) -> Result<()> {
-    if ping_protocol_version(paths).is_ok() {
+    if existing_daemon_ready(paths, "stale runtime cleanup")? {
         bail!("daemon already running");
     }
 

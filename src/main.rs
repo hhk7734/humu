@@ -13,7 +13,14 @@ fn main() -> Result<()> {
             app.run()
         }
         Some(Command::Server { daemon }) => server::daemon::run(daemon),
-        Some(Command::Attach { .. }) => {
+        Some(Command::Attach { session }) => {
+            if let Some(session_name) = session.as_deref()
+                && session_name != "default"
+            {
+                bail!(
+                    "attach fallback only supports the default session until the real client exists"
+                );
+            }
             let mut app = app::App::new()?;
             app.run()
         }
