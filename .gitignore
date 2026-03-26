@@ -133,3 +133,4 @@ $RECYCLE.BIN/
 # End of https://www.toptal.com/developers/gitignore/api/vim,linux,macos,windows,visualstudiocode,rust
 # Superpowers
 .superpowers/
+.worktrees/
