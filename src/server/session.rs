@@ -140,6 +140,22 @@ impl SessionManager {
         was_attached
     }
 
+    pub fn detach_owned(&mut self, name: &str, client_id: &str) -> bool {
+        let Some(entry) = self.sessions.get_mut(name) else {
+            return false;
+        };
+        let owned_by_client = entry
+            .owner
+            .as_ref()
+            .map(|owner| owner.client_id == client_id)
+            .unwrap_or(false);
+        if owned_by_client {
+            entry.owner = None;
+            return true;
+        }
+        false
+    }
+
     pub fn record_size(&mut self, name: &str, cols: u16, rows: u16) {
         let entry = self
             .sessions

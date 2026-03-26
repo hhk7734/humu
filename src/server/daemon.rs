@@ -8,9 +8,10 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::net::Shutdown;
+use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
@@ -65,7 +66,14 @@ impl Drop for RuntimeFiles {
 }
 
 pub fn run(daemon: bool) -> Result<()> {
-    let _daemon = daemon;
+    if daemon {
+        return launch_daemonized_server();
+    }
+
+    run_foreground()
+}
+
+fn run_foreground() -> Result<()> {
     let paths = DaemonPaths::default();
     log::init();
     generate_hook_files(&humu_dir()).context("generate hook files for daemon shell")?;
@@ -88,6 +96,45 @@ pub fn run(daemon: bool) -> Result<()> {
         metadata_path: paths.metadata_path.clone(),
     };
     serve(listener)
+}
+
+fn launch_daemonized_server() -> Result<()> {
+    let paths = DaemonPaths::default();
+    if ping_protocol_version(&paths).is_ok() {
+        return Ok(());
+    }
+
+    let mut child = spawn_daemon_child()?;
+    wait_for_daemon_ready(&paths, &mut child)
+}
+
+fn spawn_daemon_child() -> Result<Child> {
+    let current_exe = std::env::current_exe().context("resolve current humu binary")?;
+    let mut command = Command::new(current_exe);
+    command
+        .arg("server")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command
+        .spawn()
+        .context("spawn daemonized humu server child")
+}
+
+fn wait_for_daemon_ready(paths: &DaemonPaths, child: &mut Child) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if ping_protocol_version(paths).is_ok() {
+            return Ok(());
+        }
+        if let Some(status) = child.try_wait().context("poll daemonized child status")? {
+            bail!("daemonized server child exited before readiness: {status}");
+        }
+        if Instant::now() >= deadline {
+            bail!("timed out waiting for daemonized server startup");
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
 }
 
 pub fn attach_shell(session_name: &str) -> Result<()> {
@@ -128,7 +175,15 @@ pub fn list_sessions_shell() -> Result<()> {
                 } else {
                     "detached"
                 };
-                println!("{}\t{}", session.name, state);
+                let owner_pid = session
+                    .owner_pid
+                    .map(|pid| pid.to_string())
+                    .unwrap_or_else(|| "-".to_string());
+                let attached_at = session.attached_at.unwrap_or_else(|| "-".to_string());
+                println!(
+                    "{}\t{}\towner_pid={}\tattached_at={}",
+                    session.name, state, owner_pid, attached_at
+                );
             }
             Ok(())
         }
@@ -295,12 +350,13 @@ fn serve(listener: UnixListener) -> Result<()> {
     loop {
         let (stream, _) = listener.accept().context("accept daemon client")?;
         let sessions = Arc::clone(&sessions);
+        let owner_pid = peer_pid(&stream);
         let client_id = format!(
             "client-{}",
             next_client_id.fetch_add(1, Ordering::Relaxed)
         );
         thread::spawn(move || {
-            let _ = handle_client(stream, sessions, client_id);
+            let _ = handle_client(stream, sessions, client_id, owner_pid);
         });
     }
 }
@@ -309,26 +365,44 @@ fn handle_client(
     mut stream: UnixStream,
     sessions: Arc<Mutex<SessionManager>>,
     client_id: String,
+    owner_pid: Option<u32>,
 ) -> Result<()> {
+    let mut attached_session = None;
     let mut decoder = humu::shared::protocol::FrameDecoder::new();
     let mut buf = [0u8; 4096];
-    loop {
+    let result = (|| -> Result<()> {
+        loop {
         let read = stream.read(&mut buf)?;
         if read == 0 {
-            return Ok(());
+                return Ok(());
         }
         decoder.push(&buf[..read]);
         while let Some(request) = decoder.try_decode::<ClientRequest>()? {
-            let response = handle_request(request, &sessions, &client_id)?;
+                let response = handle_request(
+                    request,
+                    &sessions,
+                    &client_id,
+                    owner_pid,
+                    &mut attached_session,
+                )?;
             stream.write_all(&encode_frame(&response)?)?;
         }
+        }
+    })();
+
+    if let Some(session_name) = attached_session {
+        let mut sessions = sessions.lock().expect("session manager lock");
+        sessions.detach_owned(&session_name, &client_id);
     }
+    result
 }
 
 fn handle_request(
     request: ClientRequest,
     sessions: &Arc<Mutex<SessionManager>>,
     client_id: &str,
+    owner_pid: Option<u32>,
+    attached_session: &mut Option<String>,
 ) -> Result<ServerResponse> {
     let mut sessions = sessions.lock().expect("session manager lock");
     match request {
@@ -342,13 +416,26 @@ fn handle_request(
             session: sessions.create(&name),
         }),
         ClientRequest::AttachSession { name, cols, rows } => {
+            if let Some(current) = attached_session.clone()
+                && current != name
+            {
+                sessions.detach_owned(&current, client_id);
+                *attached_session = None;
+            }
             sessions.record_size(&name, cols, rows);
-            let owner = AttachOwner::new(client_id.to_string()).with_attached_at(current_timestamp());
+            let mut owner =
+                AttachOwner::new(client_id.to_string()).with_attached_at(current_timestamp());
+            if let Some(pid) = owner_pid {
+                owner = owner.with_pid(pid);
+            }
             match sessions.attach(&name, owner) {
-                Ok(_) => Ok(ServerResponse::Attached {
-                    session_name: name.clone(),
-                    snapshot: sessions.snapshot(&name),
-                }),
+                Ok(_) => {
+                    *attached_session = Some(name.clone());
+                    Ok(ServerResponse::Attached {
+                        session_name: name.clone(),
+                        snapshot: sessions.snapshot(&name),
+                    })
+                }
                 Err(AttachError::AlreadyAttached {
                     session_name,
                     owner_pid,
@@ -362,9 +449,18 @@ fn handle_request(
         }
         ClientRequest::ForceDetachSession { name } => {
             sessions.detach(&name);
+            if attached_session.as_deref() == Some(name.as_str()) {
+                *attached_session = None;
+            }
             Ok(ServerResponse::Detached { session_name: name })
         }
-        ClientRequest::Detach => Ok(ServerResponse::Ack),
+        ClientRequest::Detach => {
+            let Some(session_name) = attached_session.take() else {
+                return Ok(ServerResponse::Ack);
+            };
+            sessions.detach_owned(&session_name, client_id);
+            Ok(ServerResponse::Detached { session_name })
+        }
         ClientRequest::ResizeSession { .. }
         | ClientRequest::RunAction { .. }
         | ClientRequest::SendInput { .. }
@@ -397,4 +493,52 @@ fn process_is_alive(pid: u32) -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+fn peer_pid(stream: &UnixStream) -> Option<u32> {
+    #[repr(C)]
+    struct UCred {
+        pid: i32,
+        uid: u32,
+        gid: u32,
+    }
+
+    unsafe extern "C" {
+        fn getsockopt(
+            socket: i32,
+            level: i32,
+            option_name: i32,
+            option_value: *mut core::ffi::c_void,
+            option_len: *mut u32,
+        ) -> i32;
+    }
+
+    const SOL_SOCKET: i32 = 1;
+    const SO_PEERCRED: i32 = 17;
+
+    let mut creds = UCred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
+    let mut len = std::mem::size_of::<UCred>() as u32;
+    let rc = unsafe {
+        getsockopt(
+            stream.as_raw_fd(),
+            SOL_SOCKET,
+            SO_PEERCRED,
+            (&mut creds as *mut UCred).cast(),
+            &mut len,
+        )
+    };
+    if rc == 0 && creds.pid > 0 {
+        return Some(creds.pid as u32);
+    }
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn peer_pid(_stream: &UnixStream) -> Option<u32> {
+    None
 }

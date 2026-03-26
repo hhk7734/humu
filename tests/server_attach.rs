@@ -42,9 +42,20 @@ fn send_request<T: DeserializeOwned>(
     env: &support::TestEnv,
     request: &ClientRequest,
 ) -> anyhow::Result<T> {
-    let mut stream = UnixStream::connect(env.server_socket_path())?;
+    let mut stream = connect_server(env)?;
+    send_request_on_stream(&mut stream, request)
+}
+
+fn connect_server(env: &support::TestEnv) -> anyhow::Result<UnixStream> {
+    Ok(UnixStream::connect(env.server_socket_path())?)
+}
+
+fn send_request_on_stream<T: DeserializeOwned>(
+    stream: &mut UnixStream,
+    request: &ClientRequest,
+) -> anyhow::Result<T> {
     stream.write_all(&encode_frame(request)?)?;
-    read_framed_message(&mut stream)
+    read_framed_message(stream)
 }
 
 fn ping_server(env: &support::TestEnv) -> anyhow::Result<ServerResponse> {
@@ -266,8 +277,9 @@ fn daemon_attach_rejects_second_connection_for_same_session() {
     let _child = support::spawn_humu_server(&env);
     wait_for_ping(&env, Duration::from_secs(5)).expect("daemon ping");
 
-    let first = send_request::<ServerResponse>(
-        &env,
+    let mut first = connect_server(&env).expect("first stream");
+    let first_response = send_request_on_stream::<ServerResponse>(
+        &mut first,
         &ClientRequest::AttachSession {
             name: "default".to_string(),
             cols: 120,
@@ -275,7 +287,7 @@ fn daemon_attach_rejects_second_connection_for_same_session() {
         },
     )
     .expect("first attach response");
-    assert!(matches!(first, ServerResponse::Attached { .. }));
+    assert!(matches!(first_response, ServerResponse::Attached { .. }));
 
     let second = send_request::<ServerResponse>(
         &env,
@@ -287,11 +299,152 @@ fn daemon_attach_rejects_second_connection_for_same_session() {
     )
     .expect("second attach response");
     match second {
-        ServerResponse::AlreadyAttached { session_name, .. } => {
+        ServerResponse::AlreadyAttached {
+            session_name,
+            owner_pid,
+            ..
+        } => {
             assert_eq!(session_name, "default");
+            assert_eq!(owner_pid, Some(std::process::id()));
         }
         other => panic!("unexpected second attach response: {other:?}"),
     }
+}
+
+#[test]
+fn daemon_disconnect_releases_session_lock() {
+    let env = support::isolated_humu_home();
+    let _child = support::spawn_humu_server(&env);
+    wait_for_ping(&env, Duration::from_secs(5)).expect("daemon ping");
+
+    {
+        let mut first = connect_server(&env).expect("first stream");
+        let first_attach = send_request_on_stream::<ServerResponse>(
+            &mut first,
+            &ClientRequest::AttachSession {
+                name: "default".to_string(),
+                cols: 120,
+                rows: 40,
+            },
+        )
+        .expect("first attach");
+        assert!(matches!(first_attach, ServerResponse::Attached { .. }));
+    }
+
+    let second = send_request::<ServerResponse>(
+        &env,
+        &ClientRequest::AttachSession {
+            name: "default".to_string(),
+            cols: 120,
+            rows: 40,
+        },
+    )
+    .expect("attach after disconnect");
+    assert!(matches!(second, ServerResponse::Attached { .. }));
+}
+
+#[test]
+fn daemon_detach_request_releases_session_lock() {
+    let env = support::isolated_humu_home();
+    let _child = support::spawn_humu_server(&env);
+    wait_for_ping(&env, Duration::from_secs(5)).expect("daemon ping");
+
+    let mut first = connect_server(&env).expect("first stream");
+    let first_attach = send_request_on_stream::<ServerResponse>(
+        &mut first,
+        &ClientRequest::AttachSession {
+            name: "default".to_string(),
+            cols: 120,
+            rows: 40,
+        },
+    )
+    .expect("first attach");
+    assert!(matches!(first_attach, ServerResponse::Attached { .. }));
+
+    let detach = send_request_on_stream::<ServerResponse>(&mut first, &ClientRequest::Detach)
+        .expect("detach response");
+    assert!(matches!(
+        detach,
+        ServerResponse::Detached { ref session_name } if session_name == "default"
+    ));
+
+    let second = send_request::<ServerResponse>(
+        &env,
+        &ClientRequest::AttachSession {
+            name: "default".to_string(),
+            cols: 120,
+            rows: 40,
+        },
+    )
+    .expect("attach after detach");
+    assert!(matches!(second, ServerResponse::Attached { .. }));
+}
+
+#[test]
+fn daemonized_server_command_returns_after_background_startup() {
+    let env = support::isolated_humu_home();
+    let mut command = support::humu_command(&env);
+    command.arg("server").arg("--daemon");
+
+    let status = command.status().expect("run daemonized server");
+    assert!(status.success());
+
+    let response = wait_for_ping(&env, Duration::from_secs(5)).expect("daemon ping");
+    assert_eq!(
+        response,
+        ServerResponse::Pong {
+            protocol_version: humu::shared::protocol::PROTOCOL_VERSION,
+        }
+    );
+
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(env.server_metadata_path()).expect("read metadata"))
+            .expect("parse metadata");
+    let daemon_pid = metadata["pid"].as_u64().expect("daemon pid") as u32;
+    assert_ne!(daemon_pid, std::process::id());
+    assert!(support::process_is_alive(daemon_pid));
+
+    let _ = Command::new("kill").arg(daemon_pid.to_string()).status();
+}
+
+#[test]
+fn list_sessions_reports_owner_pid_for_attached_session() {
+    let env = support::isolated_humu_home();
+    let _child = support::spawn_humu_server(&env);
+    wait_for_ping(&env, Duration::from_secs(5)).expect("daemon ping");
+
+    let mut first = connect_server(&env).expect("first stream");
+    let attach = send_request_on_stream::<ServerResponse>(
+        &mut first,
+        &ClientRequest::AttachSession {
+            name: "default".to_string(),
+            cols: 120,
+            rows: 40,
+        },
+    )
+    .expect("attach response");
+    assert!(matches!(attach, ServerResponse::Attached { .. }));
+
+    let response = send_request::<ServerResponse>(&env, &ClientRequest::ListSessions)
+        .expect("list sessions response");
+    match response {
+        ServerResponse::Sessions { sessions } => {
+            let default = sessions
+                .into_iter()
+                .find(|session| session.name == "default")
+                .expect("default session present");
+            assert_eq!(default.owner_pid, Some(std::process::id()));
+        }
+        other => panic!("unexpected list-sessions response: {other:?}"),
+    }
+
+    let output = support::humu_command(&env)
+        .arg("list-sessions")
+        .output()
+        .expect("run list-sessions");
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(&std::process::id().to_string()));
 }
 
 #[test]
