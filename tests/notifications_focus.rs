@@ -18,6 +18,7 @@ fn support_builds_attach_and_server_commands_with_isolated_env() {
     );
     assert_eq!(server.get_current_dir(), Some(env.cwd()));
     assert_eq!(attach.get_current_dir(), Some(env.cwd()));
+    assert!(!env.humu_dir().starts_with(env.home.path()));
 
     let server_envs = server.get_envs().collect::<Vec<_>>();
     let attach_envs = attach.get_envs().collect::<Vec<_>>();

@@ -20,7 +20,7 @@ fn support_can_spawn_isolated_humu_home() {
     assert!(env.home.path().exists());
     assert!(env.humu_dir().exists());
     assert_ne!(env.home.path(), env.humu_dir());
-    assert_eq!(env.humu_dir(), env.home.path().join(".humu"));
+    assert!(!env.humu_dir().starts_with(env.home.path()));
 }
 
 // Linux-only: verifies scoped process cleanup via pid liveness.
