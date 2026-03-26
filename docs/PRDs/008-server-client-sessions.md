@@ -106,7 +106,11 @@ humu server daemon
 - `humu`: client entry point
 - `humu server`: internal and debug entry point for the daemon
 
-The default `humu` command performs server discovery and auto-launch before attaching.
+Task 4 implementation status:
+
+- `humu server` starts the daemon shell, writes `server.json`, binds `server.sock`, answers `Ping`, and maintains the startup lock under `server.lock`
+- `humu attach`, `humu list-sessions`, and `humu detach --force` are parsed as shell commands and already perform daemon discovery/version checks where applicable
+- The default `humu` command still runs the current in-process `App::new()?.run()` path until the attachable client is ready
 
 ## Session Model
 
@@ -199,6 +203,7 @@ The socket protocol is frame-based rather than raw concatenated JSON. Each messa
 - Client first loads `server.json`, then attempts a `Ping` request on `server.sock`
 - If the socket exists but `Ping` fails, the client treats it as stale, removes only the stale socket and metadata after verifying the recorded PID is not alive, then retries auto-launch
 - Daemon startup writes metadata only after the socket is bound and ready to answer `Ping`
+- Task 4 daemon shell performs the same stale-socket cleanup before binding and refuses attach shell commands when the live `Ping` protocol version does not match the client build
 - Hook port publication in `~/.humu/port` remains separate and continues to advertise only the hook HTTP server port
 
 ### Auto-launch race handling

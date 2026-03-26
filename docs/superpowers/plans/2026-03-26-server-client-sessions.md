@@ -375,12 +375,12 @@ fn client_refuses_protocol_version_mismatch() {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test --test server_attach server_ping_works_after_daemon_start -- --nocapture`
 Expected: FAIL with missing daemon entry and socket handling
 
-- [ ] **Step 3: Add `humu server` entry path, socket metadata, ping, and startup lock**
+- [x] **Step 3: Add `humu server` entry path, socket metadata, ping, and startup lock**
 
 ```rust
 match cli.command {
@@ -389,7 +389,7 @@ match cli.command {
 }
 ```
 
-- [ ] **Step 4: Introduce a minimal CLI parser module for future commands without flipping the default path yet**
+- [x] **Step 4: Introduce a minimal CLI parser module for future commands without flipping the default path yet**
 
 ```rust
 pub enum Command {
@@ -400,7 +400,7 @@ pub enum Command {
 }
 ```
 
-- [ ] **Step 5: Implement `SessionManager` with idempotent create and single-client attach lock**
+- [x] **Step 5: Implement `SessionManager` with idempotent create and single-client attach lock**
 
 ```rust
 pub struct SessionManager {
@@ -408,7 +408,7 @@ pub struct SessionManager {
 }
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `cargo test --test server_attach -- --nocapture`
 Expected: PASS for ping, stale-socket cleanup, lock-file startup, unit-tested attach-lock rules, and version-mismatch refusal
