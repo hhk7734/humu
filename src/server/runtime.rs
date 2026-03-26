@@ -1,9 +1,9 @@
 use humu::codex::{CodexTracker, CodexUpdate};
-use humu::config::NotificationsConfig;
+use humu::config::{HumuState, NotificationsConfig};
 use humu::hook::http::{
     AgentState, HookEvent, HookServer, remove_hook_port_file, write_hook_port_file,
 };
-use humu::id::PaneId;
+use humu::id::{PaneId, RoomId, WorkspaceId};
 use humu::notification::{NotificationEvent, NotificationManager, SessionFocusState};
 use humu::shared::render::{
     AgentStatus, AgentSummary, ColorSnapshot, CursorSnapshot, FullSnapshot, PaneRuntimeState,
@@ -18,6 +18,7 @@ use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime};
 use tokio::sync::oneshot;
+use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeUpdateSource {
@@ -46,6 +47,7 @@ struct RegisteredPane {
 }
 
 struct SessionRuntimeState {
+    state_path: PathBuf,
     notification_manager: NotificationManager,
     codex_tracker: CodexTracker,
     focus_by_session: HashMap<String, SessionFocusState>,
@@ -56,8 +58,13 @@ struct SessionRuntimeState {
 }
 
 impl SessionRuntimeState {
-    fn new(notifications: NotificationsConfig, codex_sessions_root: PathBuf) -> Self {
+    fn new(
+        state_path: PathBuf,
+        notifications: NotificationsConfig,
+        codex_sessions_root: PathBuf,
+    ) -> Self {
         Self {
+            state_path,
             notification_manager: NotificationManager::from_config(&notifications),
             codex_tracker: CodexTracker::new(codex_sessions_root),
             focus_by_session: HashMap::new(),
@@ -257,26 +264,15 @@ impl SessionRuntimeState {
             return;
         }
 
+        let (workspace_name, room_name) = self.resolve_notification_names(&event);
         let notification_event = match event.event_type {
             AgentState::NeedsInput => NotificationEvent::AgentNeedsInput {
-                workspace: event
-                    .workspace_id
-                    .clone()
-                    .unwrap_or_else(|| "unknown".to_string()),
-                room: event
-                    .room_id
-                    .clone()
-                    .unwrap_or_else(|| "unknown".to_string()),
+                workspace: workspace_name,
+                room: room_name,
             },
             AgentState::Idle => NotificationEvent::AgentFinished {
-                workspace: event
-                    .workspace_id
-                    .clone()
-                    .unwrap_or_else(|| "unknown".to_string()),
-                room: event
-                    .room_id
-                    .clone()
-                    .unwrap_or_else(|| "unknown".to_string()),
+                workspace: workspace_name,
+                room: room_name,
             },
             AgentState::Working => return,
         };
@@ -311,6 +307,54 @@ impl SessionRuntimeState {
             session_id,
         });
     }
+
+    fn resolve_notification_names(&self, event: &HookEvent) -> (String, String) {
+        let Some(state) = self
+            .state_path
+            .exists()
+            .then(|| HumuState::load(&self.state_path).ok())
+            .flatten()
+        else {
+            return (
+                event
+                    .workspace_id
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
+                event
+                    .room_id
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
+            );
+        };
+
+        let workspace = event
+            .workspace_id
+            .as_deref()
+            .and_then(parse_workspace_id)
+            .and_then(|workspace_id| state.ws_by_id(workspace_id).map(|ws| ws.name.clone()))
+            .or_else(|| event.workspace_id.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+        let room = event
+            .room_id
+            .as_deref()
+            .and_then(parse_room_id)
+            .and_then(|room_id| {
+                state.workspaces.iter().find_map(|workspace| {
+                    workspace.room_by_id(room_id).map(|room| room.name.clone())
+                })
+            })
+            .or_else(|| event.room_id.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+        (workspace, room)
+    }
+}
+
+fn parse_workspace_id(raw: &str) -> Option<WorkspaceId> {
+    Uuid::parse_str(raw).ok().map(WorkspaceId)
+}
+
+fn parse_room_id(raw: &str) -> Option<RoomId> {
+    Uuid::parse_str(raw).ok().map(RoomId)
 }
 
 pub struct SessionRuntime {
@@ -331,6 +375,7 @@ impl SessionRuntime {
         codex_sessions_root: PathBuf,
     ) -> anyhow::Result<Self> {
         let state = Arc::new(Mutex::new(SessionRuntimeState::new(
+            base_dir.join("state.yaml"),
             notifications,
             codex_sessions_root,
         )));

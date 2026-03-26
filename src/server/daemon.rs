@@ -4,7 +4,9 @@ use anyhow::{Context, Result, bail};
 use humu::config::{HumuConfig, humu_dir};
 use humu::hook::http::generate_hook_files;
 use humu::log;
-use humu::shared::protocol::{ClientRequest, PROTOCOL_VERSION, ServerResponse, encode_frame};
+use humu::shared::protocol::{
+    ClientRequest, PROTOCOL_VERSION, ServerResponse, SessionListEntry, encode_frame,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
@@ -206,17 +208,69 @@ pub fn force_detach_shell(session_name: &str) -> Result<()> {
         );
     }
 
-    let response = send_request::<ServerResponse>(
-        &paths,
-        &ClientRequest::ForceDetachSession {
-            name: session_name.to_string(),
-        },
-    )?;
-    match response {
-        ServerResponse::Detached { .. } | ServerResponse::Ack => Ok(()),
-        ServerResponse::Error { message } => bail!(message),
-        other => bail!("unexpected detach response: {other:?}"),
+    let Some(session) = fetch_session_entry(&paths, session_name)? else {
+        return Ok(());
+    };
+    if !session.attached {
+        return Ok(());
     }
+
+    let owner_pid = session
+        .owner_pid
+        .ok_or_else(|| anyhow::anyhow!("cannot force detach session without an owning pid"))?;
+    if process_is_alive(owner_pid) {
+        signal_process(owner_pid, "-TERM").context("send TERM to attached client")?;
+    }
+    if wait_for_session_detached(&paths, session_name, Duration::from_secs(2))? {
+        return Ok(());
+    }
+
+    if process_is_alive(owner_pid) {
+        signal_process(owner_pid, "-KILL").context("send KILL to attached client")?;
+    }
+    if wait_for_session_detached(&paths, session_name, Duration::from_secs(2))? {
+        return Ok(());
+    }
+
+    bail!("session {session_name} is still attached after force detach")
+}
+
+fn fetch_session_entry(paths: &DaemonPaths, session_name: &str) -> Result<Option<SessionListEntry>> {
+    let response = send_request::<ServerResponse>(paths, &ClientRequest::ListSessions)?;
+    let ServerResponse::Sessions { sessions } = response else {
+        bail!("unexpected list-sessions response while detaching");
+    };
+    Ok(sessions.into_iter().find(|session| session.name == session_name))
+}
+
+fn wait_for_session_detached(
+    paths: &DaemonPaths,
+    session_name: &str,
+    timeout: Duration,
+) -> Result<bool> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if fetch_session_entry(paths, session_name)?
+            .is_none_or(|session| !session.attached)
+        {
+            return Ok(true);
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    Ok(fetch_session_entry(paths, session_name)?
+        .is_none_or(|session| !session.attached))
+}
+
+fn signal_process(pid: u32, signal: &str) -> Result<()> {
+    let status = Command::new("kill")
+        .arg(signal)
+        .arg(pid.to_string())
+        .status()
+        .with_context(|| format!("run kill {signal} {pid}"))?;
+    if status.success() {
+        return Ok(());
+    }
+    bail!("kill {signal} {pid} failed with status {status}")
 }
 
 fn acquire_startup_lock(paths: &DaemonPaths) -> Result<Option<StartupLock>> {

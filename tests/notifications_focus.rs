@@ -218,6 +218,38 @@ fn second_foreground_attach_is_refused_cleanly() {
 }
 
 #[test]
+fn shell_force_detach_reclaims_attached_session() {
+    let env = support::isolated_humu_home();
+    let _daemon = support::spawn_humu_server(&env);
+    wait_for_ping(&env);
+
+    let mut first = support::spawn_humu_attach(&env, "default");
+    assert!(first.wait_for_output("\u{1b}[?1049h", Duration::from_secs(2)));
+
+    let output = support::humu_command(&env)
+        .arg("detach")
+        .arg("default")
+        .arg("--force")
+        .output()
+        .expect("run force detach shell");
+    assert!(
+        output.status.success(),
+        "force detach failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    wait_for_app_exit(&mut first, Duration::from_secs(5));
+
+    let mut second = support::spawn_humu_attach(&env, "default");
+    assert!(
+        second.wait_for_output("\u{1b}[?1049h", Duration::from_secs(2)),
+        "expected attach after forced detach, got output: {}",
+        second.output_string()
+    );
+}
+
+#[test]
 fn unauthorized_unregister_is_rejected_without_session_ownership() {
     let env = support::isolated_humu_home();
     let _daemon = support::spawn_humu_server(&env);
@@ -860,6 +892,8 @@ async fn only_unfocused_notifications_fire_after_focus_lost_and_detach() {
     wait_for_ping(&env);
     let workspace_id = support::workspace_id("humu").to_string();
     let room_id = support::room_id("main").to_string();
+    support::persistence::save_state(&env.state_path(), &support::migrated_state_fixture())
+        .expect("save state fixture");
 
     let mut stream = attach_default_session(&env);
     let pane_id = PaneId::new();
@@ -956,7 +990,7 @@ async fn only_unfocused_notifications_fire_after_focus_lost_and_detach() {
     assert!(
         notifications
             .iter()
-            .all(|line| line.contains(&format!("[{workspace_id}/{room_id}] Agent needs input"))),
+            .all(|line| line.contains("[humu/main] Agent needs input")),
         "unexpected notification payloads: {notifications:?}"
     );
 }
