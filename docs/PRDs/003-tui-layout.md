@@ -161,6 +161,8 @@ Clicking a panel enters the corresponding mode: workspace tree → Workspace mod
 
 **Mouse forwarding**: When a child process enables mouse tracking (e.g., vim, htop), mouse events targeting an actual terminal pane are forwarded as SGR escape sequences with pane-relative coordinates. Humu's own click handling (panel selection, tab switching, status-bar hints) still runs first on Down events to maintain focus. Clicks on the tab bar or other non-pane UI regions are not reinterpreted as terminal input.
 
+**Modal ownership**: Non-floating popups are modal for both mouse and paste input. Clicking inside a dialog updates the dialog's focused field instead of retargeting the terminal pane behind it, and clicking outside the popup is ignored until the popup is dismissed. Paste events are delivered to the active popup field first, so `Ctrl+V` into workspace/room dialogs never leaks through to the underlying PTY.
+
 **Text selection**: When the child process has no mouse tracking (e.g., plain shell, Claude Code), mouse drag selects text from the vt100 screen with a dark blue highlight. On mouse release, selected text is copied to the system clipboard via OSC 52 escape sequence.
 
 **Bracketed paste**: Multi-line paste from the system clipboard is forwarded as a single block through the terminal input router. If the child process has requested bracketed paste mode, the text is wrapped in `\x1b[200~`...`\x1b[201~` sequences. In EnterSearch mode, pasted text is appended to the search query.

@@ -2734,6 +2734,15 @@ impl App {
             }
         }
 
+        if !matches!(self.popup, PopupState::None | PopupState::FloatingPane { .. }) {
+            if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+                self.pty_mouse_active = false;
+                self.selection = None;
+                let _ = self.handle_dialog_mouse(mouse.column, mouse.row);
+            }
+            return;
+        }
+
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.pty_mouse_active = false;
@@ -3697,6 +3706,9 @@ impl App {
 
     /// Route paste events: popups get priority, otherwise forward to PTY.
     fn handle_paste_event(&mut self, text: &str) {
+        if self.paste_into_focused_dialog_field(text) {
+            return;
+        }
         if let PopupState::NotificationTokenInput { field, value } = &self.popup {
             let field = *field;
             let mut value = value.clone();
@@ -4507,6 +4519,137 @@ impl App {
         Rect::new(x, y, width, height)
     }
 
+    fn app_area(&self) -> Rect {
+        let right = self.panel_rects.explorer.x + self.panel_rects.explorer.width;
+        let bottom = self.panel_rects.status_bar.y + self.panel_rects.status_bar.height;
+        Rect::new(0, 0, right, bottom)
+    }
+
+    #[cfg(test)]
+    fn dialog_popup_area(&self, field_count: usize) -> Rect {
+        Self::dialog_popup_area_for(self.app_area(), field_count)
+    }
+
+    fn dialog_popup_area_for(area: Rect, field_count: usize) -> Rect {
+        let field_rows = field_count as u16 * 2;
+        let height = (field_rows + 3).min(area.height);
+        let width = 60u16.min(area.width);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        Rect::new(x, y, width, height)
+    }
+
+    fn dialog_field_at(popup: Rect, fields: &[DialogField], x: u16, y: u16) -> Option<usize> {
+        if !popup.contains(Position::new(x, y)) {
+            return None;
+        }
+
+        let inner = Rect::new(
+            popup.x.saturating_add(1),
+            popup.y.saturating_add(1),
+            popup.width.saturating_sub(2),
+            popup.height.saturating_sub(2),
+        );
+        if !inner.contains(Position::new(x, y)) {
+            return None;
+        }
+
+        let mut row = inner.y;
+        for (idx, field) in fields.iter().enumerate() {
+            let field_height = match field {
+                DialogField::Checkbox { .. } => 1,
+                _ => 2,
+            };
+            let end = row.saturating_add(field_height);
+            if y >= row && y < end {
+                return Some(idx);
+            }
+            row = end;
+            if row >= inner.y + inner.height {
+                break;
+            }
+        }
+
+        None
+    }
+
+    fn handle_dialog_mouse(&mut self, x: u16, y: u16) -> bool {
+        let area = self.app_area();
+        match &mut self.popup {
+            PopupState::WorkspaceCreate {
+                fields,
+                focused_field,
+                ..
+            }
+            | PopupState::RoomCreate {
+                fields,
+                focused_field,
+                ..
+            }
+            | PopupState::WorkspaceDelete {
+                fields,
+                focused_field,
+                ..
+            }
+            | PopupState::RoomDelete {
+                fields,
+                focused_field,
+                ..
+            } => {
+                let popup = Self::dialog_popup_area_for(area, fields.len());
+                if let Some(idx) = Self::dialog_field_at(popup, fields, x, y) {
+                    *focused_field = idx;
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn paste_into_focused_dialog_field(&mut self, text: &str) -> bool {
+        let mut refresh_workspace_completions = false;
+
+        let pasted = match &mut self.popup {
+            PopupState::WorkspaceCreate {
+                fields,
+                focused_field,
+                ..
+            }
+            | PopupState::RoomCreate {
+                fields,
+                focused_field,
+                ..
+            }
+            | PopupState::WorkspaceDelete {
+                fields,
+                focused_field,
+                ..
+            }
+            | PopupState::RoomDelete {
+                fields,
+                focused_field,
+                ..
+            } => {
+                let idx = *focused_field;
+                if let Some(DialogField::TextInput { value, .. }) = fields.get_mut(idx) {
+                    value.push_str(text);
+                    refresh_workspace_completions =
+                        matches!(self.popup, PopupState::WorkspaceCreate { .. }) && idx == 1;
+                    true
+                } else {
+                    true
+                }
+            }
+            _ => false,
+        };
+
+        if refresh_workspace_completions {
+            self.refresh_completions();
+        }
+
+        pasted
+    }
+
     /// Spawn an arbitrary command in a new PTY pane without going through presets.
     fn spawn_command(
         &mut self,
@@ -5237,6 +5380,50 @@ mod tests {
             app.popup,
             PopupState::ErrorDialog { ref message } if message == "Path is required"
         ));
+    }
+
+    #[test]
+    fn workspace_create_dialog_click_focuses_text_field_without_selecting_terminal() {
+        let mut app = test_app_with_workspace_tree(HumuState::default(), vec![], HashMap::new());
+        app.mode = Mode::Workspace;
+        app.focus = FocusedPanel::Workspace;
+        app.show_create_workspace_dialog();
+
+        let area = app.dialog_popup_area(3);
+        let path_row = area.y + 4;
+
+        app.handle_mouse(left_click(area.x + 2, path_row));
+
+        assert_eq!(app.mode, Mode::Workspace);
+        assert_eq!(app.focus, FocusedPanel::Workspace);
+        match &app.popup {
+            PopupState::WorkspaceCreate { focused_field, .. } => assert_eq!(*focused_field, 1),
+            _ => panic!("expected workspace-create popup"),
+        }
+    }
+
+    #[test]
+    fn workspace_create_paste_targets_clicked_text_field() {
+        let mut app = test_app_with_workspace_tree(HumuState::default(), vec![], HashMap::new());
+        app.mode = Mode::Workspace;
+        app.focus = FocusedPanel::Workspace;
+        app.show_create_workspace_dialog();
+
+        let area = app.dialog_popup_area(3);
+        let path_row = area.y + 4;
+        app.handle_mouse(left_click(area.x + 2, path_row));
+        app.handle_paste_event("/tmp/humu");
+
+        match &app.popup {
+            PopupState::WorkspaceCreate { fields, focused_field, .. } => {
+                assert_eq!(*focused_field, 1);
+                assert!(matches!(
+                    &fields[1],
+                    DialogField::TextInput { value, .. } if value == "/tmp/humu"
+                ));
+            }
+            _ => panic!("expected workspace-create popup"),
+        }
     }
 
     #[test]
