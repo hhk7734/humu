@@ -19,6 +19,7 @@ use humu::pty::input::{
 };
 use humu::pty::pane::PtyPane;
 use humu::shared::protocol::{ClientRequest, FrameDecoder, ServerResponse, encode_frame};
+use humu::shared::render::{AgentStatus, FullSnapshot};
 use humu::tui::completion::complete_path;
 use humu::tui::input::{
     Action, Direction as NavDirection, Mode, handle_key, hint_click_action, hint_click_action_right,
@@ -230,6 +231,8 @@ pub struct App {
     pub hook_port: Option<u16>,
     /// Persistent daemon connection used for session ownership and pane registration.
     server_stream: Option<UnixStream>,
+    /// Snapshot returned by the daemon attach handshake, applied after local panes restore.
+    attached_snapshot: Option<FullSnapshot>,
     /// Last-rendered panel rects used for mouse hit-testing.
     pub panel_rects: PanelRects,
     /// Panel widths: [workspace, explorer]. Used in the layout constraints.
@@ -295,7 +298,7 @@ impl App {
         let tabs = TabContainer::new();
         let panes = HashMap::new();
         let pane_presets = HashMap::new();
-        let (server_stream, hook_port) = Self::connect_default_daemon_session();
+        let (server_stream, hook_port, attached_snapshot) = Self::connect_default_daemon_session();
 
         let ui_config = humu::tui::theme::UiConfig {
             simplified_ui: config.ui.simplified_ui,
@@ -320,6 +323,7 @@ impl App {
             agent_states: HashMap::new(),
             hook_port,
             server_stream,
+            attached_snapshot,
             panel_rects: PanelRects::default(),
             panel_widths: saved_panel_widths,
             pty_mouse_active: false,
@@ -342,10 +346,10 @@ impl App {
     }
 
     #[cfg(not(test))]
-    fn connect_default_daemon_session() -> (Option<UnixStream>, Option<u16>) {
+    fn connect_default_daemon_session() -> (Option<UnixStream>, Option<u16>, Option<FullSnapshot>) {
         if let Err(err) = crate::server::daemon::run(true) {
             humu::humu_log!("failed to start daemon runtime: {err}");
-            return (None, None);
+            return (None, None, None);
         }
 
         let hook_port = std::fs::read_to_string(humu_dir().join("port"))
@@ -358,7 +362,7 @@ impl App {
                 "failed to connect to daemon socket {}",
                 socket_path.display()
             );
-            return (None, hook_port);
+            return (None, hook_port, None);
         };
 
         let attach = ClientRequest::AttachSession {
@@ -370,28 +374,30 @@ impl App {
             .write_all(&encode_frame(&attach).expect("encode daemon attach"))
             .is_err()
         {
-            return (None, hook_port);
+            return (None, hook_port, None);
         }
         match Self::read_daemon_response(&mut stream) {
-            Ok(ServerResponse::Attached { .. }) => (Some(stream), hook_port),
+            Ok(ServerResponse::Attached { snapshot, .. }) => {
+                (Some(stream), hook_port, Some(snapshot))
+            }
             Ok(ServerResponse::AlreadyAttached { .. }) => {
                 humu::humu_log!("daemon session already attached; continuing without runtime sync");
-                (None, hook_port)
+                (None, hook_port, None)
             }
             Ok(other) => {
                 humu::humu_log!("unexpected daemon attach response: {other:?}");
-                (None, hook_port)
+                (None, hook_port, None)
             }
             Err(err) => {
                 humu::humu_log!("failed to read daemon attach response: {err}");
-                (None, hook_port)
+                (None, hook_port, None)
             }
         }
     }
 
     #[cfg(test)]
-    fn connect_default_daemon_session() -> (Option<UnixStream>, Option<u16>) {
-        (None, None)
+    fn connect_default_daemon_session() -> (Option<UnixStream>, Option<u16>, Option<FullSnapshot>) {
+        (None, None, None)
     }
 
     fn read_daemon_response(stream: &mut UnixStream) -> anyhow::Result<ServerResponse> {
@@ -455,6 +461,42 @@ impl App {
         let _ = self.send_daemon_request(ClientRequest::UnregisterPane { pane_id });
     }
 
+    fn hydrate_attached_snapshot(&mut self) {
+        let Some(snapshot) = self.attached_snapshot.take() else {
+            return;
+        };
+
+        let mut snapshot_states = HashMap::new();
+        for pane in snapshot.panes.values() {
+            let Some(agent_state) = pane.agent_state.as_ref() else {
+                continue;
+            };
+            let Some(session_id) = agent_state.session_id.clone() else {
+                continue;
+            };
+            snapshot_states.insert(
+                (pane.preset_name.clone(), session_id),
+                match agent_state.status {
+                    AgentStatus::Working => AgentState::Working,
+                    AgentStatus::NeedsInput => AgentState::NeedsInput,
+                    AgentStatus::Idle => AgentState::Idle,
+                },
+            );
+        }
+
+        for (pane_id, preset_name) in &self.pane_presets {
+            let Some(entry) = self.agent_states.get_mut(pane_id) else {
+                continue;
+            };
+            let Some(session_id) = entry.session_id.clone() else {
+                continue;
+            };
+            if let Some(state) = snapshot_states.get(&(preset_name.clone(), session_id)) {
+                entry.state = state.clone();
+            }
+        }
+    }
+
     pub fn run(&mut self) -> Result<()> {
         enable_raw_mode()?;
         stdout().execute(EnterAlternateScreen)?;
@@ -483,6 +525,7 @@ impl App {
         let mut terminal = Terminal::new(backend)?;
 
         self.restore_selection();
+        self.hydrate_attached_snapshot();
         self.refresh_room_cache();
         self.rebuild_workspace_tree();
 
@@ -5052,6 +5095,7 @@ impl App {
             agent_states: HashMap::new(),
             hook_port: None,
             server_stream: None,
+            attached_snapshot: None,
             panel_rects: PanelRects {
                 workspace: Rect::new(0, 0, 24, 8),
                 terminal: Rect::new(24, 0, 56, 20),
@@ -5185,6 +5229,7 @@ mod tests {
             agent_states: HashMap::new(),
             hook_port: None,
             server_stream: None,
+            attached_snapshot: None,
             panel_rects: PanelRects {
                 workspace: Rect::new(0, 0, 24, 8),
                 terminal: Rect::new(24, 0, 56, 20),
