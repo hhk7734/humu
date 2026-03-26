@@ -28,12 +28,15 @@ The new architecture moves long-lived runtime ownership into a daemon process an
 ### User Experience
 
 - Running `humu` starts or reuses the background server automatically
-- The client attaches to a named session
-- If the session does not exist, the client can create it and attach
+- `humu` without arguments targets a default session named `default`
+- `humu attach <session-name>` attaches to an existing named session or creates it if missing
+- `humu list-sessions` prints known sessions and whether they are attached or detached
+- `humu attach` with no name attaches to `default`
 - Closing the client detaches from the session but leaves tasks running
 - Re-running `humu` later reattaches to the existing session
 - A server may manage multiple named sessions
 - Each session allows exactly one active client attachment in v1
+- If attach is rejected because the session is already attached, the CLI prints the owning client PID and offers `humu detach <session-name> --force` as the recovery path for stale attachments
 
 ## Approaches Considered
 
@@ -109,6 +112,8 @@ The default `humu` command performs server discovery and auto-launch before atta
 
 - The daemon manages multiple named sessions
 - A session owns all runtime state needed to keep work alive after client detach
+- Workspaces and room registries remain global, shared machine state
+- Session-local state is scoped separately from the global workspace registry
 - Session state includes:
   - active workspace and room
   - tabs and split layout
@@ -128,8 +133,14 @@ The default `humu` command performs server discovery and auto-launch before atta
 - Session registry
 - Hook HTTP server
 - Codex tracking
+- Notifications and focus-aware notification decisions
+- Search index source data derived from terminal screens
 - State save/load
 - Session attach lock
+- Workspace and room CRUD operations
+- Room suspension and hot-restore behavior
+- Explorer tree root selection for the active room
+- Search match computation against server-owned terminal buffers
 
 ### Client-owned
 
@@ -138,8 +149,21 @@ The default `humu` command performs server discovery and auto-launch before atta
 - TUI rendering
 - Local terminal size observation
 - Attach and detach UX
+- Modal and popup presentation state
+- Explorer panel scroll position and local selection cursor
+- Search mode cursor and current match navigation intent
 
 The client must not own any state required to keep a task alive after detach.
+
+### Shared model layer
+
+The following types remain shared between client and server:
+
+- IDs
+- workspace and room registry structs
+- split layout structs
+- theme-independent render snapshot structs
+- IPC protocol enums
 
 ## IPC Design
 
@@ -154,12 +178,31 @@ Use a Unix domain socket at `~/.humu/server.sock`.
 5. Client attaches to one session
 6. Server streams updates until detach or disconnect
 
+### Discovery and liveness
+
+- Daemon endpoint: `~/.humu/server.sock`
+- Daemon metadata file: `~/.humu/server.json`
+- Metadata contains daemon PID, server start timestamp, socket path, and protocol version
+- Client first loads `server.json`, then attempts a `Ping` request on `server.sock`
+- If the socket exists but `Ping` fails, the client treats it as stale, removes only the stale socket and metadata after verifying the recorded PID is not alive, then retries auto-launch
+- Daemon startup writes metadata only after the socket is bound and ready to answer `Ping`
+- Hook port publication in `~/.humu/port` remains separate and continues to advertise only the hook HTTP server port
+
+### Auto-launch race handling
+
+- Daemon launch uses a lock file under `~/.humu/server.lock`
+- Competing clients attempting auto-launch wait briefly and then retry discovery
+- `CreateSession` is idempotent by session name
+- `AttachSession` either succeeds for an unattached session or returns `AlreadyAttached`
+
 ### Request Types
 
+- `Ping`
 - `ListSessions`
 - `CreateSession`
 - `AttachSession`
 - `Detach`
+- `ForceDetachSession`
 - `SendInput`
 - `ResizeSession`
 - `RunAction`
@@ -181,6 +224,27 @@ The server performs PTY reads and terminal emulation. Clients receive renderable
 
 This avoids reintroducing lifetime coupling between client detach and parser state ownership.
 
+### Snapshot contract
+
+`FullSnapshot` must include:
+
+- session name
+- active workspace ID and room ID
+- tab list and active tab index
+- split tree with pane IDs and per-pane geometry
+- focused pane ID and fullscreen pane ID
+- per-pane terminal screen snapshot
+- per-pane preset name
+- per-pane terminal capability state needed for input routing:
+  - alternate-screen
+  - bracketed-paste
+  - mouse protocol mode and encoding
+  - scrollback offset
+- agent state summary by pane
+- explorer root path for the active room
+
+Incremental events may update only the changed subset, but they must preserve the same schema boundaries as the full snapshot.
+
 ## Resize Policy
 
 Session terminal geometry is singular. PTYs and terminal emulators have one authoritative `(cols, rows)` pair per pane/session view.
@@ -196,6 +260,49 @@ This deliberately avoids the complexity of multi-client geometry arbitration.
 
 ## Persistence Model
 
+The current `state.yaml` schema cannot support multiple named sessions because it stores only one global `active_workspace_id`, one global `active_room_id`, and per-room layout fields that would be overwritten by multiple sessions. The server/client split therefore requires a schema change.
+
+### Global vs session-scoped state
+
+- `workspaces`, room registry data, and panel widths remain global machine state
+- session selection, active room/workspace, runtime layout, focus/fullscreen, and pane/session metadata become session-scoped state
+
+### New on-disk structure
+
+Keep `state.yaml` as the top-level file, but extend it with an explicit session registry:
+
+```yaml
+active_workspace_id: <legacy/global optional during migration>
+active_room_id: <legacy/global optional during migration>
+workspaces: [...]
+panel_widths: [25, 25]
+sessions:
+  - name: default
+    active_workspace_id: <uuid>
+    active_room_id: <uuid>
+    last_size: { cols: 180, rows: 48 }
+    attached: false
+    tabs_by_room:
+      "<room-uuid>":
+        active_tab: 0
+        tabs: [...]
+```
+
+`tabs_by_room` becomes the session-scoped replacement for using `RoomEntry.tabs` and `RoomEntry.active_tab` as the only persisted layout source.
+
+### Migration
+
+On first startup with the new daemon:
+
+1. Load the legacy singleton `state.yaml`
+2. Create a `default` session entry
+3. Copy legacy `active_workspace_id` and `active_room_id` into that `default` session
+4. Copy each room's legacy `tabs` and `active_tab` into `default.tabs_by_room`
+5. Preserve existing workspace and room registry data unchanged
+6. Mark the file as migrated and stop writing session-owned runtime layout back into legacy singleton fields
+
+This preserves existing users' layouts while making future session data non-conflicting.
+
 ### Preserved across client detach
 
 - Live PTY processes
@@ -206,8 +313,8 @@ This deliberately avoids the complexity of multi-client geometry arbitration.
 ### Preserved across server restart
 
 - Workspace and room metadata
-- Persisted split layout
-- Active workspace and room IDs
+- Session-scoped persisted split layout
+- Session-scoped active workspace and room IDs
 - Stored agent `session_id` values used for preset resume
 - Session metadata such as last terminal size
 
@@ -239,6 +346,48 @@ If the daemon restarts, humu falls back to cold restore from persisted layout an
 4. A later client attaches to the same session
 5. Server resizes the session to the new client size and sends a fresh snapshot
 
+## Notification Ownership
+
+Notification delivery remains server-owned so background sessions can still notify while no client is attached.
+
+### Focus semantics
+
+- The attached client sends explicit focus updates derived from crossterm focus events
+- Each session tracks `client_focus_state`
+- If no client is attached, the session is treated as unfocused
+- `only_unfocused: true` channels therefore fire while detached
+
+This preserves PRD 006 semantics while extending them to detached sessions.
+
+### Event resolution
+
+- Agent state transitions are computed on the server
+- Notification routing decisions are computed on the server using the session's current focus state
+- The client does not emit notifications directly
+
+## Attach UX
+
+### Default behavior
+
+- `humu` and `humu attach` target the `default` session
+- Existing users who do nothing continue to get one persistent session, now backed by the daemon
+
+### Named sessions
+
+- `humu attach <name>` attaches to or creates a named session
+- `humu list-sessions` shows all known sessions with attachment state
+- `humu detach <name> --force` clears a stale active-client lock when the previous client is wedged
+
+### Rejected attach
+
+If a session is already attached, the server returns:
+
+- session name
+- attached client PID if known
+- attach timestamp if known
+
+The client prints this information and exits non-zero.
+
 ## Integration With Existing Code
 
 The current `App` type mixes client and server responsibilities. The refactor should separate these into explicit modules.
@@ -263,10 +412,20 @@ src/
 - Move `PtyPane`, hook integration, Codex tracking, room suspension, and save/load logic behind a server runtime boundary
 - Keep ratatui rendering and input decoding in the client
 - Share IDs, config/state structs, and layout structs between client and server
+- Move workspace/room CRUD into server commands so all persistent mutations happen in one process
+- Keep explorer widget rendering, search UI state, and dialog interaction client-side
+- Move search text extraction and terminal-backed match calculation server-side because terminal buffers are server-owned
 
 ## Floating Pane Policy
 
 Floating editor and diff panes are not core long-lived task panes. For v1 they should remain client-local and non-persistent across detach. This keeps the first server split focused on primary room session panes.
+
+Implementation rule:
+
+- editor and diff popups stop using the session `PaneId` map
+- they are spawned as separate client-only PTYs owned by the attached client process
+- detaching or closing the client terminates these popups immediately
+- server-side pane cleanup logic ignores them because they never enter session runtime state
 
 If needed later, they can be promoted to server-owned panes with explicit persistence semantics.
 
@@ -276,6 +435,23 @@ If needed later, they can be promoted to server-owned panes with explicit persis
 - Duplicate attach: server rejects attach when the session already has an active client
 - Unexpected client disconnect: server detaches the client and keeps the session alive
 - Server crash: next startup cold-restores persisted sessions and layouts
+- Attach/create races: server serializes session creation by name and never creates duplicate session entries
+- Version mismatch: client refuses attach when the daemon protocol version differs
+
+## Acceptance Criteria
+
+The implementation is complete only when all of the following are true:
+
+- Closing an attached client does not terminate PTY child processes in that session
+- Reattaching to the same session restores visible terminal output without respawning panes while the daemon stayed alive
+- Restarting the daemon cold-restores the session from persisted layout and respawns panes
+- Two named sessions keep independent active workspace/room selection and room layouts on disk
+- A rejected second attach leaves the first attachment intact and returns machine-readable `AlreadyAttached` data
+- Stale `server.sock` and `server.json` are recovered automatically without manual cleanup
+- Hook-driven agent state and Codex-driven state continue updating while the session is detached
+- `only_unfocused` notifications remain suppressed while a focused client is attached and fire while the session is detached
+- Reattaching from a different terminal size resizes the session to the new client geometry
+- Floating editor and diff panes terminate on client detach and do not become server-owned session panes
 
 ## Testing Strategy
 
@@ -284,6 +460,11 @@ If needed later, they can be promoted to server-owned panes with explicit persis
 - Integration tests proving client exit does not terminate PTY child processes
 - Integration tests for detach and reattach with preserved terminal output
 - Regression tests for server-restart cold restore behavior
+- Migration tests from legacy singleton `state.yaml` into the new session-scoped schema
+- Integration tests proving two named sessions persist independent active room/layout state
+- Notification tests covering focused, unfocused, and detached session behavior
+- Integration tests proving hook and Codex state continue updating while the client is detached
+- Regression tests proving floating editor/diff panes are client-local and do not survive detach
 
 ## Rollout Plan
 
