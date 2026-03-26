@@ -100,6 +100,10 @@ impl PtyPane {
         self.runtime.write(data)
     }
 
+    pub fn kill(&mut self) -> Result<()> {
+        self.runtime.kill()
+    }
+
     /// Resize the PTY and vt100 parser.
     pub fn resize(&mut self, cols: u16, rows: u16) -> Result<()> {
         self.runtime.resize(cols, rows)?;

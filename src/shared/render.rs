@@ -28,7 +28,9 @@ pub enum SplitDirectionSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SplitTreeSnapshot {
-    Leaf { pane_id: PaneId },
+    Leaf {
+        pane_id: PaneId,
+    },
     Split {
         direction: SplitDirectionSnapshot,
         ratio: f64,
@@ -85,6 +87,12 @@ pub struct TerminalCellSnapshot {
     pub wide_continuation: bool,
 }
 
+impl TerminalCellSnapshot {
+    pub fn contents(&self) -> &str {
+        &self.text
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TerminalScreenSnapshot {
     pub rows: u16,
@@ -94,6 +102,16 @@ pub struct TerminalScreenSnapshot {
     pub cells: Vec<Vec<TerminalCellSnapshot>>,
     #[serde(default)]
     pub title: String,
+}
+
+impl TerminalScreenSnapshot {
+    pub fn contents(&self) -> String {
+        self.cells
+            .iter()
+            .map(|row| row.iter().map(|cell| cell.contents()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -410,7 +428,10 @@ impl FullSnapshot {
                     SplitTreeSnapshot::Leaf { pane_id: secondary },
                 ],
             }),
-            session_geometry: Some(SessionGeometrySnapshot { cols: 180, rows: 48 }),
+            session_geometry: Some(SessionGeometrySnapshot {
+                cols: 180,
+                rows: 48,
+            }),
             focused_pane_id: Some(primary),
             fullscreen_pane_id: Some(secondary),
             panes,

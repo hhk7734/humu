@@ -97,6 +97,7 @@ fn run_foreground() -> Result<()> {
     let daemon_config = load_daemon_config(&humu_dir)?;
     let runtime = SessionRuntime::start(
         humu_dir.clone(),
+        daemon_config.clone(),
         daemon_config.notifications.clone(),
         dirs::home_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("."))
@@ -472,6 +473,11 @@ fn handle_request(
                         }
                     }
                     sessions.record_size(&name, cols, rows);
+                    if let Err(err) = runtime.resize_session(&name, cols, rows) {
+                        return Ok(ServerResponse::Error {
+                            message: err.to_string(),
+                        });
+                    }
                     *attached_session = Some(name.clone());
                     runtime.attach_session(&name);
                     Ok(ServerResponse::Attached {
@@ -539,14 +545,18 @@ fn handle_request(
                     message: "cannot register a pane id owned by another session".to_string(),
                 });
             }
-            runtime.register_pane(
+            if let Err(err) = runtime.register_pane(
                 &session_name,
                 pane_id,
                 &preset_name,
                 cwd,
                 session_id,
                 UNIX_EPOCH + Duration::from_secs(started_at_unix_secs),
-            );
+            ) {
+                return Ok(ServerResponse::Error {
+                    message: err.to_string(),
+                });
+            }
             Ok(ServerResponse::Ack)
         }
         ClientRequest::UnregisterPane { pane_id } => {
@@ -565,7 +575,6 @@ fn handle_request(
                     message: "cannot unregister pane outside the attached session".to_string(),
                 });
             }
-            runtime.remove_pane(pane_id);
             Ok(ServerResponse::Ack)
         }
         ClientRequest::Detach => {
@@ -588,13 +597,52 @@ fn handle_request(
             }
             Ok(ServerResponse::Ack)
         }
-        ClientRequest::ResizeSession { .. }
-        | ClientRequest::RunAction { .. }
-        | ClientRequest::SendInput { .. }
-        | ClientRequest::SubscribeUpdates => Ok(ServerResponse::Error {
-            message: "server shell only supports ping/session registry commands in Task 4"
-                .to_string(),
-        }),
+        ClientRequest::ResizeSession { cols, rows } => {
+            let Some(session_name) =
+                owned_attached_session_name(&sessions, client_id, attached_session)
+            else {
+                return Ok(ServerResponse::Error {
+                    message: "resize session requires ownership of an attached session"
+                        .to_string(),
+                });
+            };
+            sessions.record_size(&session_name, cols, rows);
+            if let Err(err) = runtime.resize_session(&session_name, cols, rows) {
+                return Ok(ServerResponse::Error {
+                    message: err.to_string(),
+                });
+            }
+            Ok(ServerResponse::Ack)
+        }
+        ClientRequest::SendInput { pane_id, bytes } => {
+            let Some(session_name) =
+                owned_attached_session_name(&sessions, client_id, attached_session)
+            else {
+                return Ok(ServerResponse::Error {
+                    message: "send input requires ownership of an attached session".to_string(),
+                });
+            };
+            if let Some(owner_session) = runtime.pane_session_name(pane_id)
+                && owner_session != session_name
+            {
+                return Ok(ServerResponse::Error {
+                    message: "cannot send input to a pane outside the attached session"
+                        .to_string(),
+                });
+            }
+            if let Err(err) = runtime.send_input(&session_name, pane_id, &bytes) {
+                return Ok(ServerResponse::Error {
+                    message: err.to_string(),
+                });
+            }
+            Ok(ServerResponse::Ack)
+        }
+        ClientRequest::RunAction { .. } | ClientRequest::SubscribeUpdates => {
+            Ok(ServerResponse::Error {
+                message: "server shell only supports ping/session registry commands in Task 4"
+                    .to_string(),
+            })
+        }
     }
 }
 

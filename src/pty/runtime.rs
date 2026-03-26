@@ -87,6 +87,7 @@ impl PtyRuntime {
     pub(crate) fn write(&mut self, data: &[u8]) -> Result<()> {
         use std::io::Write;
         self.writer.write_all(data)?;
+        self.writer.flush()?;
         Ok(())
     }
 
@@ -113,6 +114,12 @@ impl PtyRuntime {
 
     pub(crate) fn rows(&self) -> u16 {
         self.rows
+    }
+
+    pub(crate) fn kill(&mut self) -> Result<()> {
+        self.child.kill()?;
+        let _ = self.child.wait();
+        Ok(())
     }
 
     fn check_exit(&mut self) {

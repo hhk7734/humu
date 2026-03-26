@@ -1,14 +1,19 @@
 use humu::codex::{CodexTracker, CodexUpdate};
-use humu::config::{HumuState, NotificationsConfig};
+use humu::config::{HumuConfig, HumuState, NotificationsConfig};
 use humu::hook::http::{
     AgentState, HookEvent, HookServer, remove_hook_port_file, write_hook_port_file,
 };
 use humu::id::{PaneId, RoomId, WorkspaceId};
 use humu::notification::{NotificationEvent, NotificationManager, SessionFocusState};
+use humu::preset::resolve_preset;
+use humu::pty::pane::PtyPane;
+use humu::pty::terminal::{
+    Color as TerminalColor, MouseProtocolEncoding, MouseProtocolMode,
+};
 use humu::shared::render::{
     AgentStatus, AgentSummary, ColorSnapshot, CursorSnapshot, FullSnapshot, PaneRuntimeState,
-    PaneSnapshot, TabSnapshot, TerminalCapabilitiesSnapshot, TerminalCellSnapshot,
-    TerminalScreenSnapshot,
+    PaneGeometrySnapshot, PaneSnapshot, SessionGeometrySnapshot, TabSnapshot,
+    TerminalCapabilitiesSnapshot, TerminalCellSnapshot, TerminalScreenSnapshot,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -44,35 +49,50 @@ struct AgentStateEntry {
 struct RegisteredPane {
     preset_name: String,
     cwd: Option<PathBuf>,
+    started_at: SystemTime,
+    session_id: Option<String>,
+}
+
+struct RuntimePane {
+    pane: PtyPane,
+    preset_name: String,
+    cwd: Option<PathBuf>,
+    started_at: SystemTime,
+    session_id: Option<String>,
 }
 
 struct SessionRuntimeState {
     state_path: PathBuf,
+    config: HumuConfig,
     notification_manager: NotificationManager,
     codex_tracker: CodexTracker,
     focus_by_session: HashMap<String, SessionFocusState>,
     pane_sessions: HashMap<PaneId, String>,
     panes_by_session: HashMap<String, HashMap<PaneId, RegisteredPane>>,
+    runtime_panes_by_session: HashMap<String, HashMap<PaneId, RuntimePane>>,
+    session_geometry_by_name: HashMap<String, SessionGeometrySnapshot>,
     agent_states: HashMap<PaneId, AgentStateEntry>,
-    session_snapshots: HashMap<String, FullSnapshot>,
     recorded_updates: Vec<RuntimeUpdateRecord>,
 }
 
 impl SessionRuntimeState {
     fn new(
         state_path: PathBuf,
+        config: HumuConfig,
         notifications: NotificationsConfig,
         codex_sessions_root: PathBuf,
     ) -> Self {
         Self {
             state_path,
+            config,
             notification_manager: NotificationManager::from_config(&notifications),
             codex_tracker: CodexTracker::new(codex_sessions_root),
             focus_by_session: HashMap::new(),
             pane_sessions: HashMap::new(),
             panes_by_session: HashMap::new(),
+            runtime_panes_by_session: HashMap::new(),
+            session_geometry_by_name: HashMap::new(),
             agent_states: HashMap::new(),
-            session_snapshots: HashMap::new(),
             recorded_updates: Vec::new(),
         }
     }
@@ -95,15 +115,14 @@ impl SessionRuntimeState {
     }
 
     fn clear_session_panes(&mut self, session_name: &str) {
-        let pane_ids = self
-            .panes_by_session
-            .get(session_name)
-            .map(|panes| panes.keys().copied().collect::<Vec<_>>())
-            .unwrap_or_default();
+        let pane_ids = self.runtime_panes_by_session.get(session_name).map_or_else(
+            Vec::new,
+            |panes| panes.keys().copied().collect::<Vec<_>>(),
+        );
         for pane_id in pane_ids {
             self.remove_pane(pane_id);
         }
-        self.session_snapshots.remove(session_name);
+        self.session_geometry_by_name.remove(session_name);
     }
 
     fn update_session_focus(&mut self, session_name: &str, focused: bool) {
@@ -123,8 +142,9 @@ impl SessionRuntimeState {
         cwd: Option<PathBuf>,
         agent_session_id: Option<String>,
         started_at: SystemTime,
-    ) {
-        self.pane_sessions.insert(pane_id, session_name.to_string());
+    ) -> anyhow::Result<()> {
+        self.pane_sessions
+            .insert(pane_id, session_name.to_string());
         self.panes_by_session
             .entry(session_name.to_string())
             .or_default()
@@ -133,24 +153,107 @@ impl SessionRuntimeState {
                 RegisteredPane {
                     preset_name: preset_name.to_string(),
                     cwd: cwd.clone(),
+                    started_at,
+                    session_id: agent_session_id.clone(),
                 },
             );
+
+        let session_size = self
+            .session_geometry_by_name
+            .get(session_name)
+            .cloned()
+            .unwrap_or(SessionGeometrySnapshot { cols: 80, rows: 24 });
+        let session_panes = self
+            .runtime_panes_by_session
+            .entry(session_name.to_string())
+            .or_default();
+        if session_panes.contains_key(&pane_id) {
+            return Ok(());
+        }
+        self.session_geometry_by_name
+            .entry(session_name.to_string())
+            .or_insert(session_size.clone());
+
+        let preset = self
+            .config
+            .presets
+            .get(preset_name)
+            .or_else(|| self.config.presets.get("shell"))
+            .ok_or_else(|| anyhow::anyhow!("unknown preset: {preset_name}"))?;
+        let (command, args) = resolve_preset(
+            &preset.command,
+            &preset.args.iter().map(|arg| arg.as_str()).collect::<Vec<_>>(),
+        );
+        let pane = PtyPane::spawn_with_envs(
+            &command,
+            &args,
+            cwd.as_deref(),
+            session_size.cols,
+            session_size.rows,
+            &[],
+        )?;
+        session_panes.insert(
+            pane_id,
+            RuntimePane {
+                pane,
+                preset_name: preset_name.to_string(),
+                cwd: cwd.clone(),
+                started_at,
+                session_id: agent_session_id.clone(),
+            },
+        );
+
         if preset_name == "codex"
             && let Some(cwd) = cwd
         {
             self.codex_tracker
                 .track_pane(pane_id, cwd, agent_session_id, started_at);
         }
+
+        Ok(())
+    }
+
+    fn send_input(&mut self, session_name: &str, pane_id: PaneId, bytes: &[u8]) -> anyhow::Result<()> {
+        let Some(session_panes) = self.runtime_panes_by_session.get_mut(session_name) else {
+            return Err(anyhow::anyhow!("unknown session: {session_name}"));
+        };
+        let Some(runtime_pane) = session_panes.get_mut(&pane_id) else {
+            return Err(anyhow::anyhow!("unknown pane: {pane_id}"));
+        };
+        runtime_pane.pane.write_input(bytes)?;
+        Ok(())
+    }
+
+    fn resize_session(&mut self, session_name: &str, cols: u16, rows: u16) -> anyhow::Result<()> {
+        self.session_geometry_by_name.insert(
+            session_name.to_string(),
+            SessionGeometrySnapshot { cols, rows },
+        );
+        let Some(session_panes) = self.runtime_panes_by_session.get_mut(session_name) else {
+            return Ok(());
+        };
+        for runtime_pane in session_panes.values_mut() {
+            runtime_pane.pane.resize(cols, rows)?;
+        }
+        Ok(())
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
     fn remove_pane(&mut self, pane_id: PaneId) {
-        if let Some(session_name) = self.pane_sessions.remove(&pane_id)
-            && let Some(panes) = self.panes_by_session.get_mut(&session_name)
-        {
-            panes.remove(&pane_id);
-            if panes.is_empty() {
-                self.panes_by_session.remove(&session_name);
+        if let Some(session_name) = self.pane_sessions.remove(&pane_id) {
+            if let Some(panes) = self.panes_by_session.get_mut(&session_name) {
+                panes.remove(&pane_id);
+                if panes.is_empty() {
+                    self.panes_by_session.remove(&session_name);
+                }
+            }
+            if let Some(runtime_panes) = self.runtime_panes_by_session.get_mut(&session_name)
+                && let Some(mut runtime_pane) = runtime_panes.remove(&pane_id)
+            {
+                let _ = runtime_pane.pane.kill();
+                if runtime_panes.is_empty() {
+                    self.runtime_panes_by_session.remove(&session_name);
+                }
             }
         }
         self.agent_states.remove(&pane_id);
@@ -161,14 +264,17 @@ impl SessionRuntimeState {
         self.pane_sessions.get(&pane_id).cloned()
     }
 
-    fn snapshot_for_session(&self, session_name: &str, mut base: FullSnapshot) -> FullSnapshot {
-        if let Some(snapshot) = self.session_snapshots.get(session_name) {
-            let mut snapshot = snapshot.clone();
-            snapshot.session_name = session_name.to_string();
-            return snapshot;
+    fn process_live_panes(&mut self) {
+        for runtime_panes in self.runtime_panes_by_session.values_mut() {
+            for runtime_pane in runtime_panes.values_mut() {
+                let _ = runtime_pane.pane.process_output();
+            }
         }
+    }
 
-        let Some(panes) = self.panes_by_session.get(session_name) else {
+    fn snapshot_for_session(&mut self, session_name: &str, mut base: FullSnapshot) -> FullSnapshot {
+        self.process_live_panes();
+        let Some(panes) = self.runtime_panes_by_session.get_mut(session_name) else {
             return base;
         };
 
@@ -177,53 +283,116 @@ impl SessionRuntimeState {
 
         let mut pane_snapshots = HashMap::new();
         for pane_id in &pane_ids {
-            let Some(pane) = panes.get(pane_id) else {
+            let Some(pane) = panes.get_mut(pane_id) else {
                 continue;
             };
+            let screen = pane.pane.screen_snapshot();
+            let (rows, cols) = screen.size();
+            let (cursor_row, cursor_col) = screen.cursor_position();
+            let cells = (0..rows)
+                .map(|row| {
+                    (0..cols)
+                        .map(|col| {
+                            let cell = screen.cell(row, col);
+                            TerminalCellSnapshot {
+                                text: cell.map(|cell| cell.contents()).unwrap_or_default(),
+                                fg: cell.map(|cell| color_to_snapshot(cell.fgcolor())).unwrap_or(ColorSnapshot::Default),
+                                bg: cell.map(|cell| color_to_snapshot(cell.bgcolor())).unwrap_or(ColorSnapshot::Default),
+                                bold: cell.map(|cell| cell.bold()).unwrap_or(false),
+                                dim: cell.map(|cell| cell.dim()).unwrap_or(false),
+                                italic: cell.map(|cell| cell.italic()).unwrap_or(false),
+                                underline: cell.map(|cell| cell.underline()).unwrap_or(false),
+                                inverse: cell.map(|cell| cell.inverse()).unwrap_or(false),
+                                hidden: cell.map(|cell| cell.hidden()).unwrap_or(false),
+                                strike: cell.map(|cell| cell.strike()).unwrap_or(false),
+                                wide: cell.map(|cell| cell.is_wide()).unwrap_or(false),
+                                wide_continuation: cell
+                                    .map(|cell| cell.is_wide_continuation())
+                                    .unwrap_or(false),
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
             pane_snapshots.insert(
                 *pane_id,
                 PaneSnapshot {
-                    geometry: None,
-                    state: PaneRuntimeState::Running,
-                    screen: TerminalScreenSnapshot {
-                        rows: 24,
-                        cols: 80,
-                        cursor: CursorSnapshot {
-                            row: 0,
-                            col: 0,
-                            visible: false,
+                    geometry: Some(PaneGeometrySnapshot {
+                        x: 0,
+                        y: 0,
+                        width: cols,
+                        height: rows,
+                    }),
+                    state: match pane.pane.exit_status() {
+                        Some(exit_code) => PaneRuntimeState::Exited {
+                            exit_code: Some(exit_code),
                         },
-                        cells: vec![vec![TerminalCellSnapshot {
-                            text: String::new(),
-                            fg: ColorSnapshot::Default,
-                            bg: ColorSnapshot::Default,
-                            bold: false,
-                            dim: false,
-                            italic: false,
-                            underline: false,
-                            inverse: false,
-                            hidden: false,
-                            strike: false,
-                            wide: false,
-                            wide_continuation: false,
-                        }]],
-                        title: pane.preset_name.clone(),
+                        None => PaneRuntimeState::Running,
+                    },
+                    screen: TerminalScreenSnapshot {
+                        rows,
+                        cols,
+                        cursor: CursorSnapshot {
+                            row: cursor_row,
+                            col: cursor_col,
+                            visible: !screen.hide_cursor(),
+                        },
+                        cells,
+                        title: if screen.title().is_empty() {
+                            pane.preset_name.clone()
+                        } else {
+                            screen.title().to_string()
+                        },
                     },
                     preset_name: pane.preset_name.clone(),
                     capabilities: TerminalCapabilitiesSnapshot {
-                        alternate_screen: false,
-                        bracketed_paste: false,
-                        mouse_protocol_mode: None,
-                        mouse_protocol_encoding: None,
-                        scrollback_offset: 0,
+                        alternate_screen: screen.alternate_screen(),
+                        bracketed_paste: screen.bracketed_paste(),
+                        mouse_protocol_mode: Some(match screen.mouse_protocol_mode() {
+                            MouseProtocolMode::None => {
+                                humu::shared::render::MouseProtocolModeSnapshot::None
+                            }
+                            MouseProtocolMode::Press => {
+                                humu::shared::render::MouseProtocolModeSnapshot::Press
+                            }
+                            MouseProtocolMode::PressRelease => {
+                                humu::shared::render::MouseProtocolModeSnapshot::PressRelease
+                            }
+                            MouseProtocolMode::ButtonMotion => {
+                                humu::shared::render::MouseProtocolModeSnapshot::ButtonMotion
+                            }
+                            MouseProtocolMode::AnyMotion => {
+                                humu::shared::render::MouseProtocolModeSnapshot::AnyMotion
+                            }
+                        }),
+                        mouse_protocol_encoding: Some(match screen.mouse_protocol_encoding() {
+                            MouseProtocolEncoding::Default => {
+                                humu::shared::render::MouseProtocolEncodingSnapshot::Default
+                            }
+                            MouseProtocolEncoding::Utf8 => {
+                                humu::shared::render::MouseProtocolEncodingSnapshot::Utf8
+                            }
+                            MouseProtocolEncoding::Sgr => {
+                                humu::shared::render::MouseProtocolEncodingSnapshot::Sgr
+                            }
+                        }),
+                        scrollback_offset: screen.scrollback(),
                     },
-                    agent_state: self.agent_states.get(pane_id).map(|state| AgentSummary {
-                        status: match state.state {
-                            AgentState::Working => AgentStatus::Working,
-                            AgentState::NeedsInput => AgentStatus::NeedsInput,
-                            AgentState::Idle => AgentStatus::Idle,
-                        },
-                        session_id: state.session_id.clone(),
+                    agent_state: pane.session_id.as_ref().map(|_| AgentSummary {
+                        status: self
+                            .agent_states
+                            .get(pane_id)
+                            .map(|state| match state.state {
+                                AgentState::Working => AgentStatus::Working,
+                                AgentState::NeedsInput => AgentStatus::NeedsInput,
+                                AgentState::Idle => AgentStatus::Idle,
+                            })
+                            .unwrap_or(AgentStatus::Idle),
+                        session_id: self
+                            .agent_states
+                            .get(pane_id)
+                            .and_then(|state| state.session_id.clone())
+                            .or_else(|| pane.session_id.clone()),
                     }),
                 },
             );
@@ -243,9 +412,13 @@ impl SessionRuntimeState {
         base.focused_pane_id = pane_ids.first().copied();
         base.fullscreen_pane_id = None;
         base.panes = pane_snapshots;
+        if let Some(session_geometry) = self.session_geometry_by_name.get(session_name).cloned() {
+            base.session_geometry = Some(session_geometry);
+        }
         if base.explorer_root.is_none() {
             base.explorer_root = panes.values().find_map(|pane| pane.cwd.clone());
         }
+        base.session_name = session_name.to_string();
         base
     }
 
@@ -377,6 +550,14 @@ fn parse_room_id(raw: &str) -> Option<RoomId> {
     Uuid::parse_str(raw).ok().map(RoomId)
 }
 
+fn color_to_snapshot(color: TerminalColor) -> ColorSnapshot {
+    match color {
+        TerminalColor::Default => ColorSnapshot::Default,
+        TerminalColor::Idx(idx) => ColorSnapshot::Idx(idx),
+        TerminalColor::Rgb(r, g, b) => ColorSnapshot::Rgb(r, g, b),
+    }
+}
+
 pub struct SessionRuntime {
     base_dir: PathBuf,
     #[cfg_attr(not(test), allow(dead_code))]
@@ -391,11 +572,13 @@ pub struct SessionRuntime {
 impl SessionRuntime {
     pub fn start(
         base_dir: PathBuf,
+        config: HumuConfig,
         notifications: NotificationsConfig,
         codex_sessions_root: PathBuf,
     ) -> anyhow::Result<Self> {
         let state = Arc::new(Mutex::new(SessionRuntimeState::new(
             base_dir.join("state.yaml"),
+            config,
             notifications,
             codex_sessions_root,
         )));
@@ -455,6 +638,7 @@ impl SessionRuntime {
                     }
                 }
                 if let Ok(mut state) = worker_state.lock() {
+                    state.process_live_panes();
                     for update in state.codex_tracker.poll() {
                         state.apply_codex_update(update);
                     }
@@ -508,15 +692,6 @@ impl SessionRuntime {
             .clear_session_panes(session_name);
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn set_session_snapshot(&self, session_name: &str, snapshot: FullSnapshot) {
-        self.state
-            .lock()
-            .expect("session runtime state lock")
-            .session_snapshots
-            .insert(session_name.to_string(), snapshot);
-    }
-
     pub fn update_session_focus(&self, session_name: &str, focused: bool) {
         self.state
             .lock()
@@ -533,18 +708,31 @@ impl SessionRuntime {
         cwd: Option<PathBuf>,
         agent_session_id: Option<String>,
         started_at: SystemTime,
-    ) {
-        self.state
-            .lock()
-            .expect("session runtime state lock")
-            .register_pane(
-                session_name,
-                pane_id,
-                preset_name,
-                cwd,
-                agent_session_id,
-                started_at,
-            );
+    ) -> anyhow::Result<()> {
+        let mut state = self.state.lock().expect("session runtime state lock");
+        state.register_pane(
+            session_name,
+            pane_id,
+            preset_name,
+            cwd,
+            agent_session_id,
+            started_at,
+        )
+    }
+
+    pub fn send_input(
+        &self,
+        session_name: &str,
+        pane_id: PaneId,
+        bytes: &[u8],
+    ) -> anyhow::Result<()> {
+        let mut state = self.state.lock().expect("session runtime state lock");
+        state.send_input(session_name, pane_id, bytes)
+    }
+
+    pub fn resize_session(&self, session_name: &str, cols: u16, rows: u16) -> anyhow::Result<()> {
+        let mut state = self.state.lock().expect("session runtime state lock");
+        state.resize_session(session_name, cols, rows)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -572,10 +760,8 @@ impl SessionRuntime {
     }
 
     pub fn snapshot_for_session(&self, session_name: &str, base: FullSnapshot) -> FullSnapshot {
-        self.state
-            .lock()
-            .expect("session runtime state lock")
-            .snapshot_for_session(session_name, base)
+        let mut state = self.state.lock().expect("session runtime state lock");
+        state.snapshot_for_session(session_name, base)
     }
 }
 
