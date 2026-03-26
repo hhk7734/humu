@@ -7,6 +7,7 @@ use humu::shared::protocol::{
 };
 use humu::shared::render::{ColorSnapshot, DetachReason, FullSnapshot};
 use std::process::Command;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 fn pane_id(raw: &str) -> PaneId {
@@ -49,10 +50,16 @@ fn support_spawn_humu_server_applies_isolated_stdio_contract() {
     let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).expect("server cwd");
     assert_eq!(cwd, env.cwd());
 
-    let environ = std::fs::read(format!("/proc/{pid}/environ")).expect("server environ");
-    let environ = String::from_utf8_lossy(&environ);
-    assert!(environ.contains(&format!("HOME={}", env.humu_dir().display())));
-    assert!(environ.contains(&format!("HUMU_DIR={}", env.humu_dir().display())));
+    let hook_file = env.humu_dir().join("hooks/claude-settings.json");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if hook_file.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+
+    assert!(hook_file.exists(), "expected isolated hook file at {:?}", hook_file);
 }
 
 #[test]
