@@ -92,6 +92,7 @@ fn state_round_trip() {
                 }],
             }],
         }],
+        sessions: vec![],
         panel_widths: None,
     };
 
@@ -106,9 +107,19 @@ fn state_round_trip() {
     assert_eq!(ws.id, ws_id);
 
     let room = ws.room_by_id(room_id).expect("room not found");
-    assert_eq!(room.active_tab, Some(0));
-    assert_eq!(room.tabs[0].name, "tab1");
-    match &room.tabs[0].split {
+    assert_eq!(room.active_tab, None);
+    assert!(room.tabs.is_empty());
+
+    let session = loaded
+        .session_by_name(HumuState::DEFAULT_SESSION_NAME)
+        .expect("default session not found");
+    assert_eq!(session.active_workspace_id, Some(ws_id));
+    assert_eq!(session.active_room_id, Some(room_id));
+
+    let layout = session.tabs_by_room.get(&room_id).expect("room layout missing");
+    assert_eq!(layout.active_tab, 0);
+    assert_eq!(layout.tabs[0].name, "tab1");
+    match &layout.tabs[0].split {
         SplitNode::Leaf { preset, session_id } => {
             assert_eq!(preset, "shell");
             assert_eq!(session_id, &None);
