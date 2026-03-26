@@ -21,11 +21,11 @@ fn support_builds_attach_and_server_commands_with_isolated_env() {
 
     let server_envs = server.get_envs().collect::<Vec<_>>();
     let attach_envs = attach.get_envs().collect::<Vec<_>>();
-    assert!(server_envs.contains(&(std::ffi::OsStr::new("HOME"), Some(env.humu_dir().as_os_str()))));
+    assert!(server_envs.contains(&(std::ffi::OsStr::new("HOME"), Some(env.home.path().as_os_str()))));
     assert!(
         server_envs.contains(&(std::ffi::OsStr::new("HUMU_DIR"), Some(env.humu_dir().as_os_str())))
     );
-    assert!(attach_envs.contains(&(std::ffi::OsStr::new("HOME"), Some(env.humu_dir().as_os_str()))));
+    assert!(attach_envs.contains(&(std::ffi::OsStr::new("HOME"), Some(env.home.path().as_os_str()))));
     assert!(
         attach_envs.contains(&(std::ffi::OsStr::new("HUMU_DIR"), Some(env.humu_dir().as_os_str())))
     );

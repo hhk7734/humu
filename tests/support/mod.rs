@@ -27,11 +27,12 @@ pub use app_impl::App;
 pub struct TestEnv {
     pub home: TempDir,
     cwd: TempDir,
+    humu_dir: PathBuf,
 }
 
 impl TestEnv {
     pub fn humu_dir(&self) -> &Path {
-        self.home.path()
+        &self.humu_dir
     }
 
     pub fn cwd(&self) -> &Path {
@@ -84,7 +85,7 @@ impl TestEnv {
         vec![
             (
                 "HOME".to_string(),
-                self.humu_dir().as_os_str().to_string_lossy().into_owned(),
+                self.home.path().as_os_str().to_string_lossy().into_owned(),
             ),
             (
                 "HUMU_DIR".to_string(),
@@ -282,8 +283,13 @@ impl Drop for PtyHarness {
 pub fn isolated_humu_home() -> TestEnv {
     let home = tempfile::tempdir().expect("create isolated humu home");
     let cwd = tempfile::tempdir().expect("create isolated cwd");
-    std::fs::create_dir_all(home.path()).expect("ensure humu home exists");
-    TestEnv { home, cwd }
+    let humu_dir = home.path().join(".humu");
+    std::fs::create_dir_all(&humu_dir).expect("ensure isolated humu dir exists");
+    TestEnv {
+        home,
+        cwd,
+        humu_dir,
+    }
 }
 
 pub fn humu_binary() -> PathBuf {
