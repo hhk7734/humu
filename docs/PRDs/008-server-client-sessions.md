@@ -496,6 +496,7 @@ The implementation is complete only when all of the following are true:
 ## Testing Strategy
 
 - Unit tests for IPC message encoding and session registry rules
+- Shared integration harnesses in `tests/support/mod.rs` provide isolated `HUMU_DIR` homes, preconfigured humu command builders/spawners, and PTY fixtures so daemon/client tests do not share machine state
 - Integration tests for daemon auto-launch and attach handshake
 - Integration tests proving client exit does not terminate PTY child processes
 - Integration tests for detach and reattach with preserved terminal output

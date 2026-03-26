@@ -1,9 +1,18 @@
+#![allow(dead_code)]
+
 use humu::config::{
     HumuState, PersistedRoomLayout, RoomEntry, SessionState, SplitNode, TabLayout, WorkspaceEntry,
 };
 use humu::id::{RoomId, WorkspaceId};
 use humu::tui::layout::{PaneId, SplitTree};
-use std::path::PathBuf;
+use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
+use tempfile::TempDir;
 use uuid::Uuid;
 
 #[path = "../../src/app.rs"]
@@ -13,6 +22,238 @@ mod app_impl;
 pub mod persistence;
 
 pub use app_impl::App;
+
+pub struct TestEnv {
+    pub home: TempDir,
+    cwd: TempDir,
+}
+
+impl TestEnv {
+    pub fn humu_dir(&self) -> &Path {
+        self.home.path()
+    }
+
+    pub fn cwd(&self) -> &Path {
+        self.cwd.path()
+    }
+
+    pub fn state_path(&self) -> PathBuf {
+        self.humu_dir().join("state.yaml")
+    }
+
+    pub fn config_path(&self) -> PathBuf {
+        self.humu_dir().join("config.yaml")
+    }
+
+    pub fn hook_port_path(&self) -> PathBuf {
+        self.humu_dir().join("port")
+    }
+
+    pub fn server_socket_path(&self) -> PathBuf {
+        self.humu_dir().join("server.sock")
+    }
+
+    pub fn server_metadata_path(&self) -> PathBuf {
+        self.humu_dir().join("server.json")
+    }
+
+    pub fn server_lock_path(&self) -> PathBuf {
+        self.humu_dir().join("server.lock")
+    }
+
+    pub fn apply_to_command(&self, command: &mut Command) {
+        command
+            .current_dir(self.cwd())
+            .env("HOME", self.humu_dir())
+            .env("HUMU_DIR", self.humu_dir());
+    }
+}
+
+pub struct PtyHarness {
+    master: Box<dyn MasterPty + Send>,
+    writer: Box<dyn std::io::Write + Send>,
+    output_rx: mpsc::Receiver<Vec<u8>>,
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+    output: Vec<u8>,
+}
+
+impl PtyHarness {
+    pub fn spawn(
+        command: &str,
+        args: &[String],
+        cwd: Option<&Path>,
+        cols: u16,
+        rows: u16,
+        envs: &[(String, String)],
+    ) -> Self {
+        let pty_system = native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("open pty");
+
+        let mut builder = CommandBuilder::new(command);
+        builder.args(args);
+        if let Some(dir) = cwd {
+            builder.cwd(dir);
+        }
+        builder.env("TERM", "xterm-256color");
+        for (key, value) in envs {
+            builder.env(key, value);
+        }
+
+        let child = pair.slave.spawn_command(builder).expect("spawn pty child");
+        drop(pair.slave);
+
+        let writer = pair.master.take_writer().expect("pty writer");
+        let mut reader = pair.master.try_clone_reader().expect("pty reader");
+        let (output_tx, output_rx) = mpsc::channel();
+        thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if output_tx.send(buf[..n].to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        Self {
+            master: pair.master,
+            writer,
+            output_rx,
+            child,
+            output: Vec::new(),
+        }
+    }
+
+    pub fn child_is_alive(&mut self) -> bool {
+        self.child
+            .try_wait()
+            .expect("query pty child status")
+            .is_none()
+    }
+
+    pub fn write_input(&mut self, bytes: &[u8]) {
+        use std::io::Write;
+
+        self.writer.write_all(bytes).expect("write pty input");
+        self.writer.flush().expect("flush pty input");
+    }
+
+    pub fn resize(&mut self, cols: u16, rows: u16) {
+        self.master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("resize pty");
+    }
+
+    pub fn drain_output(&mut self) -> &[u8] {
+        while let Ok(chunk) = self.output_rx.try_recv() {
+            self.output.extend_from_slice(&chunk);
+        }
+        &self.output
+    }
+
+    pub fn output_string(&mut self) -> String {
+        String::from_utf8_lossy(self.drain_output()).into_owned()
+    }
+
+    pub fn wait_for_output(&mut self, needle: &str, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if self.output_string().contains(needle) {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        self.output_string().contains(needle)
+    }
+}
+
+impl Drop for PtyHarness {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+pub fn isolated_humu_home() -> TestEnv {
+    let home = tempfile::tempdir().expect("create isolated humu home");
+    let cwd = tempfile::tempdir().expect("create isolated cwd");
+    std::fs::create_dir_all(home.path()).expect("ensure humu home exists");
+    TestEnv { home, cwd }
+}
+
+pub fn humu_binary() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_humu"))
+}
+
+pub fn humu_command(env: &TestEnv) -> Command {
+    let mut command = Command::new(humu_binary());
+    env.apply_to_command(&mut command);
+    command
+}
+
+pub fn humu_server_command(env: &TestEnv) -> Command {
+    let mut command = humu_command(env);
+    command.arg("server");
+    command
+}
+
+pub fn humu_attach_command(env: &TestEnv, session: &str) -> Command {
+    let mut command = humu_command(env);
+    command.arg("attach").arg(session);
+    command
+}
+
+pub fn spawn_humu_server(env: &TestEnv) -> Child {
+    humu_server_command(env)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn humu server")
+}
+
+pub fn spawn_humu_attach(env: &TestEnv, session: &str) -> Child {
+    humu_attach_command(env, session)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn humu attach")
+}
+
+pub fn run_humu_attach(env: &TestEnv, session: &str) -> ExitStatus {
+    humu_attach_command(env, session)
+        .status()
+        .expect("run humu attach")
+}
+
+pub fn spawn_sleeping_shell() -> PtyHarness {
+    PtyHarness::spawn(
+        "bash",
+        &["-lc".to_string(), "printf 'ready\\n'; sleep 60".to_string()],
+        None,
+        80,
+        24,
+        &[],
+    )
+}
 
 pub fn workspace_id(name: &str) -> WorkspaceId {
     match name {

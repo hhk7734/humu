@@ -1,3 +1,5 @@
+mod support;
+
 use humu::id::PaneId;
 use humu::shared::protocol::{
     encode_frame, decode_frame, ClientAction, ClientRequest, FrameDecoder, NavigationDirection,
@@ -8,6 +10,12 @@ use uuid::Uuid;
 
 fn pane_id(raw: &str) -> PaneId {
     PaneId(Uuid::parse_str(raw).unwrap())
+}
+
+#[test]
+fn support_can_spawn_isolated_humu_home() {
+    let env = support::isolated_humu_home();
+    assert!(env.home.path().exists());
 }
 
 #[test]

@@ -283,7 +283,7 @@ Task 2 follow-up fixes:
 - Modify: `tests/detach_survival.rs`
 - Modify: `tests/notifications_focus.rs`
 
-- [ ] **Step 1: Write the failing harness smoke tests**
+- [x] **Step 1: Write the failing harness smoke tests**
 
 ```rust
 #[test]
@@ -299,12 +299,12 @@ fn support_can_spawn_background_pty_fixture() {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test support_can_spawn_isolated_humu_home -- --nocapture`
 Expected: FAIL with missing support module
 
-- [ ] **Step 3: Implement reusable test fixtures and harness helpers**
+- [x] **Step 3: Implement reusable test fixtures and harness helpers**
 
 ```rust
 pub fn isolated_humu_home() -> TestEnv { /* ... */ }
@@ -313,12 +313,12 @@ pub fn run_humu_attach(env: &TestEnv, session: &str) -> ExitStatus { /* ... */ }
 pub fn spawn_sleeping_shell() -> PtyHarness { /* ... */ }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test support_can_spawn_isolated_humu_home -- --nocapture`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tests/support/mod.rs tests/server_attach.rs tests/detach_survival.rs tests/notifications_focus.rs
