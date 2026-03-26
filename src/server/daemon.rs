@@ -416,20 +416,20 @@ fn handle_request(
             session: sessions.create(&name),
         }),
         ClientRequest::AttachSession { name, cols, rows } => {
-            if let Some(current) = attached_session.clone()
-                && current != name
-            {
-                sessions.detach_owned(&current, client_id);
-                *attached_session = None;
-            }
-            sessions.record_size(&name, cols, rows);
             let mut owner =
                 AttachOwner::new(client_id.to_string()).with_attached_at(current_timestamp());
             if let Some(pid) = owner_pid {
                 owner = owner.with_pid(pid);
             }
+            let previous_session = attached_session.clone();
             match sessions.attach(&name, owner) {
                 Ok(_) => {
+                    if let Some(current) = previous_session
+                        && current != name
+                    {
+                        sessions.detach_owned(&current, client_id);
+                    }
+                    sessions.record_size(&name, cols, rows);
                     *attached_session = Some(name.clone());
                     Ok(ServerResponse::Attached {
                         session_name: name.clone(),

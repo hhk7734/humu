@@ -312,6 +312,122 @@ fn daemon_attach_rejects_second_connection_for_same_session() {
 }
 
 #[test]
+fn rejected_attach_keeps_existing_session_lock() {
+    let env = support::isolated_humu_home();
+    let _child = support::spawn_humu_server(&env);
+    wait_for_ping(&env, Duration::from_secs(5)).expect("daemon ping");
+
+    let mut alpha_owner = connect_server(&env).expect("alpha owner stream");
+    let alpha_attach = send_request_on_stream::<ServerResponse>(
+        &mut alpha_owner,
+        &ClientRequest::AttachSession {
+            name: "alpha".to_string(),
+            cols: 80,
+            rows: 24,
+        },
+    )
+    .expect("attach alpha");
+    assert!(matches!(alpha_attach, ServerResponse::Attached { .. }));
+
+    let mut beta_owner = connect_server(&env).expect("beta owner stream");
+    let beta_attach = send_request_on_stream::<ServerResponse>(
+        &mut beta_owner,
+        &ClientRequest::AttachSession {
+            name: "beta".to_string(),
+            cols: 100,
+            rows: 30,
+        },
+    )
+    .expect("attach beta");
+    assert!(matches!(beta_attach, ServerResponse::Attached { .. }));
+
+    let rejected = send_request_on_stream::<ServerResponse>(
+        &mut alpha_owner,
+        &ClientRequest::AttachSession {
+            name: "beta".to_string(),
+            cols: 120,
+            rows: 40,
+        },
+    )
+    .expect("rejected attach");
+    assert!(matches!(rejected, ServerResponse::AlreadyAttached { .. }));
+
+    let alpha_retry = send_request::<ServerResponse>(
+        &env,
+        &ClientRequest::AttachSession {
+            name: "alpha".to_string(),
+            cols: 90,
+            rows: 28,
+        },
+    )
+    .expect("retry alpha");
+    assert!(matches!(
+        alpha_retry,
+        ServerResponse::AlreadyAttached {
+            session_name,
+            ..
+        } if session_name == "alpha"
+    ));
+}
+
+#[test]
+fn rejected_attach_does_not_overwrite_target_session_size() {
+    let env = support::isolated_humu_home();
+    let _child = support::spawn_humu_server(&env);
+    wait_for_ping(&env, Duration::from_secs(5)).expect("daemon ping");
+
+    let mut alpha_owner = connect_server(&env).expect("alpha owner stream");
+    let alpha_attach = send_request_on_stream::<ServerResponse>(
+        &mut alpha_owner,
+        &ClientRequest::AttachSession {
+            name: "alpha".to_string(),
+            cols: 80,
+            rows: 24,
+        },
+    )
+    .expect("attach alpha");
+    assert!(matches!(alpha_attach, ServerResponse::Attached { .. }));
+
+    let mut beta_owner = connect_server(&env).expect("beta owner stream");
+    let beta_attach = send_request_on_stream::<ServerResponse>(
+        &mut beta_owner,
+        &ClientRequest::AttachSession {
+            name: "beta".to_string(),
+            cols: 100,
+            rows: 30,
+        },
+    )
+    .expect("attach beta");
+    assert!(matches!(beta_attach, ServerResponse::Attached { .. }));
+
+    let rejected = send_request_on_stream::<ServerResponse>(
+        &mut alpha_owner,
+        &ClientRequest::AttachSession {
+            name: "beta".to_string(),
+            cols: 120,
+            rows: 40,
+        },
+    )
+    .expect("rejected attach");
+    assert!(matches!(rejected, ServerResponse::AlreadyAttached { .. }));
+
+    let sessions = send_request::<ServerResponse>(&env, &ClientRequest::ListSessions)
+        .expect("list sessions");
+    match sessions {
+        ServerResponse::Sessions { sessions } => {
+            let beta = sessions
+                .into_iter()
+                .find(|session| session.name == "beta")
+                .expect("beta session");
+            let size = beta.last_size.expect("beta last size");
+            assert_eq!(size.cols, 100);
+            assert_eq!(size.rows, 30);
+        }
+        other => panic!("unexpected sessions response: {other:?}"),
+    }
+}
+
+#[test]
 fn daemon_disconnect_releases_session_lock() {
     let env = support::isolated_humu_home();
     let _child = support::spawn_humu_server(&env);
