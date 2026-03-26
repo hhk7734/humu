@@ -535,6 +535,124 @@ async fn stale_owner_disconnect_does_not_poison_replacement_focus_state() {
 }
 
 #[tokio::test]
+async fn stale_force_detached_owner_attaching_elsewhere_does_not_poison_replacement_focus() {
+    let env = support::isolated_humu_home();
+    let notify_log = env.home.path().join("notify.log");
+    let _daemon = spawn_humu_server_with_notify_stub(&env, &notify_log);
+    support::persistence::save_state(&env.state_path(), &support::migrated_state_fixture())
+        .expect("save state fixture");
+    wait_for_ping(&env);
+
+    let mut old_owner = attach_default_session(&env);
+    let force_detach = send_request(
+        &mut UnixStream::connect(env.server_socket_path()).expect("connect force-detach client"),
+        ClientRequest::ForceDetachSession {
+            name: "default".to_string(),
+            auth_token: Some(daemon_auth_token(&env)),
+        },
+    );
+    assert!(matches!(force_detach, ServerResponse::Detached { .. }));
+
+    let mut new_owner = attach_default_session(&env);
+    let pane_id = PaneId::new();
+    let registered = send_request(
+        &mut new_owner,
+        ClientRequest::RegisterPane {
+            pane_id,
+            preset_name: "claude".to_string(),
+            cwd: None,
+            session_id: Some("replacement-session".to_string()),
+            started_at_unix_secs: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_secs(),
+        },
+    );
+    assert!(matches!(registered, ServerResponse::Ack));
+
+    let reattach_elsewhere = send_request(
+        &mut old_owner,
+        ClientRequest::AttachSession {
+            name: "other".to_string(),
+            cols: 120,
+            rows: 40,
+        },
+    );
+    assert!(matches!(reattach_elsewhere, ServerResponse::Attached { .. }));
+
+    let hook_port = fs::read_to_string(env.hook_port_path())
+        .expect("read hook port")
+        .trim()
+        .parse::<u16>()
+        .expect("parse hook port");
+    let client = reqwest::Client::new();
+    client
+        .post(format!(
+            "http://127.0.0.1:{hook_port}/hook?workspaceId={}&roomId={}&paneId={pane_id}&eventType=PostToolUse&sessionId=replacement-session",
+            support::workspace_id("humu"),
+            support::room_id("main"),
+        ))
+        .send()
+        .await
+        .expect("send working event");
+    client
+        .post(format!(
+            "http://127.0.0.1:{hook_port}/hook?workspaceId={}&roomId={}&paneId={pane_id}&eventType=PermissionRequest&sessionId=replacement-session",
+            support::workspace_id("humu"),
+            support::room_id("main"),
+        ))
+        .send()
+        .await
+        .expect("send needs-input event");
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(
+        notify_log_lines(&notify_log).is_empty(),
+        "stale owner attach poisoned replacement focus state: {:?}",
+        notify_log_lines(&notify_log)
+    );
+}
+
+#[test]
+fn force_detach_clears_runtime_panes_from_later_session_snapshots() {
+    let env = support::isolated_humu_home();
+    let _daemon = support::spawn_humu_server(&env);
+    wait_for_ping(&env);
+
+    let mut owner = attach_default_session(&env);
+    let pane_id = PaneId::new();
+    let registered = send_request(
+        &mut owner,
+        ClientRequest::RegisterPane {
+            pane_id,
+            preset_name: "shell".to_string(),
+            cwd: None,
+            session_id: Some("stale-pane".to_string()),
+            started_at_unix_secs: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_secs(),
+        },
+    );
+    assert!(matches!(registered, ServerResponse::Ack));
+
+    let force_detach = send_request(
+        &mut UnixStream::connect(env.server_socket_path()).expect("connect force-detach client"),
+        ClientRequest::ForceDetachSession {
+            name: "default".to_string(),
+            auth_token: Some(daemon_auth_token(&env)),
+        },
+    );
+    assert!(matches!(force_detach, ServerResponse::Detached { .. }));
+
+    let snapshot = snapshot_default_session(&env);
+    assert!(
+        !snapshot.panes.contains_key(&pane_id),
+        "force detach left stale runtime pane behind: {:?}",
+        snapshot.panes
+    );
+}
+
+#[tokio::test]
 async fn daemon_session_snapshot_retains_hook_and_codex_updates_after_detach() {
     let env = support::isolated_humu_home();
     let _daemon = support::spawn_humu_server(&env);

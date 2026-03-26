@@ -92,6 +92,17 @@ impl SessionRuntimeState {
             .insert(session_name.to_string(), SessionFocusState::detached());
     }
 
+    fn clear_session_panes(&mut self, session_name: &str) {
+        let pane_ids = self
+            .panes_by_session
+            .get(session_name)
+            .map(|panes| panes.keys().copied().collect::<Vec<_>>())
+            .unwrap_or_default();
+        for pane_id in pane_ids {
+            self.remove_pane(pane_id);
+        }
+    }
+
     fn update_session_focus(&mut self, session_name: &str, focused: bool) {
         let state = self
             .focus_by_session
@@ -479,6 +490,13 @@ impl SessionRuntime {
             .lock()
             .expect("session runtime state lock")
             .detach_session(session_name);
+    }
+
+    pub fn clear_session_panes(&self, session_name: &str) {
+        self.state
+            .lock()
+            .expect("session runtime state lock")
+            .clear_session_panes(session_name);
     }
 
     pub fn update_session_focus(&self, session_name: &str, focused: bool) {

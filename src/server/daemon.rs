@@ -467,8 +467,9 @@ fn handle_request(
                     if let Some(current) = previous_session
                         && current != name
                     {
-                        sessions.detach_owned(&current, client_id);
-                        runtime.detach_session(&current);
+                        if sessions.detach_owned(&current, client_id) {
+                            runtime.detach_session(&current);
+                        }
                     }
                     sessions.record_size(&name, cols, rows);
                     *attached_session = Some(name.clone());
@@ -503,9 +504,12 @@ fn handle_request(
                         .to_string(),
                 });
             }
-            sessions.detach_owned(&name, client_id);
+            let detached_owned = sessions.detach_owned(&name, client_id);
             if attached_session.as_deref() != Some(name.as_str()) {
                 sessions.detach(&name);
+            }
+            if detached_owned || attached_session.as_deref() != Some(name.as_str()) {
+                runtime.clear_session_panes(&name);
             }
             runtime.detach_session(&name);
             if attached_session.as_deref() == Some(name.as_str()) {
