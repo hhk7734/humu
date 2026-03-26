@@ -15,6 +15,8 @@ fn support_can_spawn_terminal_backed_attach_client() {
     let mut harness = support::spawn_humu_attach(&env, "default");
     assert!(harness.wait_for_output("\u{1b}[?1049h", Duration::from_secs(2)));
     assert!(harness.child_is_alive());
+    assert!(env.humu_dir().join("hooks/claude-settings.json").exists());
+    assert!(env.log_path().exists());
 }
 
 #[test]

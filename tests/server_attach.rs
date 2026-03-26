@@ -54,6 +54,8 @@ fn support_spawn_humu_server_applies_isolated_stdio_contract() {
 
     let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).expect("server cwd");
     assert_eq!(cwd, env.cwd());
+    let stdin_target = std::fs::read_link(format!("/proc/{pid}/fd/0")).expect("server stdin fd");
+    assert_eq!(stdin_target, std::path::PathBuf::from("/dev/null"));
 
     let hook_file = env.humu_dir().join("hooks/claude-settings.json");
     let log_file = env.log_path();

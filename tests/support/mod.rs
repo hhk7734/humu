@@ -66,11 +66,31 @@ impl TestEnv {
         self.humu_dir().join("server.lock")
     }
 
+    pub fn apply_to_pty_command(&self, command: &mut CommandBuilder) {
+        command.cwd(self.cwd());
+        for (key, value) in self.isolation_envs() {
+            command.env(key, value);
+        }
+    }
+
     pub fn apply_to_command(&self, command: &mut Command) {
-        command
-            .current_dir(self.cwd())
-            .env("HOME", self.humu_dir())
-            .env("HUMU_DIR", self.humu_dir());
+        command.current_dir(self.cwd());
+        for (key, value) in self.isolation_envs() {
+            command.env(key, value);
+        }
+    }
+
+    fn isolation_envs(&self) -> Vec<(String, String)> {
+        vec![
+            (
+                "HOME".to_string(),
+                self.humu_dir().as_os_str().to_string_lossy().into_owned(),
+            ),
+            (
+                "HUMU_DIR".to_string(),
+                self.humu_dir().as_os_str().to_string_lossy().into_owned(),
+            ),
+        ]
     }
 }
 
@@ -142,14 +162,7 @@ impl Drop for ScopedChild {
 }
 
 impl PtyHarness {
-    pub fn spawn<S: AsRef<OsStr>>(
-        command: S,
-        args: &[String],
-        cwd: Option<&Path>,
-        cols: u16,
-        rows: u16,
-        envs: &[(String, String)],
-    ) -> Self {
+    pub fn spawn_command_builder(mut builder: CommandBuilder, cols: u16, rows: u16) -> Self {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -160,15 +173,7 @@ impl PtyHarness {
             })
             .expect("open pty");
 
-        let mut builder = CommandBuilder::new(command);
-        builder.args(args);
-        if let Some(dir) = cwd {
-            builder.cwd(dir);
-        }
         builder.env("TERM", "xterm-256color");
-        for (key, value) in envs {
-            builder.env(key, value);
-        }
 
         let child = pair.slave.spawn_command(builder).expect("spawn pty child");
         drop(pair.slave);
@@ -198,6 +203,25 @@ impl PtyHarness {
             child,
             output: Vec::new(),
         }
+    }
+
+    pub fn spawn<S: AsRef<OsStr>>(
+        command: S,
+        args: &[String],
+        cwd: Option<&Path>,
+        cols: u16,
+        rows: u16,
+        envs: &[(String, String)],
+    ) -> Self {
+        let mut builder = CommandBuilder::new(command);
+        builder.args(args);
+        if let Some(dir) = cwd {
+            builder.cwd(dir);
+        }
+        for (key, value) in envs {
+            builder.env(key, value);
+        }
+        Self::spawn_command_builder(builder, cols, rows)
     }
 
     pub fn child_is_alive(&mut self) -> bool {
@@ -311,14 +335,11 @@ pub fn spawn_humu_attach_with_size(
     cols: u16,
     rows: u16,
 ) -> PtyHarness {
-    PtyHarness::spawn(
-        humu_binary().as_os_str(),
-        &["attach".to_string(), session.to_string()],
-        Some(env.cwd()),
-        cols,
-        rows,
-        &test_env_vars(env),
-    )
+    let mut builder = CommandBuilder::new(humu_binary());
+    builder.arg("attach");
+    builder.arg(session);
+    env.apply_to_pty_command(&mut builder);
+    PtyHarness::spawn_command_builder(builder, cols, rows)
 }
 
 pub fn run_humu_attach(env: &TestEnv, session: &str) -> ExitStatus {
@@ -348,19 +369,6 @@ pub fn spawn_sleeping_shell() -> PtyHarness {
         24,
         &[],
     )
-}
-
-fn test_env_vars(env: &TestEnv) -> Vec<(String, String)> {
-    vec![
-        (
-            "HOME".to_string(),
-            env.humu_dir().as_os_str().to_string_lossy().into_owned(),
-        ),
-        (
-            "HUMU_DIR".to_string(),
-            env.humu_dir().as_os_str().to_string_lossy().into_owned(),
-        ),
-    ]
 }
 
 pub fn workspace_id(name: &str) -> WorkspaceId {
