@@ -6,7 +6,9 @@ use humu::shared::render::AgentStatus;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
+use std::process::Stdio;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn read_framed_message(stream: &mut UnixStream) -> anyhow::Result<ServerResponse> {
@@ -76,6 +78,50 @@ fn send_request(stream: &mut UnixStream, request: ClientRequest) -> ServerRespon
         .write_all(&encode_frame(&request).expect("encode request"))
         .expect("write request");
     read_framed_message(stream).expect("read response")
+}
+
+fn spawn_humu_server_with_notify_stub(
+    env: &support::TestEnv,
+    notify_log: &std::path::Path,
+) -> support::ScopedChild {
+    let bin_dir = env.home.path().join("fake-bin");
+    fs::create_dir_all(&bin_dir).expect("create fake bin dir");
+
+    let notify_script = bin_dir.join("notify-send");
+    fs::write(
+        &notify_script,
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HUMU_NOTIFY_LOG\"\n",
+    )
+    .expect("write fake notify-send");
+    fs::set_permissions(&notify_script, fs::Permissions::from_mode(0o755))
+        .expect("chmod fake notify-send");
+
+    fs::write(
+        env.config_path(),
+        "notifications:\n  os:\n    enabled: true\n    only_unfocused: true\n  sound:\n    enabled: false\n    only_unfocused: false\n  telegram:\n    enabled: false\n    only_unfocused: false\n    bot_token_encrypted: \"\"\n    chat_id_encrypted: \"\"\n",
+    )
+    .expect("write daemon config");
+
+    let mut command = support::humu_server_command(env);
+    let current_path = std::env::var_os("PATH").unwrap_or_default();
+    command
+        .env(
+            "PATH",
+            format!("{}:{}", bin_dir.display(), current_path.to_string_lossy()),
+        )
+        .env("HUMU_NOTIFY_LOG", notify_log)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    support::spawn_scoped_command(command)
+}
+
+fn notify_log_lines(path: &std::path::Path) -> Vec<String> {
+    fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
 }
 
 #[test]
@@ -251,4 +297,111 @@ async fn daemon_session_snapshot_retains_hook_and_codex_updates_after_detach() {
         );
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+#[tokio::test]
+async fn only_unfocused_notifications_fire_after_focus_lost_and_detach() {
+    let env = support::isolated_humu_home();
+    let notify_log = env.home.path().join("notify.log");
+    let _daemon = spawn_humu_server_with_notify_stub(&env, &notify_log);
+    wait_for_ping(&env);
+
+    let mut stream = attach_default_session(&env);
+    let pane_id = PaneId::new();
+    let registered = send_request(
+        &mut stream,
+        ClientRequest::RegisterPane {
+            pane_id,
+            preset_name: "claude".to_string(),
+            cwd: None,
+            session_id: Some("notify-session".to_string()),
+            started_at_unix_secs: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_secs(),
+        },
+    );
+    assert!(matches!(registered, ServerResponse::Ack));
+
+    let hook_port = fs::read_to_string(env.hook_port_path())
+        .expect("read hook port")
+        .trim()
+        .parse::<u16>()
+        .expect("parse hook port");
+    let client = reqwest::Client::new();
+
+    client
+        .post(format!(
+            "http://127.0.0.1:{hook_port}/hook?paneId={pane_id}&eventType=PostToolUse&sessionId=notify-session"
+        ))
+        .send()
+        .await
+        .expect("send working event while focused");
+    client
+        .post(format!(
+            "http://127.0.0.1:{hook_port}/hook?paneId={pane_id}&eventType=PermissionRequest&sessionId=notify-session"
+        ))
+        .send()
+        .await
+        .expect("send needs-input event while focused");
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(
+        notify_log_lines(&notify_log).is_empty(),
+        "focused attached session should suppress only_unfocused notifications"
+    );
+
+    let focus_lost = send_request(&mut stream, ClientRequest::FocusChanged { focused: false });
+    assert!(matches!(focus_lost, ServerResponse::Ack));
+    client
+        .post(format!(
+            "http://127.0.0.1:{hook_port}/hook?paneId={pane_id}&eventType=PostToolUse&sessionId=notify-session"
+        ))
+        .send()
+        .await
+        .expect("send working event while unfocused");
+    client
+        .post(format!(
+            "http://127.0.0.1:{hook_port}/hook?paneId={pane_id}&eventType=PermissionRequest&sessionId=notify-session"
+        ))
+        .send()
+        .await
+        .expect("send needs-input event while unfocused");
+    wait_for(
+        || notify_log_lines(&notify_log).len() == 1,
+        Duration::from_secs(2),
+    );
+
+    let detached = send_request(&mut stream, ClientRequest::Detach);
+    assert!(matches!(
+        detached,
+        ServerResponse::Detached { ref session_name } if session_name == "default"
+    ));
+    drop(stream);
+
+    client
+        .post(format!(
+            "http://127.0.0.1:{hook_port}/hook?paneId={pane_id}&eventType=PostToolUse&sessionId=notify-session"
+        ))
+        .send()
+        .await
+        .expect("send working event while detached");
+    client
+        .post(format!(
+            "http://127.0.0.1:{hook_port}/hook?paneId={pane_id}&eventType=PermissionRequest&sessionId=notify-session"
+        ))
+        .send()
+        .await
+        .expect("send needs-input event while detached");
+    wait_for(
+        || notify_log_lines(&notify_log).len() == 2,
+        Duration::from_secs(2),
+    );
+
+    let notifications = notify_log_lines(&notify_log);
+    assert!(
+        notifications
+            .iter()
+            .all(|line| line.contains("[unknown/unknown] Agent needs input")),
+        "unexpected notification payloads: {notifications:?}"
+    );
 }
