@@ -60,7 +60,10 @@ impl SessionEntry {
             name: self.name.clone(),
             attached: self.owner.is_some(),
             owner_pid: self.owner.as_ref().and_then(|owner| owner.owner_pid),
-            attached_at: self.owner.as_ref().and_then(|owner| owner.attached_at.clone()),
+            attached_at: self
+                .owner
+                .as_ref()
+                .and_then(|owner| owner.attached_at.clone()),
             last_size: self.last_size.clone(),
         }
     }
@@ -154,6 +157,13 @@ impl SessionManager {
             return true;
         }
         false
+    }
+
+    pub fn is_owned_by(&self, name: &str, client_id: &str) -> bool {
+        self.sessions
+            .get(name)
+            .and_then(|entry| entry.owner.as_ref())
+            .is_some_and(|owner| owner.client_id == client_id)
     }
 
     pub fn record_size(&mut self, name: &str, cols: u16, rows: u16) {

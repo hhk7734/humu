@@ -164,6 +164,17 @@ fn notify_log_lines(path: &std::path::Path) -> Vec<String> {
         .collect()
 }
 
+fn daemon_auth_token(env: &support::TestEnv) -> String {
+    serde_json::from_str::<serde_json::Value>(
+        &fs::read_to_string(env.server_metadata_path()).expect("read daemon metadata"),
+    )
+    .expect("parse daemon metadata")
+    .get("auth_token")
+    .and_then(serde_json::Value::as_str)
+    .expect("daemon auth token")
+    .to_string()
+}
+
 #[test]
 fn foreground_app_leaves_daemon_hook_port_ownership_intact() {
     let env = support::isolated_humu_home();
@@ -412,6 +423,115 @@ fn cross_session_pane_id_reuse_is_rejected() {
         "cross-session pane-id reuse replaced the original pane: {:?}",
         snapshot.panes
     );
+}
+
+#[test]
+fn force_detached_owner_cannot_mutate_session_after_revocation() {
+    let env = support::isolated_humu_home();
+    let _daemon = support::spawn_humu_server(&env);
+    wait_for_ping(&env);
+
+    let mut old_owner = attach_default_session(&env);
+    let force_detach = send_request(
+        &mut UnixStream::connect(env.server_socket_path()).expect("connect force-detach client"),
+        ClientRequest::ForceDetachSession {
+            name: "default".to_string(),
+            auth_token: Some(daemon_auth_token(&env)),
+        },
+    );
+    assert!(matches!(force_detach, ServerResponse::Detached { .. }));
+
+    let register = send_request(
+        &mut old_owner,
+        ClientRequest::RegisterPane {
+            pane_id: PaneId::new(),
+            preset_name: "shell".to_string(),
+            cwd: None,
+            session_id: Some("stale-owner".to_string()),
+            started_at_unix_secs: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_secs(),
+        },
+    );
+    assert!(matches!(register, ServerResponse::Error { .. }));
+}
+
+#[tokio::test]
+async fn stale_owner_disconnect_does_not_poison_replacement_focus_state() {
+    let env = support::isolated_humu_home();
+    let notify_log = env.home.path().join("notify.log");
+    let _daemon = spawn_humu_server_with_notify_stub(&env, &notify_log);
+    support::persistence::save_state(&env.state_path(), &support::migrated_state_fixture())
+        .expect("save state fixture");
+    wait_for_ping(&env);
+
+    let old_owner = attach_default_session(&env);
+    let force_detach = send_request(
+        &mut UnixStream::connect(env.server_socket_path()).expect("connect force-detach client"),
+        ClientRequest::ForceDetachSession {
+            name: "default".to_string(),
+            auth_token: Some(daemon_auth_token(&env)),
+        },
+    );
+    assert!(matches!(force_detach, ServerResponse::Detached { .. }));
+
+    let mut new_owner = attach_default_session(&env);
+    let pane_id = PaneId::new();
+    let registered = send_request(
+        &mut new_owner,
+        ClientRequest::RegisterPane {
+            pane_id,
+            preset_name: "claude".to_string(),
+            cwd: None,
+            session_id: Some("replacement-session".to_string()),
+            started_at_unix_secs: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_secs(),
+        },
+    );
+    assert!(matches!(registered, ServerResponse::Ack));
+
+    drop(old_owner);
+    std::thread::sleep(Duration::from_millis(100));
+
+    let hook_port = fs::read_to_string(env.hook_port_path())
+        .expect("read hook port")
+        .trim()
+        .parse::<u16>()
+        .expect("parse hook port");
+    let client = reqwest::Client::new();
+    client
+        .post(format!(
+            "http://127.0.0.1:{hook_port}/hook?workspaceId={}&roomId={}&paneId={pane_id}&eventType=PostToolUse&sessionId=replacement-session",
+            support::workspace_id("humu"),
+            support::room_id("main"),
+        ))
+        .send()
+        .await
+        .expect("send working event");
+    client
+        .post(format!(
+            "http://127.0.0.1:{hook_port}/hook?workspaceId={}&roomId={}&paneId={pane_id}&eventType=PermissionRequest&sessionId=replacement-session",
+            support::workspace_id("humu"),
+            support::room_id("main"),
+        ))
+        .send()
+        .await
+        .expect("send needs-input event");
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(
+        notify_log_lines(&notify_log).is_empty(),
+        "stale owner disconnect poisoned replacement focus state: {:?}",
+        notify_log_lines(&notify_log)
+    );
+
+    let probe = send_request(
+        &mut new_owner,
+        ClientRequest::FocusChanged { focused: true },
+    );
+    assert!(matches!(probe, ServerResponse::Ack));
 }
 
 #[tokio::test]

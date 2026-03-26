@@ -415,10 +415,25 @@ fn handle_client(
 
     if let Some(session_name) = attached_session {
         let mut sessions = sessions.lock().expect("session manager lock");
-        sessions.detach_owned(&session_name, &client_id);
-        runtime.detach_session(&session_name);
+        if sessions.detach_owned(&session_name, &client_id) {
+            runtime.detach_session(&session_name);
+        }
     }
     result
+}
+
+fn owned_attached_session_name(
+    sessions: &SessionManager,
+    client_id: &str,
+    attached_session: &mut Option<String>,
+) -> Option<String> {
+    let session_name = attached_session.clone()?;
+    if sessions.is_owned_by(&session_name, client_id) {
+        Some(session_name)
+    } else {
+        *attached_session = None;
+        None
+    }
 }
 
 fn handle_request(
@@ -505,9 +520,12 @@ fn handle_request(
             session_id,
             started_at_unix_secs,
         } => {
-            let Some(session_name) = attached_session.as_deref() else {
+            let Some(session_name) =
+                owned_attached_session_name(&sessions, client_id, attached_session)
+            else {
                 return Ok(ServerResponse::Error {
-                    message: "register pane requires an attached session".to_string(),
+                    message: "register pane requires ownership of an attached session"
+                        .to_string(),
                 });
             };
             if let Some(owner_session) = runtime.pane_session_name(pane_id)
@@ -518,7 +536,7 @@ fn handle_request(
                 });
             }
             runtime.register_pane(
-                session_name,
+                &session_name,
                 pane_id,
                 &preset_name,
                 cwd,
@@ -528,9 +546,12 @@ fn handle_request(
             Ok(ServerResponse::Ack)
         }
         ClientRequest::UnregisterPane { pane_id } => {
-            let Some(session_name) = attached_session.as_deref() else {
+            let Some(session_name) =
+                owned_attached_session_name(&sessions, client_id, attached_session)
+            else {
                 return Ok(ServerResponse::Error {
-                    message: "unregister pane requires an attached session".to_string(),
+                    message: "unregister pane requires ownership of an attached session"
+                        .to_string(),
                 });
             };
             if let Some(owner_session) = runtime.pane_session_name(pane_id)
@@ -544,16 +565,22 @@ fn handle_request(
             Ok(ServerResponse::Ack)
         }
         ClientRequest::Detach => {
-            let Some(session_name) = attached_session.take() else {
+            let Some(session_name) =
+                owned_attached_session_name(&sessions, client_id, attached_session)
+            else {
                 return Ok(ServerResponse::Ack);
             };
-            sessions.detach_owned(&session_name, client_id);
-            runtime.detach_session(&session_name);
+            attached_session.take();
+            if sessions.detach_owned(&session_name, client_id) {
+                runtime.detach_session(&session_name);
+            }
             Ok(ServerResponse::Detached { session_name })
         }
         ClientRequest::FocusChanged { focused } => {
-            if let Some(session_name) = attached_session.as_deref() {
-                runtime.update_session_focus(session_name, focused);
+            if let Some(session_name) =
+                owned_attached_session_name(&sessions, client_id, attached_session)
+            {
+                runtime.update_session_focus(&session_name, focused);
             }
             Ok(ServerResponse::Ack)
         }
