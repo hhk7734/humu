@@ -1,0 +1,360 @@
+use humu::codex::{CodexTracker, CodexUpdate};
+use humu::config::NotificationsConfig;
+use humu::hook::http::{
+    AgentState, HookEvent, HookServer, remove_hook_port_file, write_hook_port_file,
+};
+use humu::id::PaneId;
+use humu::notification::{NotificationEvent, NotificationManager, SessionFocusState};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
+use std::thread;
+use std::thread::JoinHandle;
+use std::time::{Duration, SystemTime};
+use tokio::sync::oneshot;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeUpdateSource {
+    Hook,
+    Codex,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeUpdateRecord {
+    pub source: RuntimeUpdateSource,
+    pub pane_id: PaneId,
+    pub state: AgentState,
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct AgentStateEntry {
+    state: AgentState,
+    session_id: Option<String>,
+}
+
+struct SessionRuntimeState {
+    notification_manager: NotificationManager,
+    codex_tracker: CodexTracker,
+    focus_by_session: HashMap<String, SessionFocusState>,
+    pane_sessions: HashMap<PaneId, String>,
+    agent_states: HashMap<PaneId, AgentStateEntry>,
+    recorded_updates: Vec<RuntimeUpdateRecord>,
+}
+
+impl SessionRuntimeState {
+    fn new(notifications: NotificationsConfig, codex_sessions_root: PathBuf) -> Self {
+        Self {
+            notification_manager: NotificationManager::from_config(&notifications),
+            codex_tracker: CodexTracker::new(codex_sessions_root),
+            focus_by_session: HashMap::new(),
+            pane_sessions: HashMap::new(),
+            agent_states: HashMap::new(),
+            recorded_updates: Vec::new(),
+        }
+    }
+
+    fn focus_for_session(&self, session_name: &str) -> SessionFocusState {
+        self.focus_by_session
+            .get(session_name)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    fn attach_session(&mut self, session_name: &str) {
+        self.focus_by_session
+            .insert(session_name.to_string(), SessionFocusState::attached());
+    }
+
+    fn detach_session(&mut self, session_name: &str) {
+        self.focus_by_session
+            .insert(session_name.to_string(), SessionFocusState::detached());
+    }
+
+    fn update_session_focus(&mut self, session_name: &str, focused: bool) {
+        let state = self
+            .focus_by_session
+            .entry(session_name.to_string())
+            .or_default();
+        state.update_client_focus(focused);
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn register_pane(
+        &mut self,
+        session_name: &str,
+        pane_id: PaneId,
+        cwd: PathBuf,
+        codex_session_id: Option<String>,
+        started_at: SystemTime,
+    ) {
+        self.pane_sessions.insert(pane_id, session_name.to_string());
+        self.codex_tracker
+            .track_pane(pane_id, cwd, codex_session_id, started_at);
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn remove_pane(&mut self, pane_id: PaneId) {
+        self.pane_sessions.remove(&pane_id);
+        self.agent_states.remove(&pane_id);
+        self.codex_tracker.remove_pane(pane_id);
+    }
+
+    fn apply_hook_event(&mut self, event: HookEvent) {
+        let pane_id = event.pane_id;
+        let prev_state = self
+            .agent_states
+            .get(&pane_id)
+            .map(|entry| entry.state.clone());
+        let session_id = event.session_id.clone().or_else(|| {
+            self.agent_states
+                .get(&pane_id)
+                .and_then(|entry| entry.session_id.clone())
+        });
+
+        self.agent_states.insert(
+            pane_id,
+            AgentStateEntry {
+                state: event.event_type.clone(),
+                session_id: session_id.clone(),
+            },
+        );
+        self.recorded_updates.push(RuntimeUpdateRecord {
+            source: RuntimeUpdateSource::Hook,
+            pane_id,
+            state: event.event_type.clone(),
+            session_id,
+        });
+
+        let should_notify = matches!(
+            (&prev_state, &event.event_type),
+            (Some(AgentState::Working), AgentState::NeedsInput)
+                | (Some(AgentState::Working), AgentState::Idle)
+        );
+        if !should_notify {
+            return;
+        }
+
+        let notification_event = match event.event_type {
+            AgentState::NeedsInput => NotificationEvent::AgentNeedsInput {
+                workspace: "unknown".to_string(),
+                room: "unknown".to_string(),
+            },
+            AgentState::Idle => NotificationEvent::AgentFinished {
+                workspace: "unknown".to_string(),
+                room: "unknown".to_string(),
+            },
+            AgentState::Working => return,
+        };
+
+        let focus_state = self
+            .pane_sessions
+            .get(&pane_id)
+            .map(|session_name| self.focus_for_session(session_name))
+            .unwrap_or_default();
+        self.notification_manager
+            .notify_with_session_focus(notification_event, focus_state);
+    }
+
+    fn apply_codex_update(&mut self, update: CodexUpdate) {
+        let existing_session_id = self
+            .agent_states
+            .get(&update.pane_id)
+            .and_then(|entry| entry.session_id.clone());
+        let session_id = update.session_id.clone().or(existing_session_id);
+
+        self.agent_states.insert(
+            update.pane_id,
+            AgentStateEntry {
+                state: update.state.clone(),
+                session_id: session_id.clone(),
+            },
+        );
+        self.recorded_updates.push(RuntimeUpdateRecord {
+            source: RuntimeUpdateSource::Codex,
+            pane_id: update.pane_id,
+            state: update.state,
+            session_id,
+        });
+    }
+}
+
+pub struct SessionRuntime {
+    base_dir: PathBuf,
+    #[cfg_attr(not(test), allow(dead_code))]
+    hook_port: u16,
+    state: Arc<Mutex<SessionRuntimeState>>,
+    shutdown: Arc<AtomicBool>,
+    hook_shutdown: Option<oneshot::Sender<()>>,
+    hook_thread: Option<JoinHandle<()>>,
+    worker_thread: Option<JoinHandle<()>>,
+}
+
+impl SessionRuntime {
+    pub fn start(
+        base_dir: PathBuf,
+        notifications: NotificationsConfig,
+        codex_sessions_root: PathBuf,
+    ) -> anyhow::Result<Self> {
+        let state = Arc::new(Mutex::new(SessionRuntimeState::new(
+            notifications,
+            codex_sessions_root,
+        )));
+        let (hook_tx, hook_rx) = mpsc::channel::<HookEvent>();
+        let (port_tx, port_rx) = mpsc::channel::<anyhow::Result<u16>>();
+        let (hook_shutdown, hook_shutdown_rx) = oneshot::channel::<()>();
+        let hook_thread = thread::spawn(move || {
+            let runtime = match tokio::runtime::Runtime::new() {
+                Ok(runtime) => runtime,
+                Err(err) => {
+                    let _ = port_tx.send(Err(err.into()));
+                    return;
+                }
+            };
+            runtime.block_on(async move {
+                let server = match HookServer::start().await {
+                    Ok(server) => server,
+                    Err(err) => {
+                        let _ = port_tx.send(Err(err));
+                        return;
+                    }
+                };
+                let _ = port_tx.send(Ok(server.port()));
+
+                let mut events = server.subscribe();
+                let mut shutdown_rx = hook_shutdown_rx;
+                loop {
+                    tokio::select! {
+                        _ = &mut shutdown_rx => break,
+                        result = events.recv() => match result {
+                            Ok(event) => {
+                                if hook_tx.send(event).is_err() {
+                                    break;
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        }
+                    }
+                }
+            });
+        });
+
+        let hook_port = port_rx
+            .recv()
+            .map_err(|_| anyhow::anyhow!("hook server thread exited before publishing a port"))??;
+        write_hook_port_file(&base_dir, hook_port)?;
+
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let worker_shutdown = Arc::clone(&shutdown);
+        let worker_state = Arc::clone(&state);
+        let worker_thread = thread::spawn(move || {
+            while !worker_shutdown.load(Ordering::Relaxed) {
+                while let Ok(event) = hook_rx.try_recv() {
+                    if let Ok(mut state) = worker_state.lock() {
+                        state.apply_hook_event(event);
+                    }
+                }
+                if let Ok(mut state) = worker_state.lock() {
+                    for update in state.codex_tracker.poll() {
+                        state.apply_codex_update(update);
+                    }
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+        });
+
+        Ok(Self {
+            base_dir,
+            hook_port,
+            state,
+            shutdown,
+            hook_shutdown: Some(hook_shutdown),
+            hook_thread: Some(hook_thread),
+            worker_thread: Some(worker_thread),
+        })
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn hook_port(&self) -> u16 {
+        self.hook_port
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn session_focus(&self, session_name: &str) -> SessionFocusState {
+        self.state
+            .lock()
+            .expect("session runtime state lock")
+            .focus_for_session(session_name)
+    }
+
+    pub fn attach_session(&self, session_name: &str) {
+        self.state
+            .lock()
+            .expect("session runtime state lock")
+            .attach_session(session_name);
+    }
+
+    pub fn detach_session(&self, session_name: &str) {
+        self.state
+            .lock()
+            .expect("session runtime state lock")
+            .detach_session(session_name);
+    }
+
+    pub fn update_session_focus(&self, session_name: &str, focused: bool) {
+        self.state
+            .lock()
+            .expect("session runtime state lock")
+            .update_session_focus(session_name, focused);
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn register_pane(
+        &self,
+        session_name: &str,
+        pane_id: PaneId,
+        cwd: PathBuf,
+        codex_session_id: Option<String>,
+        started_at: SystemTime,
+    ) {
+        self.state
+            .lock()
+            .expect("session runtime state lock")
+            .register_pane(session_name, pane_id, cwd, codex_session_id, started_at);
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn remove_pane(&self, pane_id: PaneId) {
+        self.state
+            .lock()
+            .expect("session runtime state lock")
+            .remove_pane(pane_id);
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn recorded_updates(&self) -> Vec<RuntimeUpdateRecord> {
+        self.state
+            .lock()
+            .expect("session runtime state lock")
+            .recorded_updates
+            .clone()
+    }
+}
+
+impl Drop for SessionRuntime {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+        if let Some(tx) = self.hook_shutdown.take() {
+            let _ = tx.send(());
+        }
+        let _ = remove_hook_port_file(&self.base_dir);
+        if let Some(thread) = self.worker_thread.take() {
+            let _ = thread.join();
+        }
+        if let Some(thread) = self.hook_thread.take() {
+            let _ = thread.join();
+        }
+    }
+}

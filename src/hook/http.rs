@@ -5,8 +5,9 @@ use axum::http::StatusCode;
 use axum::routing::post;
 use serde::Deserialize;
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::sync::broadcast;
+use tokio::task::JoinHandle;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentState {
@@ -106,6 +107,7 @@ echo '{"status":"ok"}'
 pub struct HookServer {
     port: u16,
     tx: broadcast::Sender<HookEvent>,
+    task: JoinHandle<()>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -181,13 +183,14 @@ impl HookServer {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let addr: SocketAddr = listener.local_addr()?;
 
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             axum::serve(listener, app).await.ok();
         });
 
         Ok(Self {
             port: addr.port(),
             tx,
+            task,
         })
     }
 
@@ -198,4 +201,27 @@ impl HookServer {
     pub fn subscribe(&self) -> broadcast::Receiver<HookEvent> {
         self.tx.subscribe()
     }
+}
+
+impl Drop for HookServer {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+pub fn hook_port_path(base_dir: &Path) -> PathBuf {
+    base_dir.join("port")
+}
+
+pub fn write_hook_port_file(base_dir: &Path, port: u16) -> anyhow::Result<()> {
+    std::fs::write(hook_port_path(base_dir), port.to_string())?;
+    Ok(())
+}
+
+pub fn remove_hook_port_file(base_dir: &Path) -> anyhow::Result<()> {
+    let path = hook_port_path(base_dir);
+    if path.exists() {
+        std::fs::remove_file(path)?;
+    }
+    Ok(())
 }

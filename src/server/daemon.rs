@@ -1,6 +1,7 @@
+use super::runtime::SessionRuntime;
 use super::session::{AttachError, AttachOwner, SessionManager};
 use anyhow::{Context, Result, bail};
-use humu::config::humu_dir;
+use humu::config::{HumuConfig, humu_dir};
 use humu::hook::http::generate_hook_files;
 use humu::log;
 use humu::shared::protocol::{ClientRequest, PROTOCOL_VERSION, ServerResponse, encode_frame};
@@ -12,8 +13,8 @@ use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -76,7 +77,8 @@ pub fn run(daemon: bool) -> Result<()> {
 fn run_foreground() -> Result<()> {
     let paths = DaemonPaths::default();
     log::init();
-    generate_hook_files(&humu_dir()).context("generate hook files for daemon shell")?;
+    let humu_dir = humu_dir();
+    generate_hook_files(&humu_dir).context("generate hook files for daemon shell")?;
 
     if existing_daemon_ready(&paths, "server startup")? {
         return Ok(());
@@ -87,6 +89,16 @@ fn run_foreground() -> Result<()> {
     };
     cleanup_stale_runtime_files(&paths)?;
 
+    let daemon_config = load_daemon_config(&humu_dir)?;
+    let runtime = SessionRuntime::start(
+        humu_dir.clone(),
+        daemon_config.notifications.clone(),
+        dirs::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join(".codex")
+            .join("sessions"),
+    )
+    .context("start daemon session runtime")?;
     let listener = bind_listener(&paths)?;
     write_metadata(&paths)?;
     drop(startup_lock);
@@ -95,7 +107,7 @@ fn run_foreground() -> Result<()> {
         socket_path: paths.socket_path.clone(),
         metadata_path: paths.metadata_path.clone(),
     };
-    serve(listener)
+    serve(listener, runtime)
 }
 
 fn launch_daemonized_server() -> Result<()> {
@@ -150,7 +162,8 @@ fn existing_daemon_ready(paths: &DaemonPaths, context_label: &str) -> Result<boo
 
 pub fn list_sessions_shell() -> Result<()> {
     let paths = DaemonPaths::default();
-    let protocol_version = ping_protocol_version(&paths).context("ping daemon for list-sessions")?;
+    let protocol_version =
+        ping_protocol_version(&paths).context("ping daemon for list-sessions")?;
     if protocol_version != PROTOCOL_VERSION {
         bail!(
             "protocol version mismatch for list-sessions: client={} server={protocol_version}",
@@ -336,19 +349,27 @@ fn read_framed_message<T: DeserializeOwned>(stream: &mut UnixStream) -> Result<T
     }
 }
 
-fn serve(listener: UnixListener) -> Result<()> {
+fn load_daemon_config(humu_dir: &std::path::Path) -> Result<HumuConfig> {
+    let config_path = humu_dir.join("config.yaml");
+    if config_path.exists() {
+        HumuConfig::load(&config_path)
+    } else {
+        Ok(HumuConfig::default())
+    }
+}
+
+fn serve(listener: UnixListener, runtime: SessionRuntime) -> Result<()> {
     let sessions = Arc::new(Mutex::new(SessionManager::default()));
+    let runtime = Arc::new(runtime);
     let next_client_id = Arc::new(AtomicU64::new(1));
     loop {
         let (stream, _) = listener.accept().context("accept daemon client")?;
         let sessions = Arc::clone(&sessions);
+        let runtime = Arc::clone(&runtime);
         let owner_pid = peer_pid(&stream);
-        let client_id = format!(
-            "client-{}",
-            next_client_id.fetch_add(1, Ordering::Relaxed)
-        );
+        let client_id = format!("client-{}", next_client_id.fetch_add(1, Ordering::Relaxed));
         thread::spawn(move || {
-            let _ = handle_client(stream, sessions, client_id, owner_pid);
+            let _ = handle_client(stream, sessions, runtime, client_id, owner_pid);
         });
     }
 }
@@ -356,6 +377,7 @@ fn serve(listener: UnixListener) -> Result<()> {
 fn handle_client(
     mut stream: UnixStream,
     sessions: Arc<Mutex<SessionManager>>,
+    runtime: Arc<SessionRuntime>,
     client_id: String,
     owner_pid: Option<u32>,
 ) -> Result<()> {
@@ -364,27 +386,29 @@ fn handle_client(
     let mut buf = [0u8; 4096];
     let result = (|| -> Result<()> {
         loop {
-        let read = stream.read(&mut buf)?;
-        if read == 0 {
+            let read = stream.read(&mut buf)?;
+            if read == 0 {
                 return Ok(());
-        }
-        decoder.push(&buf[..read]);
-        while let Some(request) = decoder.try_decode::<ClientRequest>()? {
+            }
+            decoder.push(&buf[..read]);
+            while let Some(request) = decoder.try_decode::<ClientRequest>()? {
                 let response = handle_request(
                     request,
                     &sessions,
+                    runtime.as_ref(),
                     &client_id,
                     owner_pid,
                     &mut attached_session,
                 )?;
-            stream.write_all(&encode_frame(&response)?)?;
-        }
+                stream.write_all(&encode_frame(&response)?)?;
+            }
         }
     })();
 
     if let Some(session_name) = attached_session {
         let mut sessions = sessions.lock().expect("session manager lock");
         sessions.detach_owned(&session_name, &client_id);
+        runtime.detach_session(&session_name);
     }
     result
 }
@@ -392,6 +416,7 @@ fn handle_client(
 fn handle_request(
     request: ClientRequest,
     sessions: &Arc<Mutex<SessionManager>>,
+    runtime: &SessionRuntime,
     client_id: &str,
     owner_pid: Option<u32>,
     attached_session: &mut Option<String>,
@@ -420,9 +445,11 @@ fn handle_request(
                         && current != name
                     {
                         sessions.detach_owned(&current, client_id);
+                        runtime.detach_session(&current);
                     }
                     sessions.record_size(&name, cols, rows);
                     *attached_session = Some(name.clone());
+                    runtime.attach_session(&name);
                     Ok(ServerResponse::Attached {
                         session_name: name.clone(),
                         snapshot: sessions.snapshot(&name),
@@ -441,6 +468,7 @@ fn handle_request(
         }
         ClientRequest::ForceDetachSession { name } => {
             sessions.detach(&name);
+            runtime.detach_session(&name);
             if attached_session.as_deref() == Some(name.as_str()) {
                 *attached_session = None;
             }
@@ -451,13 +479,19 @@ fn handle_request(
                 return Ok(ServerResponse::Ack);
             };
             sessions.detach_owned(&session_name, client_id);
+            runtime.detach_session(&session_name);
             Ok(ServerResponse::Detached { session_name })
+        }
+        ClientRequest::FocusChanged { focused } => {
+            if let Some(session_name) = attached_session.as_deref() {
+                runtime.update_session_focus(session_name, focused);
+            }
+            Ok(ServerResponse::Ack)
         }
         ClientRequest::ResizeSession { .. }
         | ClientRequest::RunAction { .. }
         | ClientRequest::SendInput { .. }
-        | ClientRequest::SubscribeUpdates
-        | ClientRequest::FocusChanged { .. } => Ok(ServerResponse::Error {
+        | ClientRequest::SubscribeUpdates => Ok(ServerResponse::Error {
             message: "server shell only supports ping/session registry commands in Task 4"
                 .to_string(),
         }),

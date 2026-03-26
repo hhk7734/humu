@@ -6,6 +6,47 @@ use crate::config::NotificationsConfig;
 use os::{OsNotifier, SoundNotifier};
 use telegram::TelegramNotifier;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionFocusState {
+    attached: bool,
+    client_focused: bool,
+}
+
+impl Default for SessionFocusState {
+    fn default() -> Self {
+        Self::detached()
+    }
+}
+
+impl SessionFocusState {
+    pub fn attached() -> Self {
+        Self {
+            attached: true,
+            client_focused: true,
+        }
+    }
+
+    pub fn detached() -> Self {
+        Self {
+            attached: false,
+            client_focused: false,
+        }
+    }
+
+    pub fn update_client_focus(&mut self, focused: bool) {
+        self.attached = true;
+        self.client_focused = focused;
+    }
+
+    pub fn is_effectively_focused(self) -> bool {
+        self.attached && self.client_focused
+    }
+
+    pub fn delivers_only_unfocused(self) -> bool {
+        !self.is_effectively_focused()
+    }
+}
+
 pub enum NotificationEvent {
     AgentNeedsInput { workspace: String, room: String },
     AgentFinished { workspace: String, room: String },
@@ -85,20 +126,35 @@ impl NotificationManager {
     }
 
     pub fn notify(&self, event: NotificationEvent, focused: bool) {
+        let focus_state = if focused {
+            SessionFocusState::attached()
+        } else {
+            let mut focus_state = SessionFocusState::attached();
+            focus_state.update_client_focus(false);
+            focus_state
+        };
+        self.notify_with_session_focus(event, focus_state);
+    }
+
+    pub fn notify_with_session_focus(
+        &self,
+        event: NotificationEvent,
+        focus_state: SessionFocusState,
+    ) {
         let (title, body) = event.message();
 
         if let Some(ch) = &self.os {
-            if !focused || !ch.only_unfocused {
+            if focus_state.delivers_only_unfocused() || !ch.only_unfocused {
                 ch.notifier.send(title, &body);
             }
         }
         if let Some(ch) = &self.sound {
-            if !focused || !ch.only_unfocused {
+            if focus_state.delivers_only_unfocused() || !ch.only_unfocused {
                 ch.notifier.send();
             }
         }
         if let Some(ch) = &self.telegram {
-            if !focused || !ch.only_unfocused {
+            if focus_state.delivers_only_unfocused() || !ch.only_unfocused {
                 ch.notifier.send(title, &body);
             }
         }

@@ -430,7 +430,7 @@ git commit -m "feat: add daemon shell and session registry"
 - Modify: `src/server/daemon.rs`
 - Modify: `tests/notifications_focus.rs`
 
-- [ ] **Step 1: Write the failing runtime-ownership tests**
+- [x] **Step 1: Write the failing runtime-ownership tests**
 
 ```rust
 #[test]
@@ -455,12 +455,12 @@ fn detached_hook_and_codex_updates_continue_without_client() {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test --test notifications_focus -- --nocapture`
 Expected: FAIL with runtime still owned by `App`
 
-- [ ] **Step 3: Introduce `SessionRuntime` and move hook/Codex/notification ownership there**
+- [x] **Step 3: Introduce `SessionRuntime` and move hook/Codex/notification ownership there**
 
 ```rust
 pub struct SessionRuntime {
@@ -470,18 +470,18 @@ pub struct SessionRuntime {
 }
 ```
 
-- [ ] **Step 4: Keep daemon-owned `~/.humu/port` publication compatible with existing hook scripts**
+- [x] **Step 4: Keep daemon-owned `~/.humu/port` publication compatible with existing hook scripts**
 
 ```rust
 write_hook_port_file(hook_port)?;
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `cargo test --test notifications_focus -- --nocapture`
 Expected: PASS for detached focus semantics, detached hook/Codex continuity, and hook port publication
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/server/runtime.rs src/hook/http.rs src/codex.rs src/notification/mod.rs src/server/daemon.rs tests/notifications_focus.rs

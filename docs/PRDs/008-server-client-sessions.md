@@ -114,6 +114,13 @@ Task 4 implementation status:
 - `humu list-sessions` and `humu detach --force` already exercise daemon discovery/version checks, attached sessions surface owning PID metadata when available, and daemon startup readiness now requires a matching protocol version rather than any responding socket
 - The default `humu` command still runs the current in-process `App::new()?.run()` path until the attachable client is ready
 
+Task 5 implementation status:
+
+- The daemon now starts a server-owned `SessionRuntime` before advertising readiness, so hook-server lifecycle no longer depends on the foreground `App`
+- `~/.humu/port` publication remains daemon-owned and keeps the existing hook-script contract unchanged
+- Session notification focus is now tracked on the server with detached sessions treated as unfocused, preserving `only_unfocused` delivery semantics while no client is attached
+- Hook events and Codex polling now live under the daemon runtime boundary so detached-session agent-state updates can continue without a client event loop
+
 ## Session Model
 
 - The daemon manages multiple named sessions
