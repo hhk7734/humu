@@ -1,0 +1,181 @@
+use crate::id::PaneId;
+use crate::shared::render::{
+    AgentSummary, DetachReason, FullSnapshot, PaneSnapshot, SessionGeometrySnapshot,
+    SplitTreeSnapshot, TabSnapshot,
+};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+pub const PROTOCOL_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientMode {
+    Terminal,
+    Locked,
+    Pane,
+    Tab,
+    Workspace,
+    Explorer,
+    EnterSearch,
+    Search,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NavigationDirection {
+    Left,
+    Down,
+    Up,
+    Right,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum ClientAction {
+    EnterMode { mode: ClientMode },
+    NewPane,
+    SplitDown,
+    SplitRight,
+    ClosePane,
+    MoveFocus { direction: NavigationDirection },
+    ToggleFullscreen,
+    NewTab,
+    CloseTab,
+    PrevTab,
+    NextTab,
+    GoToTab { index: usize },
+    FocusWorkspacePanel,
+    OpenSettings,
+    NavigateUp,
+    NavigateDown,
+    Select,
+    Create,
+    CreateWorkspace,
+    Delete,
+    Resize { direction: NavigationDirection },
+    Quit,
+    SearchConfirm,
+    SearchCancel,
+    SearchNext,
+    SearchPrev,
+    SearchToggleCase,
+    SearchToggleWrap,
+    ScrollUp,
+    ScrollDown,
+    ScrollPageUp,
+    ScrollPageDown,
+    DiffFile,
+    ToggleIgnored,
+    CopyPath,
+    NewFile,
+    NewDir,
+    DeleteEntry,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionListEntry {
+    pub name: String,
+    pub attached: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attached_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_size: Option<SessionGeometrySnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ClientRequest {
+    Ping,
+    ListSessions,
+    CreateSession { name: String },
+    AttachSession { name: String, cols: u16, rows: u16 },
+    Detach,
+    ForceDetachSession { name: String },
+    SendInput { pane_id: PaneId, bytes: Vec<u8> },
+    ResizeSession { cols: u16, rows: u16 },
+    RunAction { action: ClientAction },
+    SubscribeUpdates,
+    FocusChanged { focused: bool },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ServerResponse {
+    Pong { protocol_version: u32 },
+    Sessions { sessions: Vec<SessionListEntry> },
+    SessionCreated { session: SessionListEntry },
+    Attached { session_name: String, snapshot: FullSnapshot },
+    Detached { session_name: String },
+    Subscribed { session_name: String },
+    Ack,
+    AlreadyAttached {
+        session_name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        owner_pid: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attached_at: Option<String>,
+    },
+    VersionMismatch {
+        client_protocol_version: u32,
+        server_protocol_version: u32,
+    },
+    Error { message: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ServerEvent {
+    FullSnapshot(FullSnapshot),
+    PaneUpdated {
+        pane_id: PaneId,
+        pane: PaneSnapshot,
+    },
+    LayoutUpdated {
+        tabs: Vec<TabSnapshot>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        active_tab_index: Option<usize>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        split_tree: Option<SplitTreeSnapshot>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_geometry: Option<SessionGeometrySnapshot>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        focused_pane_id: Option<PaneId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fullscreen_pane_id: Option<PaneId>,
+    },
+    AgentStateUpdated {
+        pane_id: PaneId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agent_state: Option<AgentSummary>,
+    },
+    SessionMetadataUpdated {
+        session_name: String,
+        active_workspace_id: Option<crate::id::WorkspaceId>,
+        active_room_id: Option<crate::id::RoomId>,
+        explorer_root: Option<PathBuf>,
+        attached: bool,
+        client_focused: bool,
+        owner_pid: Option<u32>,
+        attached_at: Option<String>,
+        last_size: Option<SessionGeometrySnapshot>,
+    },
+    Error {
+        message: String,
+    },
+    Detached {
+        session_name: String,
+        reason: DetachReason,
+    },
+}
+
+pub fn to_wire_bytes<T: Serialize>(message: &T) -> serde_json::Result<Vec<u8>> {
+    serde_json::to_vec(message)
+}
+
+pub fn from_wire_slice<T: DeserializeOwned>(bytes: &[u8]) -> serde_json::Result<T> {
+    serde_json::from_slice(bytes)
+}

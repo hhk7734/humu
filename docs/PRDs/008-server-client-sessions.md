@@ -216,6 +216,20 @@ Use a Unix domain socket at `~/.humu/server.sock`.
 - `ResizeSession`
 - `RunAction`
 - `SubscribeUpdates`
+- `FocusChanged`
+
+### Server Responses
+
+- `Pong` with protocol version
+- `Sessions` with machine-readable session summaries
+- `SessionCreated`
+- `Attached` with the initial `FullSnapshot`
+- `Detached`
+- `Subscribed`
+- `Ack`
+- `AlreadyAttached` with session name, owning PID, and attach timestamp when known
+- `VersionMismatch`
+- `Error`
 
 ### Server Events
 
@@ -241,6 +255,7 @@ This avoids reintroducing lifetime coupling between client detach and parser sta
 - active workspace ID and room ID
 - tab list and active tab index
 - split tree with pane IDs and per-pane geometry
+- session geometry and per-pane runtime state
 - focused pane ID and fullscreen pane ID
 - per-pane terminal screen snapshot
 - per-pane preset name
@@ -253,6 +268,8 @@ This avoids reintroducing lifetime coupling between client detach and parser sta
 - explorer root path for the active room
 
 Incremental events may update only the changed subset, but they must preserve the same schema boundaries as the full snapshot.
+
+The shared render layer therefore includes explicit tab, split-tree, pane geometry, pane runtime-state, terminal capability, agent summary, and session metadata structs so client and server can exchange snapshots without depending on live PTY/parser objects.
 
 ## Resize Policy
 

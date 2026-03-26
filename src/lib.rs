@@ -8,4 +8,5 @@ pub mod log;
 pub mod notification;
 pub mod preset;
 pub mod pty;
+pub mod shared;
 pub mod tui;

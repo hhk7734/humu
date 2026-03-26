@@ -180,7 +180,7 @@ git commit -m "refactor: migrate layout persistence to session state"
 - Modify: `src/lib.rs`
 - Modify: `tests/server_attach.rs`
 
-- [ ] **Step 1: Write the failing protocol and snapshot tests**
+- [x] **Step 1: Write the failing protocol and snapshot tests**
 
 ```rust
 #[test]
@@ -218,12 +218,12 @@ fn full_snapshot_exposes_all_spec_fields() {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test --test server_attach client_request_round_trips_with_all_core_variants -- --nocapture`
 Expected: FAIL with missing protocol and snapshot types
 
-- [ ] **Step 3: Define all request, response, and event enums required by the PRD**
+- [x] **Step 3: Define all request, response, and event enums required by the PRD**
 
 ```rust
 pub enum ClientRequest {
@@ -241,7 +241,7 @@ pub enum ClientRequest {
 }
 ```
 
-- [ ] **Step 4: Define `FullSnapshot`, `PaneSnapshot`, and incremental event payloads**
+- [x] **Step 4: Define `FullSnapshot`, `PaneSnapshot`, and incremental event payloads**
 
 ```rust
 pub struct FullSnapshot {
@@ -258,12 +258,12 @@ pub struct FullSnapshot {
 }
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `cargo test --test server_attach -- --nocapture`
 Expected: PASS for protocol and snapshot contract tests
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/shared/mod.rs src/shared/protocol.rs src/shared/render.rs src/lib.rs tests/server_attach.rs
