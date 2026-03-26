@@ -250,7 +250,9 @@ impl SessionRuntimeState {
             if let Some(runtime_panes) = self.runtime_panes_by_session.get_mut(&session_name)
                 && let Some(mut runtime_pane) = runtime_panes.remove(&pane_id)
             {
-                let _ = runtime_pane.pane.kill();
+                if runtime_pane.pane.exit_status().is_none() {
+                    let _ = runtime_pane.pane.kill();
+                }
                 if runtime_panes.is_empty() {
                     self.runtime_panes_by_session.remove(&session_name);
                 }
@@ -272,8 +274,25 @@ impl SessionRuntimeState {
         }
     }
 
+    fn cleanup_exited_panes(&mut self) {
+        let pane_ids = self
+            .runtime_panes_by_session
+            .values_mut()
+            .flat_map(|panes| {
+                panes.iter_mut().filter_map(|(pane_id, runtime_pane)| {
+                    runtime_pane.pane.exit_status().is_some().then_some(*pane_id)
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for pane_id in pane_ids {
+            self.remove_pane(pane_id);
+        }
+    }
+
     fn snapshot_for_session(&mut self, session_name: &str, mut base: FullSnapshot) -> FullSnapshot {
         self.process_live_panes();
+        self.cleanup_exited_panes();
         let Some(panes) = self.runtime_panes_by_session.get_mut(session_name) else {
             return base;
         };
@@ -639,6 +658,7 @@ impl SessionRuntime {
                 }
                 if let Ok(mut state) = worker_state.lock() {
                     state.process_live_panes();
+                    state.cleanup_exited_panes();
                     for update in state.codex_tracker.poll() {
                         state.apply_codex_update(update);
                     }

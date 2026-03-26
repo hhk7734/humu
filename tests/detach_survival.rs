@@ -89,7 +89,7 @@ fn snapshot_contains(snapshot: &FullSnapshot, needle: &str) -> bool {
 #[test]
 fn runtime_emits_snapshot_from_server_owned_terminal_state() {
     let env = support::isolated_humu_home();
-    let config = shell_config("bash", &["-lc", "sleep 60"]);
+    let config = shell_config("bash", &["-lc", "printf 'hello\\n'; sleep 60"]);
     let runtime = server_impl::runtime::SessionRuntime::start(
         env.humu_dir().to_path_buf(),
         config,
@@ -104,9 +104,19 @@ fn runtime_emits_snapshot_from_server_owned_terminal_state() {
         .register_pane("default", pane, "shell", None, None, SystemTime::now())
         .expect("register runtime pane");
 
-    let snapshot = runtime.snapshot_for_session("default", FullSnapshot::fixture());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut snapshot = runtime.snapshot_for_session("default", FullSnapshot::fixture());
+    while !snapshot_contains(&snapshot, "hello") {
+        assert!(
+            Instant::now() < deadline,
+            "server-owned PTY output never appeared in the snapshot"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+        snapshot = runtime.snapshot_for_session("default", FullSnapshot::fixture());
+    }
     let pane = snapshot.panes.values().next().expect("runtime pane");
     assert!(matches!(pane.state, PaneRuntimeState::Running));
+    assert!(snapshot_contains(&snapshot, "hello"));
     assert_eq!(
         snapshot.session_geometry,
         Some(SessionGeometrySnapshot {
@@ -208,7 +218,10 @@ fn client_disconnect_does_not_kill_session_pty() {
 #[test]
 fn reattach_resizes_session_to_new_client_geometry() {
     let env = support::isolated_humu_home();
-    write_config(&env, &shell_config("bash", &["-lc", "sleep 60"]));
+    write_config(
+        &env,
+        &shell_config("bash", &["-lc", "sleep 60"]),
+    );
 
     let _daemon = support::spawn_humu_server(&env);
     wait_for_ping(&env, Duration::from_secs(5)).expect("daemon ping");
@@ -264,6 +277,19 @@ fn reattach_resizes_session_to_new_client_geometry() {
         Some(SessionGeometrySnapshot {
             cols: 120,
             rows: 40,
+        })
+    );
+
+    let pane = snapshot.panes.values().next().expect("reattached pane");
+    assert_eq!(pane.screen.cols, 120);
+    assert_eq!(pane.screen.rows, 40);
+    assert_eq!(
+        pane.geometry,
+        Some(humu::shared::render::PaneGeometrySnapshot {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 40,
         })
     );
 

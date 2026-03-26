@@ -575,6 +575,7 @@ fn handle_request(
                     message: "cannot unregister pane outside the attached session".to_string(),
                 });
             }
+            runtime.remove_pane(pane_id);
             Ok(ServerResponse::Ack)
         }
         ClientRequest::Detach => {

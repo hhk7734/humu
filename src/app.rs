@@ -36,7 +36,7 @@ use humu::tui::widgets::terminal_widget::TerminalWidget;
 use humu::tui::widgets::workspace_panel::{TreeItemKind, WorkspacePanel, WorkspaceTreeItem};
 use ratatui::Terminal;
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::{Read, Write, stdout};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
@@ -542,30 +542,6 @@ impl App {
             .is_some()
         {
             self.close_floating_pane(pane_id);
-        }
-    }
-
-    fn unregister_all_panes_with_daemon(&mut self) {
-        let mut seen = HashSet::new();
-        let mut pane_ids = Vec::new();
-
-        for pane_id in self.panes.keys().copied() {
-            if seen.insert(pane_id) {
-                pane_ids.push(pane_id);
-            }
-        }
-        for pane_id in self
-            .suspended_rooms
-            .values()
-            .flat_map(|room_state| room_state.panes.keys().copied())
-        {
-            if seen.insert(pane_id) {
-                pane_ids.push(pane_id);
-            }
-        }
-
-        for pane_id in pane_ids {
-            self.unregister_pane_with_daemon(pane_id);
         }
     }
 
@@ -5133,7 +5109,6 @@ impl App {
 
 impl Drop for App {
     fn drop(&mut self) {
-        self.unregister_all_panes_with_daemon();
         let _ = self.send_daemon_request(ClientRequest::Detach);
     }
 }
