@@ -497,6 +497,18 @@ fn handle_request(
             Ok(ServerResponse::Ack)
         }
         ClientRequest::UnregisterPane { pane_id } => {
+            let Some(session_name) = attached_session.as_deref() else {
+                return Ok(ServerResponse::Error {
+                    message: "unregister pane requires an attached session".to_string(),
+                });
+            };
+            if let Some(owner_session) = runtime.pane_session_name(pane_id)
+                && owner_session != session_name
+            {
+                return Ok(ServerResponse::Error {
+                    message: "cannot unregister pane outside the attached session".to_string(),
+                });
+            }
             runtime.remove_pane(pane_id);
             Ok(ServerResponse::Ack)
         }

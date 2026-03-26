@@ -136,6 +136,10 @@ impl SessionRuntimeState {
         self.codex_tracker.remove_pane(pane_id);
     }
 
+    fn pane_session_name(&self, pane_id: PaneId) -> Option<String> {
+        self.pane_sessions.get(&pane_id).cloned()
+    }
+
     fn snapshot_for_session(&self, session_name: &str, mut base: FullSnapshot) -> FullSnapshot {
         let Some(panes) = self.panes_by_session.get(session_name) else {
             return base;
@@ -255,12 +259,24 @@ impl SessionRuntimeState {
 
         let notification_event = match event.event_type {
             AgentState::NeedsInput => NotificationEvent::AgentNeedsInput {
-                workspace: "unknown".to_string(),
-                room: "unknown".to_string(),
+                workspace: event
+                    .workspace_id
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
+                room: event
+                    .room_id
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
             },
             AgentState::Idle => NotificationEvent::AgentFinished {
-                workspace: "unknown".to_string(),
-                room: "unknown".to_string(),
+                workspace: event
+                    .workspace_id
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
+                room: event
+                    .room_id
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_string()),
             },
             AgentState::Working => return,
         };
@@ -456,6 +472,13 @@ impl SessionRuntime {
             .lock()
             .expect("session runtime state lock")
             .remove_pane(pane_id);
+    }
+
+    pub fn pane_session_name(&self, pane_id: PaneId) -> Option<String> {
+        self.state
+            .lock()
+            .expect("session runtime state lock")
+            .pane_session_name(pane_id)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]

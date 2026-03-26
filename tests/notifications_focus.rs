@@ -217,6 +217,62 @@ fn second_foreground_attach_is_refused_cleanly() {
     );
 }
 
+#[test]
+fn unauthorized_unregister_is_rejected_without_session_ownership() {
+    let env = support::isolated_humu_home();
+    let _daemon = support::spawn_humu_server(&env);
+    wait_for_ping(&env);
+
+    let mut owner = attach_default_session(&env);
+    let pane_id = PaneId::new();
+    let registered = send_request(
+        &mut owner,
+        ClientRequest::RegisterPane {
+            pane_id,
+            preset_name: "shell".to_string(),
+            cwd: None,
+            session_id: Some("owned-session".to_string()),
+            started_at_unix_secs: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_secs(),
+        },
+    );
+    assert!(matches!(registered, ServerResponse::Ack));
+
+    let mut refused = UnixStream::connect(env.server_socket_path()).expect("connect refused client");
+    refused
+        .write_all(
+            &encode_frame(&ClientRequest::AttachSession {
+                name: "default".to_string(),
+                cols: 120,
+                rows: 40,
+            })
+            .expect("encode attach"),
+        )
+        .expect("write refused attach");
+    let refused_attach = read_framed_message(&mut refused).expect("read refused attach");
+    assert!(matches!(refused_attach, ServerResponse::AlreadyAttached { .. }));
+
+    let unregister = send_request(&mut refused, ClientRequest::UnregisterPane { pane_id });
+    assert!(matches!(
+        unregister,
+        ServerResponse::Error { ref message }
+            if message.contains("attached session") || message.contains("not attached")
+    ));
+
+    let detached = send_request(&mut owner, ClientRequest::Detach);
+    assert!(matches!(detached, ServerResponse::Detached { .. }));
+    drop(owner);
+
+    let snapshot = snapshot_default_session(&env);
+    assert!(
+        snapshot.panes.contains_key(&pane_id),
+        "unauthorized unregister removed another session's pane: {:?}",
+        snapshot.panes
+    );
+}
+
 #[tokio::test]
 async fn daemon_session_snapshot_retains_hook_and_codex_updates_after_detach() {
     let env = support::isolated_humu_home();
@@ -471,6 +527,95 @@ async fn foreground_attach_rehydrates_runtime_agent_state_from_daemon_snapshot()
 }
 
 #[tokio::test]
+async fn foreground_attach_rehydrates_daemon_discovered_codex_session_id() {
+    let env = support::isolated_humu_home();
+    fs::write(
+        env.config_path(),
+        "presets:\n  codex:\n    command: /bin/sh\n    args:\n      - -lc\n      - sleep 60\n",
+    )
+    .expect("write quiet codex config");
+
+    let codex_workspace = env.home.path().join("workspace");
+    fs::create_dir_all(&codex_workspace).expect("create codex workspace");
+
+    let mut state = support::migrated_state_fixture();
+    let default_session = state.ensure_session("default");
+    default_session.active_workspace_id = Some(support::workspace_id("humu"));
+    default_session.active_room_id = Some(support::room_id("main"));
+    default_session.tabs_by_room.insert(
+        support::room_id("main"),
+        humu::config::PersistedRoomLayout {
+            active_tab: 0,
+            tabs: vec![humu::config::TabLayout {
+                name: "codex".to_string(),
+                split: humu::config::SplitNode::Leaf {
+                    preset: "codex".to_string(),
+                    session_id: None,
+                },
+            }],
+        },
+    );
+    support::persistence::save_state(&env.state_path(), &state).expect("save state fixture");
+
+    let _daemon = support::spawn_humu_server(&env);
+    wait_for_ping(&env);
+
+    let mut stream = attach_default_session(&env);
+    let pane_id = PaneId::new();
+    let registered = send_request(
+        &mut stream,
+        ClientRequest::RegisterPane {
+            pane_id,
+            preset_name: "codex".to_string(),
+            cwd: Some(codex_workspace.clone()),
+            session_id: None,
+            started_at_unix_secs: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_secs(),
+        },
+    );
+    assert!(matches!(registered, ServerResponse::Ack));
+    let detached = send_request(&mut stream, ClientRequest::Detach);
+    assert!(matches!(detached, ServerResponse::Detached { .. }));
+    drop(stream);
+
+    let codex_root = env.home.path().join(".codex/sessions/2026/03/27");
+    fs::create_dir_all(&codex_root).expect("create codex sessions root");
+    let codex_session_id = "019d015a-ab86-7680-84a1-f487511865aa";
+    fs::write(
+        codex_root.join(format!("task-2026-03-27T00-00-00-{codex_session_id}.jsonl")),
+        format!(
+            "{{\"timestamp\":\"2026-03-27T00:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{codex_session_id}\",\"cwd\":\"{}\"}}}}\n\
+{{\"timestamp\":\"2026-03-27T00:00:01.000Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"task_started\"}}}}\n",
+            codex_workspace.display(),
+        ),
+    )
+    .expect("write codex session file");
+
+    wait_for(
+        || {
+            snapshot_default_session(&env).panes.values().any(|pane| {
+                pane.preset_name == "codex"
+                    && pane.agent_state.as_ref().is_some_and(|state| {
+                        state.status == AgentStatus::Working
+                            && state.session_id.as_deref() == Some(codex_session_id)
+                    })
+            })
+        },
+        Duration::from_secs(5),
+    );
+
+    let mut app = support::spawn_humu_attach(&env, "default");
+    assert!(app.wait_for_output("\u{1b}[?1049h", Duration::from_secs(2)));
+    assert!(
+        app.wait_for_output("codex ⠋", Duration::from_secs(2)),
+        "expected codex spinner in attach UI, got output: {}",
+        app.output_string()
+    );
+}
+
+#[tokio::test]
 async fn graceful_foreground_exit_cleans_runtime_registrations_between_attach_cycles() {
     let env = support::isolated_humu_home();
     fs::write(
@@ -605,6 +750,8 @@ async fn only_unfocused_notifications_fire_after_focus_lost_and_detach() {
     let notify_log = env.home.path().join("notify.log");
     let _daemon = spawn_humu_server_with_notify_stub(&env, &notify_log);
     wait_for_ping(&env);
+    let workspace_id = support::workspace_id("humu").to_string();
+    let room_id = support::room_id("main").to_string();
 
     let mut stream = attach_default_session(&env);
     let pane_id = PaneId::new();
@@ -632,14 +779,14 @@ async fn only_unfocused_notifications_fire_after_focus_lost_and_detach() {
 
     client
         .post(format!(
-            "http://127.0.0.1:{hook_port}/hook?paneId={pane_id}&eventType=PostToolUse&sessionId=notify-session"
+            "http://127.0.0.1:{hook_port}/hook?workspaceId={workspace_id}&roomId={room_id}&paneId={pane_id}&eventType=PostToolUse&sessionId=notify-session"
         ))
         .send()
         .await
         .expect("send working event while focused");
     client
         .post(format!(
-            "http://127.0.0.1:{hook_port}/hook?paneId={pane_id}&eventType=PermissionRequest&sessionId=notify-session"
+            "http://127.0.0.1:{hook_port}/hook?workspaceId={workspace_id}&roomId={room_id}&paneId={pane_id}&eventType=PermissionRequest&sessionId=notify-session"
         ))
         .send()
         .await
@@ -654,14 +801,14 @@ async fn only_unfocused_notifications_fire_after_focus_lost_and_detach() {
     assert!(matches!(focus_lost, ServerResponse::Ack));
     client
         .post(format!(
-            "http://127.0.0.1:{hook_port}/hook?paneId={pane_id}&eventType=PostToolUse&sessionId=notify-session"
+            "http://127.0.0.1:{hook_port}/hook?workspaceId={workspace_id}&roomId={room_id}&paneId={pane_id}&eventType=PostToolUse&sessionId=notify-session"
         ))
         .send()
         .await
         .expect("send working event while unfocused");
     client
         .post(format!(
-            "http://127.0.0.1:{hook_port}/hook?paneId={pane_id}&eventType=PermissionRequest&sessionId=notify-session"
+            "http://127.0.0.1:{hook_port}/hook?workspaceId={workspace_id}&roomId={room_id}&paneId={pane_id}&eventType=PermissionRequest&sessionId=notify-session"
         ))
         .send()
         .await
@@ -680,14 +827,14 @@ async fn only_unfocused_notifications_fire_after_focus_lost_and_detach() {
 
     client
         .post(format!(
-            "http://127.0.0.1:{hook_port}/hook?paneId={pane_id}&eventType=PostToolUse&sessionId=notify-session"
+            "http://127.0.0.1:{hook_port}/hook?workspaceId={workspace_id}&roomId={room_id}&paneId={pane_id}&eventType=PostToolUse&sessionId=notify-session"
         ))
         .send()
         .await
         .expect("send working event while detached");
     client
         .post(format!(
-            "http://127.0.0.1:{hook_port}/hook?paneId={pane_id}&eventType=PermissionRequest&sessionId=notify-session"
+            "http://127.0.0.1:{hook_port}/hook?workspaceId={workspace_id}&roomId={room_id}&paneId={pane_id}&eventType=PermissionRequest&sessionId=notify-session"
         ))
         .send()
         .await
@@ -701,7 +848,7 @@ async fn only_unfocused_notifications_fire_after_focus_lost_and_detach() {
     assert!(
         notifications
             .iter()
-            .all(|line| line.contains("[unknown/unknown] Agent needs input")),
+            .all(|line| line.contains(&format!("[{workspace_id}/{room_id}] Agent needs input"))),
         "unexpected notification payloads: {notifications:?}"
     );
 }

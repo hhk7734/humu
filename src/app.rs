@@ -481,6 +481,68 @@ impl App {
         let _ = self.send_daemon_request(ClientRequest::UnregisterPane { pane_id });
     }
 
+    fn remove_pane_runtime_state(&mut self, pane_id: PaneId) {
+        self.panes.remove(&pane_id);
+        self.pane_presets.remove(&pane_id);
+        self.agent_states.remove(&pane_id);
+        self.unregister_pane_with_daemon(pane_id);
+    }
+
+    fn clear_live_panes(&mut self) {
+        let pane_ids: Vec<PaneId> = self.panes.keys().copied().collect();
+        for pane_id in pane_ids {
+            self.remove_pane_runtime_state(pane_id);
+        }
+        self.tabs = TabContainer::new();
+        self.focused_pane = None;
+        self.fullscreen_pane = None;
+        self.search_state = None;
+    }
+
+    fn unregister_room_state_panes(&mut self, room_state: &RoomState) {
+        for pane_id in room_state.panes.keys().copied() {
+            self.agent_states.remove(&pane_id);
+            self.unregister_pane_with_daemon(pane_id);
+        }
+    }
+
+    fn clear_workspace_suspended_rooms(&mut self, workspace_id: WorkspaceId) {
+        let room_keys: Vec<(WorkspaceId, RoomId)> = self
+            .suspended_rooms
+            .keys()
+            .copied()
+            .filter(|(wid, _)| *wid == workspace_id)
+            .collect();
+        for room_key in room_keys {
+            if let Some(room_state) = self.suspended_rooms.remove(&room_key) {
+                self.unregister_room_state_panes(&room_state);
+            }
+        }
+    }
+
+    fn close_floating_pane(&mut self, pane_id: PaneId) {
+        self.remove_pane_runtime_state(pane_id);
+        self.popup = PopupState::None;
+    }
+
+    fn cleanup_exited_floating_pane(&mut self) {
+        let Some(pane_id) = (match &self.popup {
+            PopupState::FloatingPane { pane_id, .. } => Some(*pane_id),
+            _ => None,
+        }) else {
+            return;
+        };
+
+        if self
+            .panes
+            .get_mut(&pane_id)
+            .and_then(|pane| pane.exit_status())
+            .is_some()
+        {
+            self.close_floating_pane(pane_id);
+        }
+    }
+
     fn unregister_all_panes_with_daemon(&mut self) {
         let mut seen = HashSet::new();
         let mut pane_ids = Vec::new();
@@ -511,33 +573,53 @@ impl App {
         };
 
         let mut snapshot_states = HashMap::new();
+        let mut codex_snapshot_states = Vec::new();
         for pane in snapshot.panes.values() {
             let Some(agent_state) = pane.agent_state.as_ref() else {
                 continue;
             };
-            let Some(session_id) = agent_state.session_id.clone() else {
-                continue;
+            let state = match agent_state.status {
+                AgentStatus::Working => AgentState::Working,
+                AgentStatus::NeedsInput => AgentState::NeedsInput,
+                AgentStatus::Idle => AgentState::Idle,
             };
-            snapshot_states.insert(
-                (pane.preset_name.clone(), session_id),
-                match agent_state.status {
-                    AgentStatus::Working => AgentState::Working,
-                    AgentStatus::NeedsInput => AgentState::NeedsInput,
-                    AgentStatus::Idle => AgentState::Idle,
-                },
-            );
+            if let Some(session_id) = agent_state.session_id.clone() {
+                snapshot_states.insert((pane.preset_name.clone(), session_id), state.clone());
+            }
+            if pane.preset_name == PRESET_CODEX {
+                codex_snapshot_states.push((state, agent_state.session_id.clone()));
+            }
         }
 
+        let mut unmatched_codex_panes = Vec::new();
         for (pane_id, preset_name) in &self.pane_presets {
-            let Some(entry) = self.agent_states.get_mut(pane_id) else {
+            let Some(session_id) = self
+                .agent_states
+                .get(pane_id)
+                .and_then(|entry| entry.session_id.clone())
+            else {
+                if preset_name == PRESET_CODEX {
+                    unmatched_codex_panes.push(*pane_id);
+                }
                 continue;
             };
-            let Some(session_id) = entry.session_id.clone() else {
-                continue;
-            };
-            if let Some(state) = snapshot_states.get(&(preset_name.clone(), session_id)) {
-                entry.state = state.clone();
+            if let Some(state) = snapshot_states.get(&(preset_name.clone(), session_id.clone())) {
+                self.agent_states.insert(
+                    *pane_id,
+                    AgentStateEntry {
+                        state: state.clone(),
+                        session_id: Some(session_id),
+                    },
+                );
             }
+        }
+
+        if unmatched_codex_panes.len() == 1 && codex_snapshot_states.len() == 1 {
+            let (state, session_id) = codex_snapshot_states.pop().expect("single codex snapshot");
+            self.agent_states.insert(
+                unmatched_codex_panes[0],
+                AgentStateEntry { state, session_id },
+            );
         }
     }
 
@@ -604,17 +686,8 @@ impl App {
                         let _ = pane.resize(inner_w, inner_h);
                     }
                 }
-                if self
-                    .panes
-                    .get_mut(&pane_id)
-                    .and_then(|p| p.exit_status())
-                    .is_some()
-                {
-                    self.panes.remove(&pane_id);
-                    self.pane_presets.remove(&pane_id);
-                    self.popup = PopupState::None;
-                }
             }
+            self.cleanup_exited_floating_pane();
 
             // Auto-return from workspace mode to terminal after 5s of inactivity.
             if let Some(entered) = self.workspace_mode_entered {
@@ -1086,9 +1159,7 @@ impl App {
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('q') | KeyCode::Char('g'))
         {
-            self.panes.remove(&pane_id);
-            self.pane_presets.remove(&pane_id);
-            self.popup = PopupState::None;
+            self.close_floating_pane(pane_id);
             return;
         }
         // Forward all keys to the PTY
@@ -1925,19 +1996,14 @@ impl App {
         // If the active workspace is being deleted and its panes are live,
         // clear them first (they'll be invalid after deletion).
         if was_active {
-            self.panes.clear();
-            self.pane_presets.clear();
-            self.tabs = TabContainer::new();
-            self.focused_pane = None;
-            self.fullscreen_pane = None;
+            self.clear_live_panes();
         }
 
         let mgr = WorkspaceManager::new();
         match mgr.delete(&mut self.state, workspace_id, remove_from_disk) {
             Ok(()) => {
                 // Remove all suspended rooms belonging to the deleted workspace.
-                self.suspended_rooms
-                    .retain(|(wid, _), _| *wid != workspace_id);
+                self.clear_workspace_suspended_rooms(workspace_id);
 
                 // Adjust selection if needed.
                 if self.state.workspaces.is_empty() {
@@ -3675,7 +3741,7 @@ impl App {
             self.persist_layout();
         } else {
             // No active tree — clean up the pane we just spawned.
-            self.panes.remove(&new_id);
+            self.remove_pane_runtime_state(new_id);
         }
     }
 
@@ -3698,10 +3764,7 @@ impl App {
     /// Remove panes by ID: clean up state, update split trees, remove empty tabs.
     fn remove_panes(&mut self, ids: &[PaneId]) {
         for id in ids {
-            self.panes.remove(id);
-            self.pane_presets.remove(id);
-            self.agent_states.remove(id);
-            self.unregister_pane_with_daemon(*id);
+            self.remove_pane_runtime_state(*id);
         }
         // Remove dead panes from trees and remove empty tabs.
         let mut i = self.tabs.len();
@@ -4234,10 +4297,7 @@ impl App {
         }
 
         if let Some(room_state) = self.suspended_rooms.remove(&(ws_id, room_id)) {
-            for pane_id in room_state.panes.keys().copied() {
-                self.agent_states.remove(&pane_id);
-                self.unregister_pane_with_daemon(pane_id);
-            }
+            self.unregister_room_state_panes(&room_state);
         }
     }
 
@@ -5187,7 +5247,12 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
     use std::path::PathBuf;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
 
     fn ctrl_char(c: char) -> KeyEvent {
         KeyEvent {
@@ -5402,6 +5467,53 @@ mod tests {
         );
 
         (app, ws_id, local_room_id, feature_room_id)
+    }
+
+    fn record_daemon_requests(
+        app: &mut App,
+        action: impl FnOnce(&mut App),
+    ) -> Vec<ClientRequest> {
+        let (client_stream, mut daemon_stream) = UnixStream::pair().expect("create unix stream pair");
+        daemon_stream
+            .set_read_timeout(Some(Duration::from_millis(250)))
+            .expect("set read timeout");
+        app.server_stream = Some(client_stream);
+
+        let (tx, rx) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            let mut decoder = FrameDecoder::new();
+            let mut buf = [0u8; 4096];
+            loop {
+                match daemon_stream.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(read) => {
+                        decoder.push(&buf[..read]);
+                        while let Some(request) =
+                            decoder.try_decode::<ClientRequest>().expect("decode client request")
+                        {
+                            tx.send(request).expect("send request to test");
+                            daemon_stream
+                                .write_all(&encode_frame(&ServerResponse::Ack).expect("encode ack"))
+                                .expect("write daemon ack");
+                        }
+                    }
+                    Err(err)
+                        if matches!(
+                            err.kind(),
+                            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                        ) =>
+                    {
+                        break;
+                    }
+                    Err(err) => panic!("read daemon request: {err}"),
+                }
+            }
+        });
+
+        action(app);
+        app.server_stream.take();
+        handle.join().expect("join daemon recorder");
+        rx.try_iter().collect()
     }
 
     fn left_click(column: u16, row: u16) -> crossterm::event::MouseEvent {
@@ -5711,5 +5823,148 @@ mod tests {
                 "session-123".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn floating_pane_manual_close_unregisters_daemon_pane() {
+        let mut app = test_app_with_workspace_tree(HumuState::default(), vec![], HashMap::new());
+        let pane_id = PaneId::new();
+        let pane = PtyPane::spawn("sh", &["-c".to_string(), "sleep 60".to_string()], None, 80, 24)
+            .expect("spawn floating pane");
+        app.panes.insert(pane_id, pane);
+        app.pane_presets.insert(pane_id, "_editor".to_string());
+        app.popup = PopupState::FloatingPane {
+            pane_id,
+            title: "editor".to_string(),
+        };
+
+        let requests = record_daemon_requests(&mut app, |app| {
+            app.handle_floating_pane_key(pane_id, ctrl_char('q'));
+        });
+
+        assert!(!app.panes.contains_key(&pane_id));
+        assert!(matches!(app.popup, PopupState::None));
+        assert!(
+            requests.contains(&ClientRequest::UnregisterPane { pane_id }),
+            "expected unregister request, got {requests:?}"
+        );
+    }
+
+    #[test]
+    fn floating_pane_auto_close_unregisters_daemon_pane() {
+        let mut app = test_app_with_workspace_tree(HumuState::default(), vec![], HashMap::new());
+        let pane_id = PaneId::new();
+        let pane = PtyPane::spawn("sh", &["-c".to_string(), "true".to_string()], None, 80, 24)
+            .expect("spawn auto-close pane");
+        app.panes.insert(pane_id, pane);
+        app.pane_presets.insert(pane_id, "_diff".to_string());
+        app.popup = PopupState::FloatingPane {
+            pane_id,
+            title: "diff".to_string(),
+        };
+        thread::sleep(Duration::from_millis(50));
+
+        let requests = record_daemon_requests(&mut app, |app| {
+            app.cleanup_exited_floating_pane();
+        });
+
+        assert!(!app.panes.contains_key(&pane_id));
+        assert!(matches!(app.popup, PopupState::None));
+        assert!(
+            requests.contains(&ClientRequest::UnregisterPane { pane_id }),
+            "expected unregister request, got {requests:?}"
+        );
+    }
+
+    #[test]
+    fn split_failure_unregisters_spawned_daemon_pane() {
+        let mut app = test_app_with_workspace_tree(HumuState::default(), vec![], HashMap::new());
+        app.config.presets.get_mut("shell").unwrap().command = "sh".to_string();
+        app.config.presets.get_mut("shell").unwrap().args =
+            vec!["-c".to_string(), "true".to_string()];
+
+        let focused_pane_id = PaneId::new();
+        let focused_pane = PtyPane::spawn("true", &[], None, 80, 24).expect("spawn focused pane");
+        app.panes.insert(focused_pane_id, focused_pane);
+        app.focused_pane = Some(focused_pane_id);
+
+        let requests = record_daemon_requests(&mut app, |app| {
+            app.split_pane_with_preset("shell", true);
+        });
+
+        let registered_pane_id = requests.iter().find_map(|request| match request {
+            ClientRequest::RegisterPane { pane_id, .. } => Some(*pane_id),
+            _ => None,
+        });
+        assert!(registered_pane_id.is_some(), "expected register request, got {requests:?}");
+        assert!(
+            requests.iter().any(|request| {
+                matches!(
+                    request,
+                    ClientRequest::UnregisterPane { pane_id }
+                        if Some(*pane_id) == registered_pane_id
+                )
+            }),
+            "expected unregister for split-failure cleanup, got {requests:?}"
+        );
+    }
+
+    #[test]
+    fn workspace_delete_unregisters_active_and_suspended_workspace_panes() {
+        let (mut app, ws_id, local_room_id, feature_room_id) = workspace_room_fixture();
+        app.state.active_workspace_id = Some(ws_id);
+        app.state.active_room_id = Some(local_room_id);
+
+        let active_pane_id = PaneId::new();
+        let active_pane = PtyPane::spawn("true", &[], None, 80, 24).expect("spawn active pane");
+        app.panes.insert(active_pane_id, active_pane);
+        app.pane_presets.insert(active_pane_id, "shell".to_string());
+        app.tabs.add_tab("shell".into(), SplitTree::leaf(active_pane_id));
+        app.focused_pane = Some(active_pane_id);
+
+        let suspended_pane_id = PaneId::new();
+        let suspended_pane =
+            PtyPane::spawn("true", &[], None, 80, 24).expect("spawn suspended pane");
+        app.suspended_rooms.insert(
+            (ws_id, feature_room_id),
+            RoomState {
+                panes: HashMap::from([(suspended_pane_id, suspended_pane)]),
+                tabs: TabContainer::new(),
+                pane_presets: HashMap::from([(suspended_pane_id, "shell".to_string())]),
+                focused_pane: Some(suspended_pane_id),
+                fullscreen_pane: None,
+            },
+        );
+
+        let requests = record_daemon_requests(&mut app, |app| {
+            app.execute_workspace_delete(
+                vec![
+                    DialogField::Confirm {
+                        message: "Delete workspace?".to_string(),
+                        yes: true,
+                    },
+                    DialogField::Checkbox {
+                        label: "Delete from disk".to_string(),
+                        checked: false,
+                    },
+                ],
+                ws_id,
+            );
+        });
+
+        assert!(
+            requests.contains(&ClientRequest::UnregisterPane {
+                pane_id: active_pane_id
+            }),
+            "expected active pane unregister, got {requests:?}"
+        );
+        assert!(
+            requests.contains(&ClientRequest::UnregisterPane {
+                pane_id: suspended_pane_id
+            }),
+            "expected suspended pane unregister, got {requests:?}"
+        );
+        assert!(app.panes.is_empty());
+        assert!(!app.suspended_rooms.contains_key(&(ws_id, feature_room_id)));
     }
 }
