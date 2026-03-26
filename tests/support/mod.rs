@@ -102,11 +102,20 @@ pub fn persist_named_session_layout(
     tab_name: &str,
 ) {
     let ws_id = workspace_id("humu");
-    let room_id = room_id(room_name);
     let session = state.ensure_session(session_name);
     session.active_workspace_id = Some(ws_id);
-    session.active_room_id = Some(room_id);
-    session.tabs_by_room.insert(
+    session.active_room_id = Some(room_id(room_name));
+    insert_session_room_layout(state, session_name, room_name, tab_name);
+}
+
+pub fn insert_session_room_layout(
+    state: &mut HumuState,
+    session_name: &str,
+    room_name: &str,
+    tab_name: &str,
+) {
+    let room_id = room_id(room_name);
+    state.ensure_session(session_name).tabs_by_room.insert(
         room_id,
         PersistedRoomLayout {
             active_tab: 0,
@@ -127,6 +136,16 @@ pub fn default_session(state: &HumuState) -> &SessionState {
         .expect("default session")
 }
 
-fn temp_state_path() -> PathBuf {
+pub fn temp_state_path() -> PathBuf {
     std::env::temp_dir().join(format!("humu-session-persistence-{}.yaml", Uuid::new_v4()))
+}
+
+pub fn session_by_name<'a>(state: &'a HumuState, name: &str) -> &'a SessionState {
+    state.session_by_name(name).expect("session not found")
+}
+
+pub fn workspace_room_paths() -> (PathBuf, PathBuf) {
+    let workspace_path = PathBuf::from("/tmp/humu");
+    let feature_path = workspace_path.join("feat-x");
+    (workspace_path, feature_path)
 }

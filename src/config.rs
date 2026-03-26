@@ -422,6 +422,57 @@ impl HumuState {
         session.active_room_id = active_room_id;
         state
     }
+
+    pub fn remove_room_session_state(&mut self, workspace_id: WorkspaceId, room_id: RoomId) {
+        for session in &mut self.sessions {
+            session.tabs_by_room.remove(&room_id);
+            if session.active_workspace_id == Some(workspace_id)
+                && session.active_room_id == Some(room_id)
+            {
+                session.active_room_id = None;
+            } else if session.active_room_id == Some(room_id) {
+                session.active_room_id = None;
+            }
+        }
+
+        if self.active_workspace_id == Some(workspace_id) && self.active_room_id == Some(room_id) {
+            self.active_room_id = None;
+        } else if self.active_room_id == Some(room_id) {
+            self.active_room_id = None;
+        }
+    }
+
+    pub fn remove_workspace_session_state(
+        &mut self,
+        workspace_id: WorkspaceId,
+        room_ids: &[RoomId],
+    ) {
+        for session in &mut self.sessions {
+            session
+                .tabs_by_room
+                .retain(|room_id, _| !room_ids.contains(room_id));
+
+            if session.active_workspace_id == Some(workspace_id) {
+                session.active_workspace_id = None;
+                session.active_room_id = None;
+            } else if session
+                .active_room_id
+                .is_some_and(|room_id| room_ids.contains(&room_id))
+            {
+                session.active_room_id = None;
+            }
+        }
+
+        if self.active_workspace_id == Some(workspace_id) {
+            self.active_workspace_id = None;
+            self.active_room_id = None;
+        } else if self
+            .active_room_id
+            .is_some_and(|room_id| room_ids.contains(&room_id))
+        {
+            self.active_room_id = None;
+        }
+    }
 }
 
 // ── Room ID helpers ────────────────────────────────────────────────────────────
@@ -452,12 +503,37 @@ pub fn prune_stale_rooms_for_workspace(
     workspace_id: WorkspaceId,
     discovered_paths: &HashSet<PathBuf>,
 ) {
+    let stale_room_ids: Vec<RoomId> = state
+        .ws_by_id(workspace_id)
+        .map(|ws| {
+            ws.rooms
+                .iter()
+                .filter(|room| {
+                    !discovered_paths
+                        .iter()
+                        .any(|path| paths_match(&room.path, path))
+                })
+                .map(|room| room.id)
+                .collect()
+        })
+        .unwrap_or_default();
+
     if let Some(ws) = state.ws_by_id_mut(workspace_id) {
         ws.rooms.retain(|r| {
             discovered_paths
                 .iter()
                 .any(|path| paths_match(&r.path, path))
         });
+        if ws
+            .last_room_id
+            .is_some_and(|room_id| stale_room_ids.contains(&room_id))
+        {
+            ws.last_room_id = None;
+        }
+    }
+
+    for room_id in stale_room_ids {
+        state.remove_room_session_state(workspace_id, room_id);
     }
 }
 

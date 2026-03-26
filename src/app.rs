@@ -1850,19 +1850,7 @@ impl App {
         }
 
         self.drop_room_runtime_state(ws_id, room_entry.id);
-
-        if let Some(ws) = self.state.ws_by_id_mut(ws_id) {
-            ws.rooms.retain(|room| room.id != room_entry.id);
-            if ws.last_room_id == Some(room_entry.id) {
-                ws.last_room_id = None;
-            }
-        }
-
-        if self.state.active_workspace_id == Some(ws_id)
-            && self.state.active_room_id == Some(room_entry.id)
-        {
-            self.state.active_room_id = None;
-        }
+        self.remove_room_from_state(ws_id, room_entry.id);
 
         self.workspace_selected = Some(ws_id);
         self.room_selected = self.ensure_local_room(ws_id);
@@ -4210,6 +4198,17 @@ impl App {
         }
     }
 
+    fn remove_room_from_state(&mut self, ws_id: WorkspaceId, room_id: RoomId) {
+        if let Some(ws) = self.state.ws_by_id_mut(ws_id) {
+            ws.rooms.retain(|room| room.id != room_id);
+            if ws.last_room_id == Some(room_id) {
+                ws.last_room_id = None;
+            }
+        }
+
+        self.state.remove_room_session_state(ws_id, room_id);
+    }
+
     /// List rooms for a specific workspace by ID, with agent activity flags.
     /// Uses the cached room list -- no git subprocesses.
     fn room_items_for_workspace(&self, ws_id: WorkspaceId) -> Vec<CachedRoomItem> {
@@ -5138,6 +5137,10 @@ impl App {
 
     pub fn test_state_path(&self) -> &std::path::Path {
         &self.state_path
+    }
+
+    pub fn test_remove_room_state(&mut self, ws_id: WorkspaceId, room_id: RoomId) {
+        self.remove_room_from_state(ws_id, room_id);
     }
 }
 

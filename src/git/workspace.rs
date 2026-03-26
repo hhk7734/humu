@@ -110,6 +110,7 @@ impl WorkspaceManager {
             .position(|w| w.id == id)
             .ok_or_else(|| anyhow::anyhow!("workspace not found: {id}"))?;
         let entry = state.workspaces.remove(idx);
+        let room_ids: Vec<_> = entry.rooms.iter().map(|room| room.id).collect();
 
         let worktrees_dir = crate::config::humu_dir()
             .join("worktrees")
@@ -122,11 +123,7 @@ impl WorkspaceManager {
             std::fs::remove_dir_all(&entry.path)?;
         }
 
-        // Only clear active IDs if the deleted workspace was the active one
-        if state.active_workspace_id == Some(entry.id) {
-            state.active_workspace_id = None;
-            state.active_room_id = None;
-        }
+        state.remove_workspace_session_state(entry.id, &room_ids);
 
         Ok(())
     }

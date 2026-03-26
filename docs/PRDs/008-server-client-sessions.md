@@ -162,6 +162,7 @@ The client must not own any state required to keep a task alive after detach.
 - The singleton pre-session layout format is migrated into a `default` session record during load
 - The `default` session becomes the immediate source of truth for current `App` layout restore and save paths before the daemon/client split lands
 - Named sessions persist independent room selection and layout maps without reusing workspace-room registry fields
+- Deleting a room or workspace, or pruning stale worktrees, removes the corresponding session layout entries and clears stale session selection pointers
 
 ### Shared model layer
 
