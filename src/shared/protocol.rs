@@ -104,6 +104,8 @@ pub enum ClientRequest {
     Detach,
     ForceDetachSession {
         name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auth_token: Option<String>,
     },
     RegisterPane {
         pane_id: PaneId,

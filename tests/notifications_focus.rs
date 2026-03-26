@@ -239,14 +239,14 @@ fn shell_force_detach_reclaims_attached_session() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    wait_for_app_exit(&mut first, Duration::from_secs(5));
-
     let mut second = support::spawn_humu_attach(&env, "default");
     assert!(
         second.wait_for_output("\u{1b}[?1049h", Duration::from_secs(2)),
         "expected attach after forced detach, got output: {}",
         second.output_string()
     );
+    drop(second);
+    drop(first);
 }
 
 #[test]
@@ -318,6 +318,7 @@ fn unauthorized_force_detach_is_rejected_without_session_ownership() {
         &mut attacker,
         ClientRequest::ForceDetachSession {
             name: "default".to_string(),
+            auth_token: None,
         },
     );
     assert!(matches!(force_detach, ServerResponse::Error { .. }));
@@ -662,6 +663,95 @@ async fn foreground_attach_rehydrates_runtime_agent_state_from_daemon_snapshot()
     assert!(
         app.wait_for_output("shell ⠋", Duration::from_secs(2)),
         "expected rehydrated spinner in attach UI, got output: {}",
+        app.output_string()
+    );
+}
+
+#[tokio::test]
+async fn foreground_attach_rehydrates_daemon_learned_hook_session_id_without_local_seed() {
+    let env = support::isolated_humu_home();
+    fs::write(
+        env.config_path(),
+        "presets:\n  shell:\n    command: /bin/sh\n    args:\n      - -lc\n      - sleep 60\n",
+    )
+    .expect("write quiet shell config");
+
+    let mut state = support::migrated_state_fixture();
+    let default_session = state.ensure_session("default");
+    default_session.active_workspace_id = Some(support::workspace_id("humu"));
+    default_session.active_room_id = Some(support::room_id("main"));
+    default_session.tabs_by_room.insert(
+        support::room_id("main"),
+        humu::config::PersistedRoomLayout {
+            active_tab: 0,
+            tabs: vec![humu::config::TabLayout {
+                name: "shell".to_string(),
+                split: humu::config::SplitNode::Leaf {
+                    preset: "shell".to_string(),
+                    session_id: None,
+                },
+            }],
+        },
+    );
+    support::persistence::save_state(&env.state_path(), &state).expect("save state fixture");
+
+    let _daemon = support::spawn_humu_server(&env);
+    wait_for_ping(&env);
+
+    let mut stream = attach_default_session(&env);
+    let pane_id = PaneId::new();
+    let registered = send_request(
+        &mut stream,
+        ClientRequest::RegisterPane {
+            pane_id,
+            preset_name: "shell".to_string(),
+            cwd: None,
+            session_id: None,
+            started_at_unix_secs: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_secs(),
+        },
+    );
+    assert!(matches!(registered, ServerResponse::Ack));
+    let detached = send_request(&mut stream, ClientRequest::Detach);
+    assert!(matches!(detached, ServerResponse::Detached { .. }));
+    drop(stream);
+
+    let hook_port = fs::read_to_string(env.hook_port_path())
+        .expect("read hook port")
+        .trim()
+        .parse::<u16>()
+        .expect("parse hook port");
+    let hook_response = reqwest::Client::new()
+        .post(format!(
+            "http://127.0.0.1:{hook_port}/hook?workspaceId={}&roomId={}&paneId={pane_id}&eventType=PostToolUse&sessionId=daemon-learned-session",
+            support::workspace_id("humu"),
+            support::room_id("main"),
+        ))
+        .send()
+        .await
+        .expect("send hook event");
+    assert_eq!(hook_response.status(), 200);
+
+    wait_for(
+        || {
+            snapshot_default_session(&env).panes.values().any(|pane| {
+                pane.preset_name == "shell"
+                    && pane.agent_state.as_ref().is_some_and(|state| {
+                        state.status == AgentStatus::Working
+                            && state.session_id.as_deref() == Some("daemon-learned-session")
+                    })
+            })
+        },
+        Duration::from_secs(5),
+    );
+
+    let mut app = support::spawn_humu_attach(&env, "default");
+    assert!(app.wait_for_output("\u{1b}[?1049h", Duration::from_secs(2)));
+    assert!(
+        app.wait_for_output("shell ⠋", Duration::from_secs(2)),
+        "expected daemon-learned shell spinner in attach UI, got output: {}",
         app.output_string()
     );
 }

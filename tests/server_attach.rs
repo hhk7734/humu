@@ -632,6 +632,7 @@ fn client_request_round_trips_with_all_core_variants() {
         ClientRequest::Detach,
         ClientRequest::ForceDetachSession {
             name: "default".to_string(),
+            auth_token: None,
         },
         ClientRequest::RegisterPane {
             pane_id: pane_id("33333333-3333-3333-3333-333333333333"),

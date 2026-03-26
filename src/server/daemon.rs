@@ -5,7 +5,7 @@ use humu::config::{HumuConfig, humu_dir};
 use humu::hook::http::generate_hook_files;
 use humu::log;
 use humu::shared::protocol::{
-    ClientRequest, PROTOCOL_VERSION, ServerResponse, SessionListEntry, encode_frame,
+    ClientRequest, PROTOCOL_VERSION, ServerResponse, encode_frame,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fs::{self, OpenOptions};
@@ -19,6 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 struct DaemonPaths {
@@ -44,6 +45,8 @@ pub struct DaemonMetadata {
     pub started_at: u64,
     pub socket_path: String,
     pub protocol_version: u32,
+    #[serde(default)]
+    pub auth_token: String,
 }
 
 struct StartupLock {
@@ -208,69 +211,19 @@ pub fn force_detach_shell(session_name: &str) -> Result<()> {
         );
     }
 
-    let Some(session) = fetch_session_entry(&paths, session_name)? else {
-        return Ok(());
-    };
-    if !session.attached {
-        return Ok(());
+    let metadata = read_metadata(&paths).context("read daemon metadata for force detach")?;
+    let response = send_request::<ServerResponse>(
+        &paths,
+        &ClientRequest::ForceDetachSession {
+            name: session_name.to_string(),
+            auth_token: (!metadata.auth_token.is_empty()).then_some(metadata.auth_token),
+        },
+    )?;
+    match response {
+        ServerResponse::Detached { .. } | ServerResponse::Ack => Ok(()),
+        ServerResponse::Error { message } => bail!(message),
+        other => bail!("unexpected detach response: {other:?}"),
     }
-
-    let owner_pid = session
-        .owner_pid
-        .ok_or_else(|| anyhow::anyhow!("cannot force detach session without an owning pid"))?;
-    if process_is_alive(owner_pid) {
-        signal_process(owner_pid, "-TERM").context("send TERM to attached client")?;
-    }
-    if wait_for_session_detached(&paths, session_name, Duration::from_secs(2))? {
-        return Ok(());
-    }
-
-    if process_is_alive(owner_pid) {
-        signal_process(owner_pid, "-KILL").context("send KILL to attached client")?;
-    }
-    if wait_for_session_detached(&paths, session_name, Duration::from_secs(2))? {
-        return Ok(());
-    }
-
-    bail!("session {session_name} is still attached after force detach")
-}
-
-fn fetch_session_entry(paths: &DaemonPaths, session_name: &str) -> Result<Option<SessionListEntry>> {
-    let response = send_request::<ServerResponse>(paths, &ClientRequest::ListSessions)?;
-    let ServerResponse::Sessions { sessions } = response else {
-        bail!("unexpected list-sessions response while detaching");
-    };
-    Ok(sessions.into_iter().find(|session| session.name == session_name))
-}
-
-fn wait_for_session_detached(
-    paths: &DaemonPaths,
-    session_name: &str,
-    timeout: Duration,
-) -> Result<bool> {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if fetch_session_entry(paths, session_name)?
-            .is_none_or(|session| !session.attached)
-        {
-            return Ok(true);
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-    Ok(fetch_session_entry(paths, session_name)?
-        .is_none_or(|session| !session.attached))
-}
-
-fn signal_process(pid: u32, signal: &str) -> Result<()> {
-    let status = Command::new("kill")
-        .arg(signal)
-        .arg(pid.to_string())
-        .status()
-        .with_context(|| format!("run kill {signal} {pid}"))?;
-    if status.success() {
-        return Ok(());
-    }
-    bail!("kill {signal} {pid} failed with status {status}")
 }
 
 fn acquire_startup_lock(paths: &DaemonPaths) -> Result<Option<StartupLock>> {
@@ -359,6 +312,7 @@ fn write_metadata(paths: &DaemonPaths) -> Result<()> {
             .as_secs(),
         socket_path: paths.socket_path.to_string_lossy().into_owned(),
         protocol_version: PROTOCOL_VERSION,
+        auth_token: Uuid::new_v4().to_string(),
     };
     fs::write(
         &paths.metadata_path,
@@ -520,20 +474,28 @@ fn handle_request(
                 }),
             }
         }
-        ClientRequest::ForceDetachSession { name } => {
-            let Some(current_session) = attached_session.as_deref() else {
+        ClientRequest::ForceDetachSession { name, auth_token } => {
+            let authorized = attached_session.as_deref() == Some(name.as_str())
+                || auth_token
+                    .as_deref()
+                    .zip(read_metadata(&DaemonPaths::default()).ok())
+                    .is_some_and(|(auth_token, metadata)| {
+                        !metadata.auth_token.is_empty() && metadata.auth_token == auth_token
+                    });
+            if !authorized {
                 return Ok(ServerResponse::Error {
-                    message: "force detach requires an attached session".to_string(),
-                });
-            };
-            if current_session != name {
-                return Ok(ServerResponse::Error {
-                    message: "cannot force detach outside the attached session".to_string(),
+                    message: "force detach requires session ownership or daemon authorization"
+                        .to_string(),
                 });
             }
             sessions.detach_owned(&name, client_id);
+            if attached_session.as_deref() != Some(name.as_str()) {
+                sessions.detach(&name);
+            }
             runtime.detach_session(&name);
-            *attached_session = None;
+            if attached_session.as_deref() == Some(name.as_str()) {
+                *attached_session = None;
+            }
             Ok(ServerResponse::Detached { session_name: name })
         }
         ClientRequest::RegisterPane {

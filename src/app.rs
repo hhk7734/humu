@@ -573,7 +573,7 @@ impl App {
         };
 
         let mut snapshot_states = HashMap::new();
-        let mut codex_snapshot_states = Vec::new();
+        let mut snapshot_entries = Vec::new();
         for pane in snapshot.panes.values() {
             let Some(agent_state) = pane.agent_state.as_ref() else {
                 continue;
@@ -583,27 +583,32 @@ impl App {
                 AgentStatus::NeedsInput => AgentState::NeedsInput,
                 AgentStatus::Idle => AgentState::Idle,
             };
+            snapshot_entries.push((
+                pane.preset_name.clone(),
+                state.clone(),
+                agent_state.session_id.clone(),
+            ));
             if let Some(session_id) = agent_state.session_id.clone() {
                 snapshot_states.insert((pane.preset_name.clone(), session_id), state.clone());
             }
-            if pane.preset_name == PRESET_CODEX {
-                codex_snapshot_states.push((state, agent_state.session_id.clone()));
-            }
         }
 
-        let mut unmatched_codex_panes = Vec::new();
+        let mut unmatched_local_panes = HashMap::<String, Vec<PaneId>>::new();
+        let mut matched_snapshot_keys = std::collections::HashSet::new();
         for (pane_id, preset_name) in &self.pane_presets {
             let Some(session_id) = self
                 .agent_states
                 .get(pane_id)
                 .and_then(|entry| entry.session_id.clone())
             else {
-                if preset_name == PRESET_CODEX {
-                    unmatched_codex_panes.push(*pane_id);
-                }
+                unmatched_local_panes
+                    .entry(preset_name.clone())
+                    .or_default()
+                    .push(*pane_id);
                 continue;
             };
             if let Some(state) = snapshot_states.get(&(preset_name.clone(), session_id.clone())) {
+                matched_snapshot_keys.insert((preset_name.clone(), Some(session_id.clone())));
                 self.agent_states.insert(
                     *pane_id,
                     AgentStateEntry {
@@ -614,12 +619,27 @@ impl App {
             }
         }
 
-        if unmatched_codex_panes.len() == 1 && codex_snapshot_states.len() == 1 {
-            let (state, session_id) = codex_snapshot_states.pop().expect("single codex snapshot");
-            self.agent_states.insert(
-                unmatched_codex_panes[0],
-                AgentStateEntry { state, session_id },
-            );
+        let mut unmatched_snapshot_by_preset =
+            HashMap::<String, Vec<(AgentState, Option<String>)>>::new();
+        for (preset_name, state, session_id) in snapshot_entries {
+            if matched_snapshot_keys.contains(&(preset_name.clone(), session_id.clone())) {
+                continue;
+            }
+            unmatched_snapshot_by_preset
+                .entry(preset_name)
+                .or_default()
+                .push((state, session_id));
+        }
+
+        for (preset_name, pane_ids) in unmatched_local_panes {
+            let Some(snapshot_entries) = unmatched_snapshot_by_preset.get(&preset_name) else {
+                continue;
+            };
+            if pane_ids.len() == 1 && snapshot_entries.len() == 1 {
+                let (state, session_id) = snapshot_entries[0].clone();
+                self.agent_states
+                    .insert(pane_ids[0], AgentStateEntry { state, session_id });
+            }
         }
     }
 
