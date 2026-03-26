@@ -1,12 +1,12 @@
-mod support;
 #[path = "../src/server/mod.rs"]
 #[allow(dead_code)]
 mod server_impl;
+mod support;
 
 use humu::id::PaneId;
 use humu::shared::protocol::{
-    encode_frame, decode_frame, ClientAction, ClientRequest, FrameDecoder, NavigationDirection,
-    ServerEvent, ServerResponse, SessionListEntry,
+    ClientAction, ClientRequest, FrameDecoder, NavigationDirection, ServerEvent, ServerResponse,
+    SessionListEntry, decode_frame, encode_frame,
 };
 use humu::shared::render::{ColorSnapshot, DetachReason, FullSnapshot};
 use serde::de::DeserializeOwned;
@@ -177,8 +177,16 @@ fn support_spawn_humu_server_applies_isolated_stdio_contract() {
         std::thread::sleep(Duration::from_millis(25));
     }
 
-    assert!(hook_file.exists(), "expected isolated hook file at {:?}", hook_file);
-    assert!(log_file.exists(), "expected isolated log file at {:?}", log_file);
+    assert!(
+        hook_file.exists(),
+        "expected isolated hook file at {:?}",
+        hook_file
+    );
+    assert!(
+        log_file.exists(),
+        "expected isolated log file at {:?}",
+        log_file
+    );
     assert!(env.hook_port_path().starts_with(env.humu_dir()));
     assert!(env.server_socket_path().starts_with(env.humu_dir()));
     assert!(env.server_lock_path().starts_with(env.humu_dir()));
@@ -201,7 +209,10 @@ fn server_ping_works_after_daemon_start() {
     let metadata: serde_json::Value =
         serde_json::from_slice(&fs::read(env.server_metadata_path()).expect("read metadata"))
             .expect("parse metadata");
-    assert_eq!(metadata["protocol_version"], humu::shared::protocol::PROTOCOL_VERSION);
+    assert_eq!(
+        metadata["protocol_version"],
+        humu::shared::protocol::PROTOCOL_VERSION
+    );
     assert_eq!(
         metadata["socket_path"],
         env.server_socket_path().to_string_lossy().as_ref()
@@ -214,7 +225,8 @@ fn stale_socket_and_metadata_are_cleaned_when_pid_is_dead() {
     write_stale_server_files(&env);
 
     let _child = support::spawn_humu_server(&env);
-    let response = wait_for_ping(&env, Duration::from_secs(5)).expect("daemon ping after stale cleanup");
+    let response =
+        wait_for_ping(&env, Duration::from_secs(5)).expect("daemon ping after stale cleanup");
     assert_eq!(
         response,
         ServerResponse::Pong {
@@ -271,7 +283,10 @@ fn list_sessions_refuses_protocol_version_mismatch() {
         .expect("run humu list-sessions");
     assert!(!status.success());
 
-    handle.join().expect("fake server thread").expect("fake server run");
+    handle
+        .join()
+        .expect("fake server thread")
+        .expect("fake server run");
 }
 
 #[test]
@@ -303,7 +318,10 @@ fn server_startup_refuses_protocol_version_mismatch() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("protocol version mismatch"));
 
-    handle.join().expect("fake server thread").expect("fake server run");
+    handle
+        .join()
+        .expect("fake server thread")
+        .expect("fake server run");
 }
 
 #[test]
@@ -446,8 +464,8 @@ fn rejected_attach_does_not_overwrite_target_session_size() {
     .expect("rejected attach");
     assert!(matches!(rejected, ServerResponse::AlreadyAttached { .. }));
 
-    let sessions = send_request::<ServerResponse>(&env, &ClientRequest::ListSessions)
-        .expect("list sessions");
+    let sessions =
+        send_request::<ServerResponse>(&env, &ClientRequest::ListSessions).expect("list sessions");
     match sessions {
         ServerResponse::Sessions { sessions } => {
             let beta = sessions
@@ -614,6 +632,16 @@ fn client_request_round_trips_with_all_core_variants() {
         ClientRequest::Detach,
         ClientRequest::ForceDetachSession {
             name: "default".to_string(),
+        },
+        ClientRequest::RegisterPane {
+            pane_id: pane_id("33333333-3333-3333-3333-333333333333"),
+            preset_name: "codex".to_string(),
+            cwd: Some(std::path::PathBuf::from("/tmp/humu")),
+            session_id: Some("agent-session".to_string()),
+            started_at_unix_secs: 1_742_963_200,
+        },
+        ClientRequest::UnregisterPane {
+            pane_id: pane_id("33333333-3333-3333-3333-333333333333"),
         },
         ClientRequest::SendInput {
             pane_id: pane_id("11111111-1111-1111-1111-111111111111"),
@@ -849,7 +877,9 @@ fn layout_updates_include_pane_geometry_changes() {
     let bytes = serde_json::to_vec(&event).unwrap();
     let decoded: ServerEvent = serde_json::from_slice(&bytes).unwrap();
     match decoded {
-        ServerEvent::LayoutUpdated { pane_geometries, .. } => {
+        ServerEvent::LayoutUpdated {
+            pane_geometries, ..
+        } => {
             let geometry = pane_geometries.get(&pane_id).unwrap();
             assert_eq!(geometry.x, 5);
             assert_eq!(geometry.width, 77);

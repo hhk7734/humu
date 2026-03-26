@@ -119,7 +119,8 @@ Task 5 implementation status:
 - The daemon now starts a server-owned `SessionRuntime` before advertising readiness, so hook-server lifecycle no longer depends on the foreground `App`
 - `~/.humu/port` publication remains daemon-owned and keeps the existing hook-script contract unchanged
 - Session notification focus is now tracked on the server with detached sessions treated as unfocused, preserving `only_unfocused` delivery semantics while no client is attached
-- Hook events and Codex polling now live under the daemon runtime boundary so detached-session agent-state updates can continue without a client event loop
+- The foreground fallback `App` now attaches a default daemon session, uses the daemon-published hook port, and registers/unregisters pane metadata with the daemon instead of starting its own hook/Codex runtime
+- Hook events and Codex polling now live under the daemon runtime boundary, and reattaching a detached session restores the daemon-owned agent state accumulated while detached
 
 ## Session Model
 

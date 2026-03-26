@@ -452,7 +452,7 @@ fn handle_request(
                     runtime.attach_session(&name);
                     Ok(ServerResponse::Attached {
                         session_name: name.clone(),
-                        snapshot: sessions.snapshot(&name),
+                        snapshot: runtime.snapshot_for_session(&name, sessions.snapshot(&name)),
                     })
                 }
                 Err(AttachError::AlreadyAttached {
@@ -473,6 +473,32 @@ fn handle_request(
                 *attached_session = None;
             }
             Ok(ServerResponse::Detached { session_name: name })
+        }
+        ClientRequest::RegisterPane {
+            pane_id,
+            preset_name,
+            cwd,
+            session_id,
+            started_at_unix_secs,
+        } => {
+            let Some(session_name) = attached_session.as_deref() else {
+                return Ok(ServerResponse::Error {
+                    message: "register pane requires an attached session".to_string(),
+                });
+            };
+            runtime.register_pane(
+                session_name,
+                pane_id,
+                &preset_name,
+                cwd,
+                session_id,
+                UNIX_EPOCH + Duration::from_secs(started_at_unix_secs),
+            );
+            Ok(ServerResponse::Ack)
+        }
+        ClientRequest::UnregisterPane { pane_id } => {
+            runtime.remove_pane(pane_id);
+            Ok(ServerResponse::Ack)
         }
         ClientRequest::Detach => {
             let Some(session_name) = attached_session.take() else {

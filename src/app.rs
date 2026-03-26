@@ -6,19 +6,19 @@ use crossterm::event::{
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use humu::codex::CodexTracker;
 use humu::config::{
     HumuConfig, HumuState, PersistedRoomLayout, SplitDirection as CfgDir, SplitNode, TabLayout,
     WorkspaceEntry, humu_dir,
 };
 use humu::git::room::{RoomGitStatus, RoomManager};
 use humu::git::workspace::{WorkspaceManager, default_clone_target_dir};
-use humu::hook::http::{AgentState, HookEvent, HookServer, generate_hook_files};
+use humu::hook::http::AgentState;
 use humu::id::{RoomId, TabId, WorkspaceId};
 use humu::pty::input::{
     InputAction, InputRoute, route_floating_mouse, route_mouse, route_passthrough, route_paste,
 };
 use humu::pty::pane::PtyPane;
+use humu::shared::protocol::{ClientRequest, FrameDecoder, ServerResponse, encode_frame};
 use humu::tui::completion::complete_path;
 use humu::tui::input::{
     Action, Direction as NavDirection, Mode, handle_key, hint_click_action, hint_click_action_right,
@@ -34,12 +34,10 @@ use humu::tui::widgets::workspace_panel::{TreeItemKind, WorkspacePanel, Workspac
 use ratatui::Terminal;
 use ratatui::layout::{Constraint, Direction, Layout, Position, Rect};
 use std::collections::HashMap;
-use std::io::stdout;
+use std::io::{Read, Write, stdout};
+use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
-use std::sync::mpsc;
-use std::thread;
-use std::time::{Duration, SystemTime};
-use tokio::runtime::Runtime;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -226,12 +224,12 @@ pub struct App {
     pub pane_presets: HashMap<PaneId, String>,
     /// Active popup (None when no popup is showing).
     pub popup: PopupState,
-    /// Per-pane agent state from the HTTP hook server.
+    /// Per-pane agent state mirrored from persisted session metadata.
     pub agent_states: HashMap<PaneId, AgentStateEntry>,
-    /// Receiver for hook events forwarded from the background tokio thread.
-    pub hook_rx: Option<mpsc::Receiver<HookEvent>>,
-    /// Port the HTTP hook server is listening on.
+    /// Port the daemon-owned HTTP hook server is listening on.
     pub hook_port: Option<u16>,
+    /// Persistent daemon connection used for session ownership and pane registration.
+    server_stream: Option<UnixStream>,
     /// Last-rendered panel rects used for mouse hit-testing.
     pub panel_rects: PanelRects,
     /// Panel widths: [workspace, explorer]. Used in the layout constraints.
@@ -265,21 +263,13 @@ pub struct App {
     workspace_mode_entered: Option<std::time::Instant>,
     /// Cached path to state.yaml.
     state_path: std::path::PathBuf,
-    /// Notification manager for OS/Telegram alerts.
-    notification_manager: humu::notification::NotificationManager,
     /// Path to config.yaml for persisting changes.
     config_path: std::path::PathBuf,
-    /// Tracks Codex session files for panes spawned with the "codex" preset.
-    codex_tracker: CodexTracker,
 }
 
 impl App {
     pub fn new() -> Result<Self> {
         humu::log::init();
-
-        if let Err(e) = generate_hook_files(&humu_dir()) {
-            humu::humu_log!("failed to generate hook files: {e}");
-        }
 
         let config_path = humu_dir().join("config.yaml");
         let config_toml_path = humu_dir().join("config.toml");
@@ -296,9 +286,6 @@ impl App {
             HumuConfig::default()
         };
 
-        let notification_manager =
-            humu::notification::NotificationManager::from_config(&config.notifications);
-
         let state = if state_path.exists() {
             HumuState::load(&state_path)?
         } else {
@@ -308,38 +295,7 @@ impl App {
         let tabs = TabContainer::new();
         let panes = HashMap::new();
         let pane_presets = HashMap::new();
-
-        // Start HTTP hook server in a background tokio runtime and forward events
-        // over a std mpsc channel so the synchronous event loop can call try_recv().
-        let (hook_tx, hook_rx) = mpsc::channel::<HookEvent>();
-        let (port_tx, port_rx) = mpsc::channel::<u16>();
-        thread::spawn(move || {
-            let rt = Runtime::new().unwrap();
-            rt.block_on(async {
-                match HookServer::start().await {
-                    Ok(server) => {
-                        let _ = port_tx.send(server.port());
-                        let mut rx = server.subscribe();
-                        loop {
-                            match rx.recv().await {
-                                Ok(event) => {
-                                    let _ = hook_tx.send(event);
-                                }
-                                Err(_) => break,
-                            }
-                        }
-                    }
-                    Err(e) => humu::humu_log!("hook server error: {e}"),
-                }
-            });
-        });
-        let hook_port = port_rx.recv().ok();
-
-        // Write port file so external tools can discover the hook server.
-        if let Some(port) = hook_port {
-            let port_path = humu_dir().join("port");
-            let _ = std::fs::write(&port_path, port.to_string());
-        }
+        let (server_stream, hook_port) = Self::connect_default_daemon_session();
 
         let ui_config = humu::tui::theme::UiConfig {
             simplified_ui: config.ui.simplified_ui,
@@ -362,8 +318,8 @@ impl App {
             pane_presets,
             popup: PopupState::None,
             agent_states: HashMap::new(),
-            hook_rx: Some(hook_rx),
             hook_port,
+            server_stream,
             panel_rects: PanelRects::default(),
             panel_widths: saved_panel_widths,
             pty_mouse_active: false,
@@ -381,15 +337,122 @@ impl App {
             selected_tree_index: 0,
             workspace_mode_entered: None,
             state_path: humu_dir().join("state.yaml"),
-            notification_manager,
             config_path,
-            codex_tracker: CodexTracker::new(
-                dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(".codex")
-                    .join("sessions"),
-            ),
         })
+    }
+
+    #[cfg(not(test))]
+    fn connect_default_daemon_session() -> (Option<UnixStream>, Option<u16>) {
+        if let Err(err) = crate::server::daemon::run(true) {
+            humu::humu_log!("failed to start daemon runtime: {err}");
+            return (None, None);
+        }
+
+        let hook_port = std::fs::read_to_string(humu_dir().join("port"))
+            .ok()
+            .and_then(|value| value.trim().parse::<u16>().ok());
+
+        let socket_path = humu_dir().join("server.sock");
+        let Ok(mut stream) = UnixStream::connect(&socket_path) else {
+            humu::humu_log!(
+                "failed to connect to daemon socket {}",
+                socket_path.display()
+            );
+            return (None, hook_port);
+        };
+
+        let attach = ClientRequest::AttachSession {
+            name: "default".to_string(),
+            cols: 80,
+            rows: 24,
+        };
+        if stream
+            .write_all(&encode_frame(&attach).expect("encode daemon attach"))
+            .is_err()
+        {
+            return (None, hook_port);
+        }
+        match Self::read_daemon_response(&mut stream) {
+            Ok(ServerResponse::Attached { .. }) => (Some(stream), hook_port),
+            Ok(ServerResponse::AlreadyAttached { .. }) => {
+                humu::humu_log!("daemon session already attached; continuing without runtime sync");
+                (None, hook_port)
+            }
+            Ok(other) => {
+                humu::humu_log!("unexpected daemon attach response: {other:?}");
+                (None, hook_port)
+            }
+            Err(err) => {
+                humu::humu_log!("failed to read daemon attach response: {err}");
+                (None, hook_port)
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn connect_default_daemon_session() -> (Option<UnixStream>, Option<u16>) {
+        (None, None)
+    }
+
+    fn read_daemon_response(stream: &mut UnixStream) -> anyhow::Result<ServerResponse> {
+        let mut decoder = FrameDecoder::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let read = stream.read(&mut buf)?;
+            if read == 0 {
+                anyhow::bail!("daemon stream closed before response");
+            }
+            decoder.push(&buf[..read]);
+            if let Some(response) = decoder.try_decode()? {
+                return Ok(response);
+            }
+        }
+    }
+
+    fn send_daemon_request(&mut self, request: ClientRequest) -> Option<ServerResponse> {
+        let stream = self.server_stream.as_mut()?;
+        if let Err(err) = stream.write_all(&encode_frame(&request).ok()?) {
+            humu::humu_log!("failed to write daemon request: {err}");
+            self.server_stream = None;
+            return None;
+        }
+        match Self::read_daemon_response(stream) {
+            Ok(response) => Some(response),
+            Err(err) => {
+                humu::humu_log!("failed to read daemon response: {err}");
+                self.server_stream = None;
+                None
+            }
+        }
+    }
+
+    fn sync_daemon_focus(&mut self, focused: bool) {
+        let _ = self.send_daemon_request(ClientRequest::FocusChanged { focused });
+    }
+
+    fn register_pane_with_daemon(
+        &mut self,
+        pane_id: PaneId,
+        preset_name: &str,
+        cwd: Option<PathBuf>,
+        session_id: Option<String>,
+        started_at: SystemTime,
+    ) {
+        let started_at_unix_secs = started_at
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let _ = self.send_daemon_request(ClientRequest::RegisterPane {
+            pane_id,
+            preset_name: preset_name.to_string(),
+            cwd,
+            session_id,
+            started_at_unix_secs,
+        });
+    }
+
+    fn unregister_pane_with_daemon(&mut self, pane_id: PaneId) {
+        let _ = self.send_daemon_request(ClientRequest::UnregisterPane { pane_id });
     }
 
     pub fn run(&mut self) -> Result<()> {
@@ -512,9 +575,11 @@ impl App {
                     Event::Paste(text) => self.handle_paste_event(&text),
                     Event::FocusGained => {
                         self.is_focused = true;
+                        self.sync_daemon_focus(true);
                     }
                     Event::FocusLost => {
                         self.is_focused = false;
+                        self.sync_daemon_focus(false);
                     }
                     Event::Resize(_, _) => {}
                     _ => {}
@@ -544,18 +609,16 @@ impl App {
                     Event::Paste(text) => self.handle_paste_event(&text),
                     Event::FocusGained => {
                         self.is_focused = true;
+                        self.sync_daemon_focus(true);
                     }
                     Event::FocusLost => {
                         self.is_focused = false;
+                        self.sync_daemon_focus(false);
                     }
                     Event::Resize(_, _) => {}
                     _ => {}
                 }
             }
-
-            // Process hook events each tick.
-            self.process_hook_events();
-            self.poll_codex_states();
 
             // Refresh log viewer if open.
             self.refresh_log_viewer();
@@ -1057,8 +1120,6 @@ impl App {
     }
 
     fn rebuild_notification_manager(&mut self) {
-        self.notification_manager =
-            humu::notification::NotificationManager::from_config(&self.config.notifications);
         if let Err(e) = self.config.save(&self.config_path) {
             humu::humu_log!("failed to save config: {e}");
         }
@@ -2713,7 +2774,10 @@ impl App {
             }
         }
 
-        if !matches!(self.popup, PopupState::None | PopupState::FloatingPane { .. }) {
+        if !matches!(
+            self.popup,
+            PopupState::None | PopupState::FloatingPane { .. }
+        ) {
             if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
                 self.pty_mouse_active = false;
                 self.selection = None;
@@ -3447,12 +3511,13 @@ impl App {
                 },
             );
         }
-        if preset_name == PRESET_CODEX
-            && let Some(cwd) = cwd
-        {
-            self.codex_tracker
-                .track_pane(id, cwd, restored_session_id, SystemTime::now());
-        }
+        self.register_pane_with_daemon(
+            id,
+            preset_name,
+            cwd,
+            restored_session_id,
+            SystemTime::now(),
+        );
         Some(id)
     }
 
@@ -3549,7 +3614,7 @@ impl App {
             self.panes.remove(id);
             self.pane_presets.remove(id);
             self.agent_states.remove(id);
-            self.codex_tracker.remove_pane(*id);
+            self.unregister_pane_with_daemon(*id);
         }
         // Remove dead panes from trees and remove empty tabs.
         let mut i = self.tabs.len();
@@ -3796,115 +3861,6 @@ impl App {
             if let Some(layout) = self.room_layout(room_id) {
                 self.restore_layout(layout.active_tab, layout.tabs);
             }
-        }
-    }
-
-    /// Drain the hook event channel, update agent_states, and fire
-    /// notifications on Working→NeedsInput / Working→Idle transitions.
-    fn process_hook_events(&mut self) {
-        let events: Vec<HookEvent> = self
-            .hook_rx
-            .as_ref()
-            .map(|rx| std::iter::from_fn(|| rx.try_recv().ok()).collect())
-            .unwrap_or_default();
-
-        for event in events {
-            humu::humu_log!(
-                "hook: ws={:?} room={:?} tab={:?} pane={} state={:?} session={:?}",
-                event.workspace_id,
-                event.room_id,
-                event.tab_id,
-                event.pane_id,
-                event.event_type,
-                event.session_id,
-            );
-
-            let pane_id = event.pane_id;
-            let prev_state = self.agent_states.get(&pane_id).map(|e| e.state.clone());
-
-            let new_session_id = event.session_id.clone();
-            let existing_session_id = self
-                .agent_states
-                .get(&pane_id)
-                .and_then(|e| e.session_id.clone());
-            let session_id = new_session_id.or(existing_session_id);
-
-            // Detect Working → NeedsInput or Working → Idle transitions.
-            let should_notify = matches!(
-                (&prev_state, &event.event_type),
-                (Some(AgentState::Working), AgentState::NeedsInput)
-                    | (Some(AgentState::Working), AgentState::Idle)
-            );
-
-            self.agent_states.insert(
-                pane_id,
-                AgentStateEntry {
-                    state: event.event_type.clone(),
-                    session_id,
-                },
-            );
-
-            if should_notify {
-                let ws_name = event
-                    .workspace_id
-                    .as_deref()
-                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
-                    .map(WorkspaceId)
-                    .and_then(|id| self.state.ws_by_id(id))
-                    .map(|ws| ws.name.clone())
-                    .unwrap_or_else(|| "unknown".to_string());
-
-                let room_name = event
-                    .workspace_id
-                    .as_deref()
-                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
-                    .map(WorkspaceId)
-                    .and_then(|ws_id| {
-                        let ws = self.state.ws_by_id(ws_id)?;
-                        let room_uuid = event
-                            .room_id
-                            .as_deref()
-                            .and_then(|s| uuid::Uuid::parse_str(s).ok())?;
-                        ws.room_by_id(RoomId(room_uuid)).map(|r| r.name.clone())
-                    })
-                    .unwrap_or_else(|| "unknown".to_string());
-
-                let notification_event = match event.event_type {
-                    AgentState::NeedsInput => {
-                        humu::notification::NotificationEvent::AgentNeedsInput {
-                            workspace: ws_name,
-                            room: room_name,
-                        }
-                    }
-                    AgentState::Idle => humu::notification::NotificationEvent::AgentFinished {
-                        workspace: ws_name,
-                        room: room_name,
-                    },
-                    _ => continue,
-                };
-                self.notification_manager
-                    .notify(notification_event, self.is_focused);
-            }
-        }
-    }
-
-    fn poll_codex_states(&mut self) {
-        if self.spin_tick % 20 != 0 {
-            return;
-        }
-
-        for update in self.codex_tracker.poll() {
-            let existing_session_id = self
-                .agent_states
-                .get(&update.pane_id)
-                .and_then(|e| e.session_id.clone());
-            self.agent_states.insert(
-                update.pane_id,
-                AgentStateEntry {
-                    state: update.state,
-                    session_id: update.session_id.or(existing_session_id),
-                },
-            );
         }
     }
 
@@ -4180,7 +4136,7 @@ impl App {
             let pane_ids: Vec<PaneId> = self.panes.keys().copied().collect();
             for pane_id in pane_ids {
                 self.agent_states.remove(&pane_id);
-                self.codex_tracker.remove_pane(pane_id);
+                self.unregister_pane_with_daemon(pane_id);
             }
             self.panes.clear();
             self.pane_presets.clear();
@@ -4193,7 +4149,7 @@ impl App {
         if let Some(room_state) = self.suspended_rooms.remove(&(ws_id, room_id)) {
             for pane_id in room_state.panes.keys().copied() {
                 self.agent_states.remove(&pane_id);
-                self.codex_tracker.remove_pane(pane_id);
+                self.unregister_pane_with_daemon(pane_id);
             }
         }
     }
@@ -4916,8 +4872,7 @@ impl App {
 
 impl Drop for App {
     fn drop(&mut self) {
-        let port_path = humu_dir().join("port");
-        let _ = std::fs::remove_file(&port_path);
+        let _ = self.send_daemon_request(ClientRequest::Detach);
     }
 }
 
@@ -5080,8 +5035,6 @@ fn should_handle_key_event(key: &KeyEvent) -> bool {
 impl App {
     pub fn test_with_state(state: HumuState, state_path: PathBuf) -> Self {
         let config = HumuConfig::default();
-        let notification_manager =
-            humu::notification::NotificationManager::from_config(&config.notifications);
 
         Self {
             config,
@@ -5097,8 +5050,8 @@ impl App {
             pane_presets: HashMap::new(),
             popup: PopupState::None,
             agent_states: HashMap::new(),
-            hook_rx: None,
             hook_port: None,
+            server_stream: None,
             panel_rects: PanelRects {
                 workspace: Rect::new(0, 0, 24, 8),
                 terminal: Rect::new(24, 0, 56, 20),
@@ -5125,9 +5078,7 @@ impl App {
             selected_tree_index: 0,
             workspace_mode_entered: None,
             state_path,
-            notification_manager,
             config_path: PathBuf::from("/tmp/humu-test-config.yaml"),
-            codex_tracker: CodexTracker::new(PathBuf::from("/tmp/humu-test-codex")),
         }
     }
 
@@ -5217,8 +5168,6 @@ mod tests {
         room_cache: HashMap<WorkspaceId, Vec<CachedRoomInfo>>,
     ) -> App {
         let config = HumuConfig::default();
-        let notification_manager =
-            humu::notification::NotificationManager::from_config(&config.notifications);
 
         App {
             config,
@@ -5234,8 +5183,8 @@ mod tests {
             pane_presets: HashMap::new(),
             popup: PopupState::None,
             agent_states: HashMap::new(),
-            hook_rx: None,
             hook_port: None,
+            server_stream: None,
             panel_rects: PanelRects {
                 workspace: Rect::new(0, 0, 24, 8),
                 terminal: Rect::new(24, 0, 56, 20),
@@ -5262,9 +5211,7 @@ mod tests {
             selected_tree_index: 0,
             workspace_mode_entered: None,
             state_path: PathBuf::from("/tmp/humu-test-state.yaml"),
-            notification_manager,
             config_path: PathBuf::from("/tmp/humu-test-config.yaml"),
-            codex_tracker: CodexTracker::new(PathBuf::from("/tmp/humu-test-codex")),
         }
     }
 
@@ -5486,7 +5433,11 @@ mod tests {
         app.handle_paste_event("/tmp/humu");
 
         match &app.popup {
-            PopupState::WorkspaceCreate { fields, focused_field, .. } => {
+            PopupState::WorkspaceCreate {
+                fields,
+                focused_field,
+                ..
+            } => {
                 assert_eq!(*focused_field, 1);
                 assert!(matches!(
                     &fields[1],

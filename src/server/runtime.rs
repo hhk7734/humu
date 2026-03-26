@@ -5,6 +5,11 @@ use humu::hook::http::{
 };
 use humu::id::PaneId;
 use humu::notification::{NotificationEvent, NotificationManager, SessionFocusState};
+use humu::shared::render::{
+    AgentStatus, AgentSummary, ColorSnapshot, CursorSnapshot, FullSnapshot, PaneRuntimeState,
+    PaneSnapshot, TabSnapshot, TerminalCapabilitiesSnapshot, TerminalCellSnapshot,
+    TerminalScreenSnapshot,
+};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,11 +39,18 @@ struct AgentStateEntry {
     session_id: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct RegisteredPane {
+    preset_name: String,
+    cwd: Option<PathBuf>,
+}
+
 struct SessionRuntimeState {
     notification_manager: NotificationManager,
     codex_tracker: CodexTracker,
     focus_by_session: HashMap<String, SessionFocusState>,
     pane_sessions: HashMap<PaneId, String>,
+    panes_by_session: HashMap<String, HashMap<PaneId, RegisteredPane>>,
     agent_states: HashMap<PaneId, AgentStateEntry>,
     recorded_updates: Vec<RuntimeUpdateRecord>,
 }
@@ -50,6 +62,7 @@ impl SessionRuntimeState {
             codex_tracker: CodexTracker::new(codex_sessions_root),
             focus_by_session: HashMap::new(),
             pane_sessions: HashMap::new(),
+            panes_by_session: HashMap::new(),
             agent_states: HashMap::new(),
             recorded_updates: Vec::new(),
         }
@@ -85,20 +98,124 @@ impl SessionRuntimeState {
         &mut self,
         session_name: &str,
         pane_id: PaneId,
-        cwd: PathBuf,
-        codex_session_id: Option<String>,
+        preset_name: &str,
+        cwd: Option<PathBuf>,
+        agent_session_id: Option<String>,
         started_at: SystemTime,
     ) {
         self.pane_sessions.insert(pane_id, session_name.to_string());
-        self.codex_tracker
-            .track_pane(pane_id, cwd, codex_session_id, started_at);
+        self.panes_by_session
+            .entry(session_name.to_string())
+            .or_default()
+            .insert(
+                pane_id,
+                RegisteredPane {
+                    preset_name: preset_name.to_string(),
+                    cwd: cwd.clone(),
+                },
+            );
+        if preset_name == "codex"
+            && let Some(cwd) = cwd
+        {
+            self.codex_tracker
+                .track_pane(pane_id, cwd, agent_session_id, started_at);
+        }
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
     fn remove_pane(&mut self, pane_id: PaneId) {
-        self.pane_sessions.remove(&pane_id);
+        if let Some(session_name) = self.pane_sessions.remove(&pane_id)
+            && let Some(panes) = self.panes_by_session.get_mut(&session_name)
+        {
+            panes.remove(&pane_id);
+            if panes.is_empty() {
+                self.panes_by_session.remove(&session_name);
+            }
+        }
         self.agent_states.remove(&pane_id);
         self.codex_tracker.remove_pane(pane_id);
+    }
+
+    fn snapshot_for_session(&self, session_name: &str, mut base: FullSnapshot) -> FullSnapshot {
+        let Some(panes) = self.panes_by_session.get(session_name) else {
+            return base;
+        };
+
+        let mut pane_ids = panes.keys().copied().collect::<Vec<_>>();
+        pane_ids.sort_by_key(|pane_id| pane_id.to_string());
+
+        let mut pane_snapshots = HashMap::new();
+        for pane_id in &pane_ids {
+            let Some(pane) = panes.get(pane_id) else {
+                continue;
+            };
+            pane_snapshots.insert(
+                *pane_id,
+                PaneSnapshot {
+                    geometry: None,
+                    state: PaneRuntimeState::Running,
+                    screen: TerminalScreenSnapshot {
+                        rows: 24,
+                        cols: 80,
+                        cursor: CursorSnapshot {
+                            row: 0,
+                            col: 0,
+                            visible: false,
+                        },
+                        cells: vec![vec![TerminalCellSnapshot {
+                            text: String::new(),
+                            fg: ColorSnapshot::Default,
+                            bg: ColorSnapshot::Default,
+                            bold: false,
+                            dim: false,
+                            italic: false,
+                            underline: false,
+                            inverse: false,
+                            hidden: false,
+                            strike: false,
+                            wide: false,
+                            wide_continuation: false,
+                        }]],
+                        title: pane.preset_name.clone(),
+                    },
+                    preset_name: pane.preset_name.clone(),
+                    capabilities: TerminalCapabilitiesSnapshot {
+                        alternate_screen: false,
+                        bracketed_paste: false,
+                        mouse_protocol_mode: None,
+                        mouse_protocol_encoding: None,
+                        scrollback_offset: 0,
+                    },
+                    agent_state: self.agent_states.get(pane_id).map(|state| AgentSummary {
+                        status: match state.state {
+                            AgentState::Working => AgentStatus::Working,
+                            AgentState::NeedsInput => AgentStatus::NeedsInput,
+                            AgentState::Idle => AgentStatus::Idle,
+                        },
+                        session_id: state.session_id.clone(),
+                    }),
+                },
+            );
+        }
+
+        base.tabs = if pane_ids.is_empty() {
+            Vec::new()
+        } else {
+            vec![TabSnapshot {
+                tab_id: None,
+                name: "runtime".to_string(),
+                pane_ids: pane_ids.clone(),
+            }]
+        };
+        base.active_tab_index = (!pane_ids.is_empty()).then_some(0);
+        base.split_tree = None;
+        base.focused_pane_id = pane_ids.first().copied();
+        base.fullscreen_pane_id = None;
+        base.panes = pane_snapshots;
+        if base.explorer_root.is_none() {
+            base.explorer_root = panes.values().find_map(|pane| pane.cwd.clone());
+        }
+        base
     }
 
     fn apply_hook_event(&mut self, event: HookEvent) {
@@ -315,14 +432,22 @@ impl SessionRuntime {
         &self,
         session_name: &str,
         pane_id: PaneId,
-        cwd: PathBuf,
-        codex_session_id: Option<String>,
+        preset_name: &str,
+        cwd: Option<PathBuf>,
+        agent_session_id: Option<String>,
         started_at: SystemTime,
     ) {
         self.state
             .lock()
             .expect("session runtime state lock")
-            .register_pane(session_name, pane_id, cwd, codex_session_id, started_at);
+            .register_pane(
+                session_name,
+                pane_id,
+                preset_name,
+                cwd,
+                agent_session_id,
+                started_at,
+            );
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -340,6 +465,13 @@ impl SessionRuntime {
             .expect("session runtime state lock")
             .recorded_updates
             .clone()
+    }
+
+    pub fn snapshot_for_session(&self, session_name: &str, base: FullSnapshot) -> FullSnapshot {
+        self.state
+            .lock()
+            .expect("session runtime state lock")
+            .snapshot_for_session(session_name, base)
     }
 }
 

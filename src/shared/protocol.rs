@@ -1,7 +1,7 @@
 use crate::id::PaneId;
 use crate::shared::render::{
-    AgentSummary, DetachReason, FullSnapshot, PaneSnapshot, SessionGeometrySnapshot,
-    PaneGeometrySnapshot, SplitTreeSnapshot, TabSnapshot,
+    AgentSummary, DetachReason, FullSnapshot, PaneGeometrySnapshot, PaneSnapshot,
+    SessionGeometrySnapshot, SplitTreeSnapshot, TabSnapshot,
 };
 use anyhow::{anyhow, bail};
 use serde::de::DeserializeOwned;
@@ -93,26 +93,69 @@ pub struct SessionListEntry {
 pub enum ClientRequest {
     Ping,
     ListSessions,
-    CreateSession { name: String },
-    AttachSession { name: String, cols: u16, rows: u16 },
+    CreateSession {
+        name: String,
+    },
+    AttachSession {
+        name: String,
+        cols: u16,
+        rows: u16,
+    },
     Detach,
-    ForceDetachSession { name: String },
-    SendInput { pane_id: PaneId, bytes: Vec<u8> },
-    ResizeSession { cols: u16, rows: u16 },
-    RunAction { action: ClientAction },
+    ForceDetachSession {
+        name: String,
+    },
+    RegisterPane {
+        pane_id: PaneId,
+        preset_name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<PathBuf>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+        started_at_unix_secs: u64,
+    },
+    UnregisterPane {
+        pane_id: PaneId,
+    },
+    SendInput {
+        pane_id: PaneId,
+        bytes: Vec<u8>,
+    },
+    ResizeSession {
+        cols: u16,
+        rows: u16,
+    },
+    RunAction {
+        action: ClientAction,
+    },
     SubscribeUpdates,
-    FocusChanged { focused: bool },
+    FocusChanged {
+        focused: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerResponse {
-    Pong { protocol_version: u32 },
-    Sessions { sessions: Vec<SessionListEntry> },
-    SessionCreated { session: SessionListEntry },
-    Attached { session_name: String, snapshot: FullSnapshot },
-    Detached { session_name: String },
-    Subscribed { session_name: String },
+    Pong {
+        protocol_version: u32,
+    },
+    Sessions {
+        sessions: Vec<SessionListEntry>,
+    },
+    SessionCreated {
+        session: SessionListEntry,
+    },
+    Attached {
+        session_name: String,
+        snapshot: FullSnapshot,
+    },
+    Detached {
+        session_name: String,
+    },
+    Subscribed {
+        session_name: String,
+    },
     Ack,
     AlreadyAttached {
         session_name: String,
@@ -125,7 +168,9 @@ pub enum ServerResponse {
         client_protocol_version: u32,
         server_protocol_version: u32,
     },
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

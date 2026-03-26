@@ -470,6 +470,8 @@ pub struct SessionRuntime {
 }
 ```
 
+Implementation note: the foreground fallback `App` must delegate to this runtime by attaching the default daemon session and registering pane metadata there. Starting a second hook server or a second Codex poller inside `App` does not satisfy Task 5.
+
 - [x] **Step 4: Keep daemon-owned `~/.humu/port` publication compatible with existing hook scripts**
 
 ```rust
