@@ -178,6 +178,10 @@ The following types remain shared between client and server:
 
 Use a Unix domain socket at `~/.humu/server.sock`.
 
+### Wire framing
+
+The socket protocol is frame-based rather than raw concatenated JSON. Each message is sent as a 4-byte big-endian payload length followed by one compact JSON document so the client and server can safely decode back-to-back messages from a long-lived stream.
+
 ### Control Flow
 
 1. Client checks for server socket
@@ -258,6 +262,14 @@ This avoids reintroducing lifetime coupling between client detach and parser sta
 - session geometry and per-pane runtime state
 - focused pane ID and fullscreen pane ID
 - per-pane terminal screen snapshot
+- per-cell text plus fg/bg/style attributes needed by the renderer:
+  - bold
+  - dim
+  - italic
+  - underline
+  - inverse
+  - hidden
+  - strike
 - per-pane preset name
 - per-pane terminal capability state needed for input routing:
   - alternate-screen
@@ -268,6 +280,8 @@ This avoids reintroducing lifetime coupling between client detach and parser sta
 - explorer root path for the active room
 
 Incremental events may update only the changed subset, but they must preserve the same schema boundaries as the full snapshot.
+
+`LayoutUpdated` therefore includes updated pane geometry keyed by pane ID in addition to tabs, split tree, and focus/fullscreen metadata.
 
 The shared render layer therefore includes explicit tab, split-tree, pane geometry, pane runtime-state, terminal capability, agent summary, and session metadata structs so client and server can exchange snapshots without depending on live PTY/parser objects.
 

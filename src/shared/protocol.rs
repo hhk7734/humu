@@ -1,13 +1,15 @@
 use crate::id::PaneId;
 use crate::shared::render::{
     AgentSummary, DetachReason, FullSnapshot, PaneSnapshot, SessionGeometrySnapshot,
-    SplitTreeSnapshot, TabSnapshot,
+    PaneGeometrySnapshot, SplitTreeSnapshot, TabSnapshot,
 };
+use anyhow::{anyhow, bail};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 pub const PROTOCOL_VERSION: u32 = 1;
+const FRAME_HEADER_LEN: usize = 4;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -146,6 +148,8 @@ pub enum ServerEvent {
         focused_pane_id: Option<PaneId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fullscreen_pane_id: Option<PaneId>,
+        #[serde(default)]
+        pane_geometries: std::collections::HashMap<PaneId, PaneGeometrySnapshot>,
     },
     AgentStateUpdated {
         pane_id: PaneId,
@@ -172,10 +176,57 @@ pub enum ServerEvent {
     },
 }
 
-pub fn to_wire_bytes<T: Serialize>(message: &T) -> serde_json::Result<Vec<u8>> {
-    serde_json::to_vec(message)
+pub fn encode_frame<T: Serialize>(message: &T) -> serde_json::Result<Vec<u8>> {
+    let payload = serde_json::to_vec(message)?;
+    let len = u32::try_from(payload.len())
+        .map_err(|_| serde_json::Error::io(std::io::Error::other("frame too large")))?;
+    let mut framed = Vec::with_capacity(FRAME_HEADER_LEN + payload.len());
+    framed.extend_from_slice(&len.to_be_bytes());
+    framed.extend_from_slice(&payload);
+    Ok(framed)
 }
 
-pub fn from_wire_slice<T: DeserializeOwned>(bytes: &[u8]) -> serde_json::Result<T> {
-    serde_json::from_slice(bytes)
+pub fn decode_frame<T: DeserializeOwned>(bytes: &[u8]) -> anyhow::Result<T> {
+    if bytes.len() < FRAME_HEADER_LEN {
+        bail!("frame too short");
+    }
+    let frame_len = u32::from_be_bytes(bytes[..FRAME_HEADER_LEN].try_into().unwrap()) as usize;
+    if bytes.len() != FRAME_HEADER_LEN + frame_len {
+        bail!("frame length mismatch");
+    }
+    Ok(serde_json::from_slice(&bytes[FRAME_HEADER_LEN..])?)
+}
+
+#[derive(Debug, Default)]
+pub struct FrameDecoder {
+    buffer: Vec<u8>,
+}
+
+impl FrameDecoder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn push(&mut self, bytes: &[u8]) {
+        self.buffer.extend_from_slice(bytes);
+    }
+
+    pub fn try_decode<T: DeserializeOwned>(&mut self) -> anyhow::Result<Option<T>> {
+        if self.buffer.len() < FRAME_HEADER_LEN {
+            return Ok(None);
+        }
+
+        let frame_len =
+            u32::from_be_bytes(self.buffer[..FRAME_HEADER_LEN].try_into().unwrap()) as usize;
+        let total_len = FRAME_HEADER_LEN + frame_len;
+        if self.buffer.len() < total_len {
+            return Ok(None);
+        }
+
+        let payload = self.buffer[FRAME_HEADER_LEN..total_len].to_vec();
+        self.buffer.drain(..total_len);
+        serde_json::from_slice(&payload)
+            .map(Some)
+            .map_err(|err| anyhow!("failed to decode framed message: {err}"))
+    }
 }

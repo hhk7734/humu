@@ -270,6 +270,11 @@ git add src/shared/mod.rs src/shared/protocol.rs src/shared/render.rs src/lib.rs
 git commit -m "feat: define server-client protocol and snapshots"
 ```
 
+Task 2 follow-up fixes:
+- Use framed wire helpers suitable for streaming Unix socket traffic
+- Preserve per-cell terminal styling in the shared screen snapshot contract
+- Include pane geometry payloads in `LayoutUpdated`
+
 ## Task 3: Add Test Harnesses For Daemon, Client, And PTY Survival
 
 **Files:**

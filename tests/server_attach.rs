@@ -1,9 +1,9 @@
 use humu::id::PaneId;
 use humu::shared::protocol::{
-    ClientAction, ClientRequest, NavigationDirection, ServerEvent, ServerResponse,
-    SessionListEntry,
+    encode_frame, decode_frame, ClientAction, ClientRequest, FrameDecoder, NavigationDirection,
+    ServerEvent, ServerResponse, SessionListEntry,
 };
-use humu::shared::render::{DetachReason, FullSnapshot};
+use humu::shared::render::{ColorSnapshot, DetachReason, FullSnapshot};
 use uuid::Uuid;
 
 fn pane_id(raw: &str) -> PaneId {
@@ -113,6 +113,8 @@ fn server_event_round_trips_snapshot_and_incremental_variants() {
     let snapshot = FullSnapshot::fixture();
     let pane_id = *snapshot.panes.keys().next().unwrap();
     let pane = snapshot.panes.get(&pane_id).unwrap().clone();
+    let mut pane_geometries = std::collections::HashMap::new();
+    pane_geometries.insert(pane_id, pane.geometry.clone().unwrap());
     let events = vec![
         ServerEvent::FullSnapshot(snapshot.clone()),
         ServerEvent::PaneUpdated {
@@ -126,6 +128,7 @@ fn server_event_round_trips_snapshot_and_incremental_variants() {
             session_geometry: snapshot.session_geometry.clone(),
             focused_pane_id: snapshot.focused_pane_id,
             fullscreen_pane_id: snapshot.fullscreen_pane_id,
+            pane_geometries,
         },
         ServerEvent::AgentStateUpdated {
             pane_id,
@@ -186,4 +189,83 @@ fn full_snapshot_exposes_all_spec_fields() {
     assert!(pane.capabilities.mouse_protocol_encoding.is_some());
     assert_eq!(pane.capabilities.scrollback_offset, 12);
     assert!(pane.agent_state.is_some());
+    assert!(!pane.screen.cells.is_empty());
+
+    let styled = &pane.screen.cells[0][0];
+    assert_eq!(styled.text, "h");
+    assert_eq!(styled.fg, ColorSnapshot::Rgb(12, 34, 56));
+    assert_eq!(styled.bg, ColorSnapshot::Rgb(60, 60, 60));
+    assert!(styled.bold);
+    assert!(styled.dim);
+    assert!(styled.italic);
+    assert!(styled.underline);
+    assert!(styled.inverse);
+    assert!(styled.hidden);
+    assert!(styled.strike);
+}
+
+#[test]
+fn framed_wire_helpers_support_back_to_back_messages_on_one_stream() {
+    let first = ClientRequest::Ping;
+    let second = ClientRequest::FocusChanged { focused: true };
+
+    let mut stream = encode_frame(&first).unwrap();
+    stream.extend(encode_frame(&second).unwrap());
+
+    let mut decoder = FrameDecoder::new();
+    let split = stream.len() / 2;
+    decoder.push(&stream[..split]);
+    let decoded_first: ClientRequest = decoder.try_decode().unwrap().unwrap();
+    assert_eq!(decoded_first, first);
+    assert!(decoder.try_decode::<ClientRequest>().unwrap().is_none());
+
+    decoder.push(&stream[split..]);
+    let decoded_second: ClientRequest = decoder.try_decode().unwrap().unwrap();
+    assert_eq!(decoded_second, second);
+    assert!(decoder.try_decode::<ClientRequest>().unwrap().is_none());
+}
+
+#[test]
+fn framed_wire_helpers_round_trip_single_response() {
+    let response = ServerResponse::Pong {
+        protocol_version: humu::shared::protocol::PROTOCOL_VERSION,
+    };
+
+    let bytes = encode_frame(&response).unwrap();
+    let decoded: ServerResponse = decode_frame(&bytes).unwrap();
+    assert_eq!(decoded, response);
+}
+
+#[test]
+fn layout_updates_include_pane_geometry_changes() {
+    let snapshot = FullSnapshot::fixture();
+    let pane_id = snapshot.focused_pane_id.unwrap();
+    let event = ServerEvent::LayoutUpdated {
+        tabs: snapshot.tabs.clone(),
+        active_tab_index: snapshot.active_tab_index,
+        split_tree: snapshot.split_tree.clone(),
+        session_geometry: snapshot.session_geometry.clone(),
+        focused_pane_id: snapshot.focused_pane_id,
+        fullscreen_pane_id: snapshot.fullscreen_pane_id,
+        pane_geometries: std::collections::HashMap::from([(
+            pane_id,
+            humu::shared::render::PaneGeometrySnapshot {
+                x: 5,
+                y: 3,
+                width: 77,
+                height: 19,
+            },
+        )]),
+    };
+
+    let bytes = serde_json::to_vec(&event).unwrap();
+    let decoded: ServerEvent = serde_json::from_slice(&bytes).unwrap();
+    match decoded {
+        ServerEvent::LayoutUpdated { pane_geometries, .. } => {
+            let geometry = pane_geometries.get(&pane_id).unwrap();
+            assert_eq!(geometry.x, 5);
+            assert_eq!(geometry.width, 77);
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
 }

@@ -51,13 +51,47 @@ pub struct CursorSnapshot {
     pub visible: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ColorSnapshot {
+    Default,
+    Idx(u8),
+    Rgb(u8, u8, u8),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalCellSnapshot {
+    #[serde(default)]
+    pub text: String,
+    pub fg: ColorSnapshot,
+    pub bg: ColorSnapshot,
+    #[serde(default)]
+    pub bold: bool,
+    #[serde(default)]
+    pub dim: bool,
+    #[serde(default)]
+    pub italic: bool,
+    #[serde(default)]
+    pub underline: bool,
+    #[serde(default)]
+    pub inverse: bool,
+    #[serde(default)]
+    pub hidden: bool,
+    #[serde(default)]
+    pub strike: bool,
+    #[serde(default)]
+    pub wide: bool,
+    #[serde(default)]
+    pub wide_continuation: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TerminalScreenSnapshot {
     pub rows: u16,
     pub cols: u16,
     pub cursor: CursorSnapshot,
     #[serde(default)]
-    pub lines: Vec<String>,
+    pub cells: Vec<Vec<TerminalCellSnapshot>>,
     #[serde(default)]
     pub title: String,
 }
@@ -143,6 +177,8 @@ pub struct LayoutSnapshot {
     pub focused_pane_id: Option<PaneId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fullscreen_pane_id: Option<PaneId>,
+    #[serde(default)]
+    pub pane_geometries: HashMap<PaneId, PaneGeometrySnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -245,9 +281,51 @@ impl FullSnapshot {
                         col: 18,
                         visible: true,
                     },
-                    lines: vec![
-                        "humu default".to_string(),
-                        "server snapshot".to_string(),
+                    cells: vec![
+                        vec![
+                            TerminalCellSnapshot {
+                                text: "h".to_string(),
+                                fg: ColorSnapshot::Rgb(12, 34, 56),
+                                bg: ColorSnapshot::Rgb(60, 60, 60),
+                                bold: true,
+                                dim: true,
+                                italic: true,
+                                underline: true,
+                                inverse: true,
+                                hidden: true,
+                                strike: true,
+                                wide: false,
+                                wide_continuation: false,
+                            },
+                            TerminalCellSnapshot {
+                                text: "u".to_string(),
+                                fg: ColorSnapshot::Idx(2),
+                                bg: ColorSnapshot::Default,
+                                bold: false,
+                                dim: false,
+                                italic: false,
+                                underline: false,
+                                inverse: false,
+                                hidden: false,
+                                strike: false,
+                                wide: false,
+                                wide_continuation: false,
+                            },
+                        ],
+                        vec![TerminalCellSnapshot {
+                            text: "s".to_string(),
+                            fg: ColorSnapshot::Default,
+                            bg: ColorSnapshot::Default,
+                            bold: false,
+                            dim: false,
+                            italic: false,
+                            underline: false,
+                            inverse: false,
+                            hidden: false,
+                            strike: false,
+                            wide: false,
+                            wide_continuation: false,
+                        }],
                     ],
                     title: "shell".to_string(),
                 },
@@ -283,7 +361,20 @@ impl FullSnapshot {
                         col: 0,
                         visible: false,
                     },
-                    lines: vec!["completed".to_string()],
+                    cells: vec![vec![TerminalCellSnapshot {
+                        text: "c".to_string(),
+                        fg: ColorSnapshot::Idx(7),
+                        bg: ColorSnapshot::Default,
+                        bold: false,
+                        dim: false,
+                        italic: false,
+                        underline: false,
+                        inverse: false,
+                        hidden: false,
+                        strike: false,
+                        wide: false,
+                        wide_continuation: false,
+                    }]],
                     title: "codex".to_string(),
                 },
                 preset_name: "codex".to_string(),
