@@ -13,8 +13,9 @@ fn main() -> Result<()> {
             app.run()
         }
         Some(Command::Server { daemon }) => server::daemon::run(daemon),
-        Some(Command::Attach { session }) => {
-            server::daemon::attach_shell(session.as_deref().unwrap_or("default"))
+        Some(Command::Attach { .. }) => {
+            let mut app = app::App::new()?;
+            app.run()
         }
         Some(Command::ListSessions) => server::daemon::list_sessions_shell(),
         Some(Command::Detach { session, force }) => {

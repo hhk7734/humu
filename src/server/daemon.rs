@@ -137,25 +137,6 @@ fn wait_for_daemon_ready(paths: &DaemonPaths, child: &mut Child) -> Result<()> {
     }
 }
 
-pub fn attach_shell(session_name: &str) -> Result<()> {
-    let paths = DaemonPaths::default();
-    let metadata = read_metadata(&paths).context("read daemon metadata for attach")?;
-    let protocol_version = ping_protocol_version(&paths).context("ping daemon for attach")?;
-    if protocol_version != PROTOCOL_VERSION {
-        bail!(
-            "protocol version mismatch for session {session_name}: client={} server={protocol_version}",
-            PROTOCOL_VERSION
-        );
-    }
-    if metadata.protocol_version != protocol_version {
-        bail!(
-            "daemon metadata protocol mismatch for session {session_name}: metadata={} live={protocol_version}",
-            metadata.protocol_version
-        );
-    }
-    bail!("attach client is not implemented yet for session {session_name}");
-}
-
 pub fn list_sessions_shell() -> Result<()> {
     let paths = DaemonPaths::default();
     let protocol_version = ping_protocol_version(&paths).context("ping daemon for list-sessions")?;

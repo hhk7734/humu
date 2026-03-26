@@ -261,11 +261,14 @@ fn session_manager_enforces_idempotent_create_and_single_client_attach_lock() {
 }
 
 #[test]
-fn client_refuses_protocol_version_mismatch() {
+fn list_sessions_refuses_protocol_version_mismatch() {
     let env = support::isolated_humu_home();
     let handle = spawn_version_mismatched_server(&env);
 
-    let status = support::run_humu_attach(&env, "default");
+    let status = support::humu_command(&env)
+        .arg("list-sessions")
+        .status()
+        .expect("run humu list-sessions");
     assert!(!status.success());
 
     handle.join().expect("fake server thread").expect("fake server run");
