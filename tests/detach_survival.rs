@@ -5,11 +5,14 @@ mod support;
 
 use humu::config::{HumuConfig, HumuState, NotificationsConfig};
 use humu::id::PaneId;
+use humu::pty::pane::PtyPane;
 use humu::shared::protocol::{ClientRequest, FrameDecoder, ServerResponse, encode_frame};
 use humu::shared::render::{FullSnapshot, PaneRuntimeState, SessionGeometrySnapshot};
 use serde::de::DeserializeOwned;
+use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -84,6 +87,30 @@ fn snapshot_contains(snapshot: &FullSnapshot, needle: &str) -> bool {
         .panes
         .values()
         .any(|pane| pane.screen.contents().contains(needle))
+}
+
+fn wait_for_path(path: &Path, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while !path.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "path was not created before timeout: {}",
+            path.display()
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_process_exit(pid: u32, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while support::process_is_alive(pid) {
+        assert!(
+            Instant::now() < deadline,
+            "process did not exit before timeout: {pid}"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
 }
 
 #[test]
@@ -465,6 +492,80 @@ fn app_attached_snapshot_drives_main_pane_state_without_local_pty() {
 
     let matches = app.test_search_matches_for_query(pane_id, "hu");
     assert_eq!(matches, vec![(0, 0, 2)]);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn floating_editor_exits_when_client_exits() {
+    let mut app = support::App::test_with_state(HumuState::default(), std::env::temp_dir());
+    let pid_file = std::env::temp_dir().join(format!("humu-floating-editor-pid-{}", Uuid::new_v4()));
+    let _ = fs::remove_file(&pid_file);
+
+    let pane_id = PaneId::new();
+    let pane = PtyPane::spawn(
+        "sh",
+        &[String::from("-c"), format!("echo $$ > '{}'; exec cat >/dev/null", pid_file.display())],
+        None,
+        80,
+        24,
+    )
+    .expect("spawn floating editor pane");
+    app.local_panes.insert(pane_id, pane);
+    app.pane_presets.insert(pane_id, "_editor".to_string());
+    app.popup = support::PopupState::FloatingPane {
+        pane_id,
+        title: "editor".to_string(),
+    };
+
+    wait_for_path(&pid_file, Duration::from_secs(5));
+    let pid: u32 = fs::read_to_string(&pid_file)
+        .expect("read editor pid")
+        .trim()
+        .parse()
+        .expect("parse editor pid");
+    assert!(support::process_is_alive(pid));
+
+    drop(app);
+
+    wait_for_process_exit(pid, Duration::from_secs(5));
+    let _ = fs::remove_file(pid_file);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn diff_popup_exits_when_client_exits() {
+    let mut app = support::App::test_with_state(HumuState::default(), std::env::temp_dir());
+    let pid_file = std::env::temp_dir().join(format!("humu-floating-diff-pid-{}", Uuid::new_v4()));
+    let _ = fs::remove_file(&pid_file);
+
+    let pane_id = PaneId::new();
+    let pane = PtyPane::spawn(
+        "sh",
+        &[String::from("-c"), format!("echo $$ > '{}'; exec cat >/dev/null", pid_file.display())],
+        None,
+        80,
+        24,
+    )
+    .expect("spawn diff popup pane");
+    app.local_panes.insert(pane_id, pane);
+    app.pane_presets.insert(pane_id, "_diff".to_string());
+    app.popup = support::PopupState::FloatingPane {
+        pane_id,
+        title: "diff".to_string(),
+    };
+
+    wait_for_path(&pid_file, Duration::from_secs(5));
+    let pid: u32 = fs::read_to_string(&pid_file)
+        .expect("read diff pid")
+        .trim()
+        .parse()
+        .expect("parse diff pid");
+    assert!(support::process_is_alive(pid));
+
+    drop(app);
+
+    wait_for_process_exit(pid, Duration::from_secs(5));
+    let _ = fs::remove_file(pid_file);
 }
 
 fn attach_session(

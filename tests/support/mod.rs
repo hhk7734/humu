@@ -23,7 +23,7 @@ mod app_impl;
 #[path = "../../src/server/persistence.rs"]
 pub mod persistence;
 
-pub use app_impl::App;
+pub use app_impl::{App, PopupState};
 
 pub struct TestEnv {
     pub home: TempDir,

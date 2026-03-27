@@ -523,7 +523,9 @@ impl App {
     }
 
     fn remove_pane_runtime_state(&mut self, pane_id: PaneId) {
-        self.local_panes.remove(&pane_id);
+        if let Some(mut pane) = self.local_panes.remove(&pane_id) {
+            let _ = pane.kill();
+        }
         self.pane_presets.remove(&pane_id);
         self.agent_states.remove(&pane_id);
         self.unregister_pane_with_daemon(pane_id);
@@ -5486,6 +5488,7 @@ impl App {
 
 impl Drop for App {
     fn drop(&mut self) {
+        self.clear_live_panes();
         let _ = self.send_daemon_request(ClientRequest::Detach);
     }
 }
