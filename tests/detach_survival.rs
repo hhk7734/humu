@@ -216,6 +216,117 @@ fn client_disconnect_does_not_kill_session_pty() {
 }
 
 #[test]
+fn runtime_register_pane_applies_claude_env_and_resume_args() {
+    let env = support::isolated_humu_home();
+    let state = support::migrated_state_fixture();
+    support::persistence::save_state(&env.state_path(), &state).expect("save state");
+
+    let mut config = HumuConfig::default();
+    let claude = config.presets.get_mut("claude").expect("claude preset");
+    claude.command = "python3".to_string();
+    claude.args = vec![
+        "-c".to_string(),
+        "import os, sys, time; print(f\"port={os.getenv('HUMU_PORT', '')}\"); print(f\"ws={os.getenv('HUMU_WORKSPACE_ID', '')}\"); print(f\"room={os.getenv('HUMU_ROOM_ID', '')}\"); print(f\"pane={os.getenv('HUMU_PANE_ID', '')}\"); print(f\"arg1={sys.argv[1] if len(sys.argv) > 1 else ''}\"); print(f\"arg2={sys.argv[2] if len(sys.argv) > 2 else ''}\"); print(f\"arg3={sys.argv[3] if len(sys.argv) > 3 else ''}\"); print(f\"arg4={sys.argv[4] if len(sys.argv) > 4 else ''}\"); sys.stdout.flush(); time.sleep(60)".to_string(),
+    ];
+
+    let runtime = server_impl::runtime::SessionRuntime::start(
+        env.humu_dir().to_path_buf(),
+        config,
+        NotificationsConfig::default(),
+        env.home.path().join(".codex/sessions"),
+    )
+    .expect("start runtime");
+
+    let pane = pane_id("22222222-2222-2222-2222-222222222222");
+    let hook_port = runtime.hook_port();
+    runtime.attach_session("default");
+    runtime
+        .register_pane(
+            "default",
+            pane,
+            "claude",
+            None,
+            Some("resume-claude".to_string()),
+            SystemTime::now(),
+        )
+        .expect("register claude runtime pane");
+
+    let expected_settings = env.humu_dir().join("hooks/claude-settings.json");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut snapshot = runtime.snapshot_for_session("default", FullSnapshot::fixture());
+    while !(snapshot_contains(&snapshot, &format!("port={hook_port}"))
+        && snapshot_contains(
+            &snapshot,
+            &format!("ws={}", support::workspace_id("humu")),
+        )
+        && snapshot_contains(&snapshot, &format!("room={}", support::room_id("main")))
+        && snapshot_contains(&snapshot, &format!("pane={pane}"))
+        && snapshot_contains(&snapshot, "arg1=--settings")
+        && snapshot_contains(
+            &snapshot,
+            &format!("arg2={}", expected_settings.display()),
+        )
+        && snapshot_contains(&snapshot, "arg3=--resume")
+        && snapshot_contains(&snapshot, "arg4=resume-claude"))
+    {
+        assert!(
+            Instant::now() < deadline,
+            "server-owned claude spawn contract never appeared in snapshot: {:?}",
+            snapshot.panes
+        );
+        std::thread::sleep(Duration::from_millis(50));
+        snapshot = runtime.snapshot_for_session("default", FullSnapshot::fixture());
+    }
+}
+
+#[test]
+fn runtime_register_pane_applies_codex_resume_args() {
+    let env = support::isolated_humu_home();
+    let mut config = HumuConfig::default();
+    let codex = config.presets.get_mut("codex").expect("codex preset");
+    codex.command = "python3".to_string();
+    codex.args = vec![
+        "-c".to_string(),
+        "import sys, time; print(f\"arg1={sys.argv[1] if len(sys.argv) > 1 else ''}\"); print(f\"arg2={sys.argv[2] if len(sys.argv) > 2 else ''}\"); sys.stdout.flush(); time.sleep(60)".to_string(),
+    ];
+
+    let runtime = server_impl::runtime::SessionRuntime::start(
+        env.humu_dir().to_path_buf(),
+        config,
+        NotificationsConfig::default(),
+        env.home.path().join(".codex/sessions"),
+    )
+    .expect("start runtime");
+
+    let pane = pane_id("33333333-3333-3333-3333-333333333333");
+    runtime.attach_session("default");
+    runtime
+        .register_pane(
+            "default",
+            pane,
+            "codex",
+            None,
+            Some("resume-codex".to_string()),
+            SystemTime::now(),
+        )
+        .expect("register codex runtime pane");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut snapshot = runtime.snapshot_for_session("default", FullSnapshot::fixture());
+    while !(snapshot_contains(&snapshot, "arg1=resume")
+        && snapshot_contains(&snapshot, "arg2=resume-codex"))
+    {
+        assert!(
+            Instant::now() < deadline,
+            "server-owned codex spawn contract never appeared in snapshot: {:?}",
+            snapshot.panes
+        );
+        std::thread::sleep(Duration::from_millis(50));
+        snapshot = runtime.snapshot_for_session("default", FullSnapshot::fixture());
+    }
+}
+
+#[test]
 fn reattach_resizes_session_to_new_client_geometry() {
     let env = support::isolated_humu_home();
     write_config(
@@ -341,7 +452,7 @@ fn app_attached_snapshot_drives_main_pane_state_without_local_pty() {
     let pane_id = snapshot.focused_pane_id.expect("focused pane");
 
     app.test_hydrate_attached_snapshot(snapshot);
-    app.panes.clear();
+    app.local_panes.clear();
 
     assert_eq!(app.test_attached_screen_contents(pane_id).as_deref(), Some("hu\ns"));
 

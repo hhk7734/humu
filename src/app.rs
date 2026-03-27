@@ -124,10 +124,10 @@ pub enum PresetAction {
     SplitRight,
 }
 
-/// Holds the live runtime state for a room so it can be suspended and restored
-/// without killing PTY processes.
+/// Holds room runtime state for non-attached local mode and layout metadata for
+/// attached-session room switches.
 pub struct RoomState {
-    pub panes: HashMap<PaneId, PtyPane>,
+    pub local_panes: HashMap<PaneId, PtyPane>,
     pub tabs: TabContainer,
     pub pane_presets: HashMap<PaneId, String>,
     pub focused_pane: Option<PaneId>,
@@ -221,7 +221,9 @@ pub struct App {
     pub workspace_selected: Option<WorkspaceId>,
     pub room_selected: Option<RoomId>,
     pub running: bool,
-    pub panes: HashMap<PaneId, PtyPane>,
+    /// Local-only PTYs that are not daemon-owned session panes, such as
+    /// floating editor/diff overlays.
+    pub local_panes: HashMap<PaneId, PtyPane>,
     pub tabs: TabContainer,
     pub focused_pane: Option<PaneId>,
     /// Tracks which preset name was used to spawn each pane.
@@ -299,7 +301,7 @@ impl App {
         };
 
         let tabs = TabContainer::new();
-        let panes = HashMap::new();
+        let local_panes = HashMap::new();
         let pane_presets = HashMap::new();
         let (server_stream, hook_port, attached_snapshot) =
             Self::connect_default_daemon_session()?;
@@ -319,7 +321,7 @@ impl App {
             workspace_selected: None,
             room_selected: None,
             running: true,
-            panes,
+            local_panes,
             tabs,
             focused_pane: None,
             pane_presets,
@@ -484,15 +486,52 @@ impl App {
         let _ = self.send_daemon_request(ClientRequest::UnregisterPane { pane_id });
     }
 
+    fn refresh_attached_runtime_snapshot(&mut self) {
+        let Some(attached) = self.attached_snapshot.as_ref() else {
+            return;
+        };
+        let session_name = attached.session_name.clone();
+        let session_geometry = attached.session_geometry.clone();
+        let cols = session_geometry.as_ref().map(|size| size.cols).unwrap_or(80);
+        let rows = session_geometry.as_ref().map(|size| size.rows).unwrap_or(24);
+        let Some(ServerResponse::Attached { snapshot, .. }) =
+            self.send_daemon_request(ClientRequest::AttachSession {
+                name: session_name,
+                cols,
+                rows,
+            })
+        else {
+            return;
+        };
+        for (pane_id, pane) in &snapshot.panes {
+            if let Some(agent_state) = pane.agent_state.as_ref() {
+                let state = match agent_state.status {
+                    AgentStatus::Working => AgentState::Working,
+                    AgentStatus::NeedsInput => AgentState::NeedsInput,
+                    AgentStatus::Idle => AgentState::Idle,
+                };
+                self.agent_states.insert(
+                    *pane_id,
+                    AgentStateEntry {
+                        state,
+                        session_id: agent_state.session_id.clone(),
+                    },
+                );
+            }
+        }
+        self.attached_snapshot = Some(snapshot);
+    }
+
     fn remove_pane_runtime_state(&mut self, pane_id: PaneId) {
-        self.panes.remove(&pane_id);
+        self.local_panes.remove(&pane_id);
         self.pane_presets.remove(&pane_id);
         self.agent_states.remove(&pane_id);
         self.unregister_pane_with_daemon(pane_id);
+        self.refresh_attached_runtime_snapshot();
     }
 
     fn clear_live_panes(&mut self) {
-        let pane_ids: Vec<PaneId> = self.panes.keys().copied().collect();
+        let pane_ids: Vec<PaneId> = self.local_panes.keys().copied().collect();
         for pane_id in pane_ids {
             self.remove_pane_runtime_state(pane_id);
         }
@@ -503,7 +542,12 @@ impl App {
     }
 
     fn unregister_room_state_panes(&mut self, room_state: &RoomState) {
-        for pane_id in room_state.panes.keys().copied() {
+        let pane_ids = if room_state.local_panes.is_empty() {
+            room_state.pane_presets.keys().copied().collect::<Vec<_>>()
+        } else {
+            room_state.local_panes.keys().copied().collect::<Vec<_>>()
+        };
+        for pane_id in pane_ids {
             self.agent_states.remove(&pane_id);
             self.unregister_pane_with_daemon(pane_id);
         }
@@ -537,7 +581,7 @@ impl App {
         };
 
         if self
-            .panes
+            .local_panes
             .get_mut(&pane_id)
             .and_then(|pane| pane.exit_status())
             .is_some()
@@ -899,7 +943,7 @@ impl App {
     }
 
     fn pane_input_state(&self, pane_id: PaneId) -> Option<PaneInputState> {
-        if let Some(pane) = self.panes.get(&pane_id) {
+        if let Some(pane) = self.local_panes.get(&pane_id) {
             return Some(pane.input_state());
         }
         self.attached_pane_snapshot(pane_id)
@@ -907,7 +951,7 @@ impl App {
     }
 
     fn pane_exit_code(&mut self, pane_id: PaneId) -> Option<i32> {
-        if let Some(pane) = self.panes.get_mut(&pane_id) {
+        if let Some(pane) = self.local_panes.get_mut(&pane_id) {
             return pane.exit_status();
         }
         self.attached_pane_snapshot(pane_id)
@@ -919,7 +963,7 @@ impl App {
     }
 
     fn pane_search_rows(&self, pane_id: PaneId) -> Option<Vec<(String, Vec<usize>)>> {
-        if let Some(pane) = self.panes.get(&pane_id) {
+        if let Some(pane) = self.local_panes.get(&pane_id) {
             let screen = pane.screen_snapshot();
             return Some(humu::tui::search::extract_rows(&screen));
         }
@@ -929,7 +973,7 @@ impl App {
 
     #[cfg_attr(not(test), allow(dead_code))]
     fn pane_screen_contents(&self, pane_id: PaneId) -> Option<String> {
-        if let Some(pane) = self.panes.get(&pane_id) {
+        if let Some(pane) = self.local_panes.get(&pane_id) {
             return Some(pane.screen_snapshot().contents());
         }
         self.attached_pane_snapshot(pane_id)
@@ -981,7 +1025,7 @@ impl App {
 
         while self.running {
             // Process PTY output before render so cursor position is up-to-date.
-            for pane in self.panes.values_mut() {
+            for pane in self.local_panes.values_mut() {
                 let _ = pane.process_output();
             }
 
@@ -994,7 +1038,7 @@ impl App {
                 let fp_area = self.floating_pane_area();
                 let inner_w = fp_area.width.saturating_sub(2);
                 let inner_h = fp_area.height.saturating_sub(2);
-                if let Some(pane) = self.panes.get_mut(&pane_id) {
+                if let Some(pane) = self.local_panes.get_mut(&pane_id) {
                     if pane.cols() != inner_w || pane.rows() != inner_h {
                         let _ = pane.resize(inner_w, inner_h);
                     }
@@ -1112,18 +1156,16 @@ impl App {
         // Graceful shutdown: sync layout for current room and all suspended rooms,
         // then write once to disk.
         self.sync_layout();
-        self.panes.clear();
+        self.local_panes.clear();
 
         // Sync suspended rooms into state.
         let suspended: Vec<_> = self.suspended_rooms.drain().collect();
         for ((ws_id, room_id), room_state) in suspended {
             // Temporarily swap in the suspended state to reuse persist helpers.
-            self.panes = room_state.panes;
             self.tabs = room_state.tabs;
             self.pane_presets = room_state.pane_presets;
             let layout = self.save_layout();
             self.persist_room_layout(ws_id, room_id, layout);
-            self.panes.clear();
         }
 
         self.save_state();
@@ -1476,7 +1518,7 @@ impl App {
             return;
         }
         // Forward all keys to the PTY
-        if let Some(pane) = self.panes.get_mut(&pane_id) {
+        if let Some(pane) = self.local_panes.get_mut(&pane_id) {
             let bytes = key_event_to_bytes(&key);
             if !bytes.is_empty() {
                 let _ = pane.write_input(&bytes);
@@ -1499,14 +1541,14 @@ impl App {
         for action in actions {
             match action {
                 InputAction::Write(bytes) => {
-                    if let Some(pane) = self.panes.get_mut(&pane_id) {
+                    if let Some(pane) = self.local_panes.get_mut(&pane_id) {
                         let _ = pane.write_input(&bytes);
                     } else {
                         let _ = self.send_daemon_request(ClientRequest::SendInput { pane_id, bytes });
                     }
                 }
                 InputAction::AdjustScrollback { lines, up } => {
-                    if let Some(pane) = self.panes.get(&pane_id) {
+                    if let Some(pane) = self.local_panes.get(&pane_id) {
                         if up {
                             pane.scrollback_up(lines);
                         } else {
@@ -1515,7 +1557,7 @@ impl App {
                     }
                 }
                 InputAction::ResetScrollback => {
-                    if let Some(pane) = self.panes.get(&pane_id) {
+                    if let Some(pane) = self.local_panes.get(&pane_id) {
                         pane.reset_scrollback();
                     }
                 }
@@ -1573,7 +1615,7 @@ impl App {
             return false;
         }
 
-        let pane = match self.panes.get_mut(&pane_id) {
+        let pane = match self.local_panes.get_mut(&pane_id) {
             Some(p) => p,
             None => return false,
         };
@@ -2682,7 +2724,7 @@ impl App {
 
                 frame.render_widget(Clear, popup_area);
 
-                if let Some(pane) = self.panes.get(pane_id) {
+                if let Some(pane) = self.local_panes.get(pane_id) {
                     let screen = pane.screen_snapshot();
                     let tw = TerminalWidget::new(&screen, title, &self.palette, &self.ui_config)
                         .focus(true)
@@ -2895,7 +2937,7 @@ impl App {
 
         // Fullscreen mode: render only the fullscreen pane filling the whole area.
         if let Some(fs_id) = self.fullscreen_pane {
-            if let Some(pane) = self.panes.get_mut(&fs_id) {
+            if let Some(pane) = self.local_panes.get_mut(&fs_id) {
                 let inner_w = pane_area.width.saturating_sub(2);
                 let inner_h = pane_area.height.saturating_sub(2);
                 if pane.cols() != inner_w || pane.rows() != inner_h {
@@ -2908,7 +2950,7 @@ impl App {
                 .active_tree()
                 .map(|t| t.pane_ids().len())
                 .unwrap_or(1);
-            if let Some(pane) = self.panes.get(&fs_id) {
+            if let Some(pane) = self.local_panes.get(&fs_id) {
                 let screen = pane.screen_snapshot();
                 let preset_name = self
                     .pane_presets
@@ -2973,7 +3015,7 @@ impl App {
                 // Resize pane if its dimensions have changed since last render.
                 let inner_w = rect.width.saturating_sub(2);
                 let inner_h = rect.height.saturating_sub(2);
-                if let Some(pane) = self.panes.get_mut(pane_id)
+                if let Some(pane) = self.local_panes.get_mut(pane_id)
                     && (pane.cols() != inner_w || pane.rows() != inner_h)
                 {
                     let _ = pane.resize(inner_w, inner_h);
@@ -2985,7 +3027,7 @@ impl App {
                 .map(|(pid, _)| (*pid, self.pane_exit_code(*pid)))
                 .collect();
             for (pane_id, rect) in rects {
-                if let Some(pane) = self.panes.get(&pane_id) {
+                if let Some(pane) = self.local_panes.get(&pane_id) {
                     let screen = pane.screen_snapshot();
                     let is_focused =
                         self.focused_pane == Some(pane_id) && self.focus == FocusedPanel::Terminal;
@@ -3211,7 +3253,7 @@ impl App {
             }
             Action::ScrollUp => {
                 if let Some(pane_id) = self.focused_pane {
-                    if let Some(pane) = self.panes.get(&pane_id) {
+                    if let Some(pane) = self.local_panes.get(&pane_id) {
                         pane.scrollback_up(1);
                     }
                 }
@@ -3221,7 +3263,7 @@ impl App {
             }
             Action::ScrollDown => {
                 if let Some(pane_id) = self.focused_pane {
-                    if let Some(pane) = self.panes.get(&pane_id) {
+                    if let Some(pane) = self.local_panes.get(&pane_id) {
                         pane.scrollback_down(1);
                     }
                 }
@@ -3231,7 +3273,7 @@ impl App {
             }
             Action::ScrollPageUp => {
                 if let Some(pane_id) = self.focused_pane {
-                    if let Some(pane) = self.panes.get(&pane_id) {
+                    if let Some(pane) = self.local_panes.get(&pane_id) {
                         let page = pane.rows() as usize;
                         pane.scrollback_up(page);
                     }
@@ -3242,7 +3284,7 @@ impl App {
             }
             Action::ScrollPageDown => {
                 if let Some(pane_id) = self.focused_pane {
-                    if let Some(pane) = self.panes.get(&pane_id) {
+                    if let Some(pane) = self.local_panes.get(&pane_id) {
                         let page = pane.rows() as usize;
                         pane.scrollback_down(page);
                     }
@@ -3425,7 +3467,7 @@ impl App {
         };
 
         let mut text = String::new();
-        if let Some(pane) = self.panes.get(&sel.pane_id) {
+        if let Some(pane) = self.local_panes.get(&sel.pane_id) {
             let screen = pane.screen_snapshot();
             let cols = screen.size().1;
             for row in start_row..=end_row {
@@ -3998,6 +4040,20 @@ impl App {
         // Preserve session_id for agent_states before it's consumed by args.
         let restored_session_id = session_id.clone();
 
+        if self.attached_snapshot.is_some() {
+            let id = self.create_attached_placeholder_pane(preset_name, restored_session_id.clone());
+            let cwd = self.current_room_path();
+            self.register_pane_with_daemon(
+                id,
+                preset_name,
+                cwd,
+                restored_session_id,
+                SystemTime::now(),
+            );
+            self.refresh_attached_runtime_snapshot();
+            return Some(id);
+        }
+
         let shell_cmd = self
             .config
             .presets
@@ -4062,7 +4118,7 @@ impl App {
         let mut all_args = args;
         all_args.extend(extra_args);
         let pane = PtyPane::spawn_with_envs(&cmd, &all_args, cwd.as_deref(), 80, 24, &envs).ok()?;
-        self.panes.insert(id, pane);
+        self.local_panes.insert(id, pane);
         self.pane_presets.insert(id, preset_name.to_string());
         // Seed agent_states so session_id survives restart even if no hook
         // event arrives before the next shutdown.
@@ -4104,7 +4160,7 @@ impl App {
             None
         };
         let exited: Vec<PaneId> = self
-            .panes
+            .local_panes
             .iter_mut()
             .filter_map(|(id, p)| p.exit_status().map(|_| *id))
             .filter(|id| Some(*id) != floating_id)
@@ -4185,7 +4241,10 @@ impl App {
                 for id in ids {
                     tree.remove_pane(*id);
                 }
-                let alive = tree.pane_ids().iter().any(|id| self.panes.contains_key(id));
+                let alive = tree
+                    .pane_ids()
+                    .iter()
+                    .any(|id| self.pane_presets.contains_key(id));
                 if !alive {
                     self.tabs.remove_tab(i);
                 }
@@ -4323,7 +4382,7 @@ impl App {
         }
         if let PopupState::FloatingPane { pane_id, .. } = &self.popup {
             let pane_id = *pane_id;
-            if let Some(pane) = self.panes.get_mut(&pane_id) {
+            if let Some(pane) = self.local_panes.get_mut(&pane_id) {
                 let _ = pane.write_input(text.as_bytes());
             }
             return;
@@ -4421,12 +4480,12 @@ impl App {
         let mut ids = Vec::new();
         // Current room's panes if this is the active workspace.
         if self.state.active_workspace_id == Some(ws_id) {
-            ids.extend(self.panes.keys());
+            ids.extend(self.pane_presets.keys());
         }
         // Suspended rooms for this workspace.
         for ((wid, _), room_state) in &self.suspended_rooms {
             if *wid == ws_id {
-                ids.extend(room_state.panes.keys());
+                ids.extend(room_state.pane_presets.keys());
             }
         }
         ids
@@ -4563,11 +4622,11 @@ impl App {
         if self.state.active_workspace_id == Some(ws_id)
             && self.state.active_room_id == Some(room_id)
         {
-            ids.extend(self.panes.keys());
+            ids.extend(self.pane_presets.keys());
         }
         // Suspended room.
         if let Some(room_state) = self.suspended_rooms.get(&(ws_id, room_id)) {
-            ids.extend(room_state.panes.keys());
+            ids.extend(room_state.pane_presets.keys());
         }
         ids
     }
@@ -4685,12 +4744,11 @@ impl App {
         if self.state.active_workspace_id == Some(ws_id)
             && self.state.active_room_id == Some(room_id)
         {
-            let pane_ids: Vec<PaneId> = self.panes.keys().copied().collect();
+            let pane_ids: Vec<PaneId> = self.pane_presets.keys().copied().collect();
             for pane_id in pane_ids {
                 self.agent_states.remove(&pane_id);
                 self.unregister_pane_with_daemon(pane_id);
             }
-            self.panes.clear();
             self.pane_presets.clear();
             self.tabs = TabContainer::new();
             self.focused_pane = None;
@@ -4864,7 +4922,7 @@ impl App {
     /// Close all existing panes and rebuild the TabContainer from a saved room's layout.
     fn restore_layout(&mut self, active_tab: usize, tabs: Vec<TabLayout>) {
         // Drop all existing panes.
-        self.panes.clear();
+        self.local_panes.clear();
         self.pane_presets.clear();
         self.tabs = TabContainer::new();
         self.focused_pane = None;
@@ -4974,7 +5032,11 @@ impl App {
         // Move live state out of self into suspended storage.
         // PaneId uses UUID, so uniqueness is guaranteed across rooms.
         let room_state = RoomState {
-            panes: std::mem::take(&mut self.panes),
+            local_panes: if self.attached_snapshot.is_some() {
+                HashMap::new()
+            } else {
+                std::mem::take(&mut self.local_panes)
+            },
             tabs: std::mem::replace(&mut self.tabs, TabContainer::new()),
             pane_presets: std::mem::take(&mut self.pane_presets),
             focused_pane: self.focused_pane.take(),
@@ -4988,24 +5050,25 @@ impl App {
     /// the persisted layout, or create a default shell tab.
     fn restore_room(&mut self, ws_id: WorkspaceId, room_id: RoomId) {
         if let Some(room_state) = self.suspended_rooms.remove(&(ws_id, room_id)) {
-            // Hot restore: swap live PTY panes back in.
-            self.panes = room_state.panes;
+            if self.attached_snapshot.is_some() {
+                // Hot restore for attached rooms only needs the layout metadata;
+                // the daemon continues to own the underlying session panes.
+            } else {
+                self.local_panes = room_state.local_panes;
+                for pane in self.local_panes.values_mut() {
+                    let _ = pane.process_output();
+                }
+            }
             self.tabs = room_state.tabs;
             self.pane_presets = room_state.pane_presets;
             self.focused_pane = room_state.focused_pane;
             self.fullscreen_pane = room_state.fullscreen_pane;
-
-            // Drain any accumulated output while suspended.
-            for pane in self.panes.values_mut() {
-                let _ = pane.process_output();
-            }
         } else {
             // Cold restore from persisted layout, or create default.
             if let Some(layout) = self.room_layout(room_id) {
                 self.restore_layout(layout.active_tab, layout.tabs);
             } else {
                 // No saved layout — create a default shell tab.
-                self.panes.clear();
                 self.pane_presets.clear();
                 self.tabs = TabContainer::new();
                 self.focused_pane = None;
@@ -5171,7 +5234,7 @@ impl App {
     ) -> Option<PaneId> {
         let id = PaneId::new();
         let pane = PtyPane::spawn_with_envs(cmd, args, Some(cwd), cols, rows, &[]).ok()?;
-        self.panes.insert(id, pane);
+        self.local_panes.insert(id, pane);
         self.pane_presets.insert(id, preset_name.to_string());
         Some(id)
     }
@@ -5595,7 +5658,7 @@ impl App {
             workspace_selected: None,
             room_selected: None,
             running: true,
-            panes: HashMap::new(),
+            local_panes: HashMap::new(),
             tabs: TabContainer::new(),
             focused_pane: None,
             pane_presets: HashMap::new(),
@@ -5773,7 +5836,7 @@ mod tests {
             workspace_selected: None,
             room_selected: None,
             running: true,
-            panes: HashMap::new(),
+            local_panes: HashMap::new(),
             tabs: TabContainer::new(),
             focused_pane: None,
             pane_presets: HashMap::new(),
@@ -5900,7 +5963,7 @@ mod tests {
         app.suspended_rooms.insert(
             (ws_id, feature_room_id),
             RoomState {
-                panes: HashMap::new(),
+                local_panes: HashMap::new(),
                 tabs: TabContainer::new(),
                 pane_presets: HashMap::new(),
                 focused_pane: None,
@@ -6097,7 +6160,7 @@ mod tests {
         let (mut app, _ws_id, _local_room_id, _feature_room_id) = workspace_room_fixture();
         let pane_id = PaneId::new();
         let pane = PtyPane::spawn("true", &[], None, 80, 24).unwrap();
-        app.panes.insert(pane_id, pane);
+        app.local_panes.insert(pane_id, pane);
         app.tabs.add_tab("shell".into(), SplitTree::leaf(pane_id));
         app.focused_pane = Some(pane_id);
 
@@ -6112,7 +6175,7 @@ mod tests {
         let (mut app, _ws_id, _local_room_id, _feature_room_id) = workspace_room_fixture();
         let pane_id = PaneId::new();
         let pane = PtyPane::spawn("true", &[], None, 80, 24).unwrap();
-        app.panes.insert(pane_id, pane);
+        app.local_panes.insert(pane_id, pane);
         app.pane_presets.insert(pane_id, "shell".to_string());
         app.tabs.add_tab("shell".into(), SplitTree::leaf(pane_id));
         app.focused_pane = Some(pane_id);
@@ -6130,20 +6193,20 @@ mod tests {
         let (mut app, ws_id, local_room_id, _feature_room_id) = workspace_room_fixture();
         let pane_id = PaneId::new();
         let pane = PtyPane::spawn("true", &[], None, 80, 24).unwrap();
-        app.panes.insert(pane_id, pane);
+        app.local_panes.insert(pane_id, pane);
         app.pane_presets.insert(pane_id, "shell".to_string());
         app.tabs.add_tab("shell".into(), SplitTree::leaf(pane_id));
         app.focused_pane = Some(pane_id);
 
         app.suspend_current_room();
 
-        assert!(app.panes.is_empty());
+        assert!(app.local_panes.is_empty());
         assert!(app.suspended_rooms.contains_key(&(ws_id, local_room_id)));
 
         app.restore_room(ws_id, local_room_id);
 
         assert!(!app.suspended_rooms.contains_key(&(ws_id, local_room_id)));
-        assert!(app.panes.contains_key(&pane_id));
+        assert!(app.local_panes.contains_key(&pane_id));
         assert_eq!(
             app.pane_presets.get(&pane_id).map(String::as_str),
             Some("shell")
@@ -6157,7 +6220,7 @@ mod tests {
         app.state.active_workspace_id = Some(ws_id);
         app.state.active_room_id = Some(feature_room_id);
         app.tabs = TabContainer::new();
-        app.panes.clear();
+        app.local_panes.clear();
         app.pane_presets.clear();
         app.focused_pane = None;
         app.suspended_rooms.clear();
@@ -6211,7 +6274,7 @@ mod tests {
         app.state.active_workspace_id = Some(ws_id);
         app.state.active_room_id = Some(feature_room_id);
         app.tabs = TabContainer::new();
-        app.panes.clear();
+        app.local_panes.clear();
         app.pane_presets.clear();
         app.focused_pane = None;
         app.suspended_rooms.clear();
@@ -6273,7 +6336,7 @@ mod tests {
         let pane_id = PaneId::new();
         let pane = PtyPane::spawn("sh", &["-c".to_string(), "sleep 60".to_string()], None, 80, 24)
             .expect("spawn floating pane");
-        app.panes.insert(pane_id, pane);
+        app.local_panes.insert(pane_id, pane);
         app.pane_presets.insert(pane_id, "_editor".to_string());
         app.popup = PopupState::FloatingPane {
             pane_id,
@@ -6284,7 +6347,7 @@ mod tests {
             app.handle_floating_pane_key(pane_id, ctrl_char('q'));
         });
 
-        assert!(!app.panes.contains_key(&pane_id));
+        assert!(!app.local_panes.contains_key(&pane_id));
         assert!(matches!(app.popup, PopupState::None));
         assert!(
             requests.contains(&ClientRequest::UnregisterPane { pane_id }),
@@ -6298,7 +6361,7 @@ mod tests {
         let pane_id = PaneId::new();
         let pane = PtyPane::spawn("sh", &["-c".to_string(), "true".to_string()], None, 80, 24)
             .expect("spawn auto-close pane");
-        app.panes.insert(pane_id, pane);
+        app.local_panes.insert(pane_id, pane);
         app.pane_presets.insert(pane_id, "_diff".to_string());
         app.popup = PopupState::FloatingPane {
             pane_id,
@@ -6310,7 +6373,7 @@ mod tests {
             app.cleanup_exited_floating_pane();
         });
 
-        assert!(!app.panes.contains_key(&pane_id));
+        assert!(!app.local_panes.contains_key(&pane_id));
         assert!(matches!(app.popup, PopupState::None));
         assert!(
             requests.contains(&ClientRequest::UnregisterPane { pane_id }),
@@ -6327,7 +6390,7 @@ mod tests {
 
         let focused_pane_id = PaneId::new();
         let focused_pane = PtyPane::spawn("true", &[], None, 80, 24).expect("spawn focused pane");
-        app.panes.insert(focused_pane_id, focused_pane);
+        app.local_panes.insert(focused_pane_id, focused_pane);
         app.focused_pane = Some(focused_pane_id);
 
         let requests = record_daemon_requests(&mut app, |app| {
@@ -6352,6 +6415,80 @@ mod tests {
     }
 
     #[test]
+    fn attached_spawn_registers_daemon_pane_without_local_pty() {
+        let (mut app, _ws_id, _local_room_id, _feature_room_id) = workspace_room_fixture();
+        app.attached_snapshot = Some(FullSnapshot::fixture());
+        app.config.presets.get_mut("shell").unwrap().command = "sh".to_string();
+        app.config.presets.get_mut("shell").unwrap().args =
+            vec!["-c".to_string(), "true".to_string()];
+
+        let requests = record_daemon_requests(&mut app, |app| {
+            let pane_id = app
+                .spawn_pane("shell", None)
+                .expect("spawn attached placeholder");
+            app.tabs.add_tab("shell".into(), SplitTree::leaf(pane_id));
+            app.focused_pane = Some(pane_id);
+        });
+
+        let registered_pane_id = requests.iter().find_map(|request| match request {
+            ClientRequest::RegisterPane { pane_id, .. } => Some(*pane_id),
+            _ => None,
+        });
+        assert!(
+            registered_pane_id.is_some(),
+            "expected register request, got {requests:?}"
+        );
+        assert!(
+            app.local_panes.is_empty(),
+            "attached-pane spawn should not leave a local PTY behind"
+        );
+        assert_eq!(app.tabs.len(), 1);
+    }
+
+    #[test]
+    fn attached_room_hot_restore_keeps_layout_without_moving_local_floating_pty() {
+        let (mut app, ws_id, local_room_id, _feature_room_id) = workspace_room_fixture();
+        app.attached_snapshot = Some(FullSnapshot::fixture());
+
+        let attached_pane_id = app.create_attached_placeholder_pane("shell", None);
+        app.tabs.add_tab("shell".into(), SplitTree::leaf(attached_pane_id));
+        app.focused_pane = Some(attached_pane_id);
+
+        let floating_pane_id = PaneId::new();
+        let floating_pane =
+            PtyPane::spawn("sh", &["-c".to_string(), "sleep 60".to_string()], None, 80, 24)
+                .expect("spawn floating pane");
+        app.local_panes.insert(floating_pane_id, floating_pane);
+        app.popup = PopupState::FloatingPane {
+            pane_id: floating_pane_id,
+            title: "floating".to_string(),
+        };
+
+        app.suspend_current_room();
+
+        assert!(
+            app.suspended_rooms.contains_key(&(ws_id, local_room_id)),
+            "expected suspended room metadata"
+        );
+        assert!(
+            app.local_panes.contains_key(&floating_pane_id),
+            "floating panes should stay local across attached room suspend"
+        );
+
+        app.restore_room(ws_id, local_room_id);
+
+        assert_eq!(app.focused_pane, Some(attached_pane_id));
+        assert_eq!(
+            app.pane_presets.get(&attached_pane_id).map(String::as_str),
+            Some("shell")
+        );
+        assert!(
+            app.local_panes.contains_key(&floating_pane_id),
+            "floating panes should remain local after attached room restore"
+        );
+    }
+
+    #[test]
     fn workspace_delete_unregisters_active_and_suspended_workspace_panes() {
         let (mut app, ws_id, local_room_id, feature_room_id) = workspace_room_fixture();
         app.state.active_workspace_id = Some(ws_id);
@@ -6359,7 +6496,7 @@ mod tests {
 
         let active_pane_id = PaneId::new();
         let active_pane = PtyPane::spawn("true", &[], None, 80, 24).expect("spawn active pane");
-        app.panes.insert(active_pane_id, active_pane);
+        app.local_panes.insert(active_pane_id, active_pane);
         app.pane_presets.insert(active_pane_id, "shell".to_string());
         app.tabs.add_tab("shell".into(), SplitTree::leaf(active_pane_id));
         app.focused_pane = Some(active_pane_id);
@@ -6370,7 +6507,7 @@ mod tests {
         app.suspended_rooms.insert(
             (ws_id, feature_room_id),
             RoomState {
-                panes: HashMap::from([(suspended_pane_id, suspended_pane)]),
+                local_panes: HashMap::from([(suspended_pane_id, suspended_pane)]),
                 tabs: TabContainer::new(),
                 pane_presets: HashMap::from([(suspended_pane_id, "shell".to_string())]),
                 focused_pane: Some(suspended_pane_id),
@@ -6406,7 +6543,7 @@ mod tests {
             }),
             "expected suspended pane unregister, got {requests:?}"
         );
-        assert!(app.panes.is_empty());
+        assert!(app.local_panes.is_empty());
         assert!(!app.suspended_rooms.contains_key(&(ws_id, feature_room_id)));
     }
 }

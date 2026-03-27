@@ -3,7 +3,7 @@ use humu::config::{HumuConfig, HumuState, NotificationsConfig};
 use humu::hook::http::{
     AgentState, HookEvent, HookServer, remove_hook_port_file, write_hook_port_file,
 };
-use humu::id::{PaneId, RoomId, WorkspaceId};
+use humu::id::{PaneId, RoomId, TabId, WorkspaceId};
 use humu::notification::{NotificationEvent, NotificationManager, SessionFocusState};
 use humu::preset::resolve_preset;
 use humu::pty::pane::PtyPane;
@@ -24,6 +24,17 @@ use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime};
 use tokio::sync::oneshot;
 use uuid::Uuid;
+
+const PRESET_CLAUDE: &str = "claude";
+const PRESET_GEMINI: &str = "gemini";
+const PRESET_CODEX: &str = "codex";
+
+fn append_codex_args(args: &mut Vec<String>, session_id: Option<String>) {
+    if let Some(session_id) = session_id {
+        args.push("resume".to_string());
+        args.push(session_id);
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeUpdateSource {
@@ -62,7 +73,9 @@ struct RuntimePane {
 }
 
 struct SessionRuntimeState {
+    base_dir: PathBuf,
     state_path: PathBuf,
+    hook_port: Option<u16>,
     config: HumuConfig,
     notification_manager: NotificationManager,
     codex_tracker: CodexTracker,
@@ -94,13 +107,16 @@ impl SessionRuntimeState {
     }
 
     fn new(
+        base_dir: PathBuf,
         state_path: PathBuf,
         config: HumuConfig,
         notifications: NotificationsConfig,
         codex_sessions_root: PathBuf,
     ) -> Self {
         Self {
+            base_dir,
             state_path,
+            hook_port: None,
             config,
             notification_manager: NotificationManager::from_config(&notifications),
             codex_tracker: CodexTracker::new(codex_sessions_root),
@@ -112,6 +128,66 @@ impl SessionRuntimeState {
             agent_states: HashMap::new(),
             recorded_updates: Vec::new(),
         }
+    }
+
+    fn set_hook_port(&mut self, hook_port: u16) {
+        self.hook_port = Some(hook_port);
+    }
+
+    fn session_location(&self, session_name: &str) -> Option<(WorkspaceId, RoomId)> {
+        let state = HumuState::load(&self.state_path).ok()?;
+        let session = state.session_by_name(session_name)?;
+        Some((session.active_workspace_id?, session.active_room_id?))
+    }
+
+    fn preset_spawn_contract(
+        &self,
+        session_name: &str,
+        pane_id: PaneId,
+        preset_name: &str,
+        agent_session_id: Option<&str>,
+    ) -> (Vec<String>, Vec<(String, String)>) {
+        let mut extra_args = Vec::new();
+        let mut envs = Vec::new();
+
+        match preset_name {
+            PRESET_CLAUDE => {
+                let settings_path = self.base_dir.join("hooks/claude-settings.json");
+                extra_args.push("--settings".to_string());
+                extra_args.push(settings_path.to_string_lossy().into_owned());
+                if let Some(session_id) = agent_session_id {
+                    extra_args.push("--resume".to_string());
+                    extra_args.push(session_id.to_string());
+                }
+            }
+            PRESET_GEMINI => {
+                let settings_path = self.base_dir.join("hooks/gemini-settings.json");
+                envs.push((
+                    "GEMINI_CLI_SYSTEM_SETTINGS_PATH".to_string(),
+                    settings_path.to_string_lossy().into_owned(),
+                ));
+                if let Some(session_id) = agent_session_id {
+                    extra_args.push("--resume".to_string());
+                    extra_args.push(session_id.to_string());
+                }
+            }
+            PRESET_CODEX => append_codex_args(&mut extra_args, agent_session_id.map(str::to_string)),
+            _ => {}
+        }
+
+        if matches!(preset_name, PRESET_CLAUDE | PRESET_GEMINI) {
+            if let Some(hook_port) = self.hook_port {
+                envs.push(("HUMU_PORT".to_string(), hook_port.to_string()));
+            }
+            if let Some((workspace_id, room_id)) = self.session_location(session_name) {
+                envs.push(("HUMU_WORKSPACE_ID".to_string(), workspace_id.to_string()));
+                envs.push(("HUMU_ROOM_ID".to_string(), room_id.to_string()));
+            }
+            envs.push(("HUMU_TAB_ID".to_string(), TabId::new().to_string()));
+            envs.push(("HUMU_PANE_ID".to_string(), pane_id.to_string()));
+        }
+
+        (extra_args, envs)
     }
 
     fn focus_for_session(&self, session_name: &str) -> SessionFocusState {
@@ -180,6 +256,12 @@ impl SessionRuntimeState {
             .get(session_name)
             .cloned()
             .unwrap_or(SessionGeometrySnapshot { cols: 80, rows: 24 });
+        let (extra_args, envs) = self.preset_spawn_contract(
+            session_name,
+            pane_id,
+            preset_name,
+            agent_session_id.as_deref(),
+        );
         let session_panes = self
             .runtime_panes_by_session
             .entry(session_name.to_string())
@@ -201,13 +283,15 @@ impl SessionRuntimeState {
             &preset.command,
             &preset.args.iter().map(|arg| arg.as_str()).collect::<Vec<_>>(),
         );
+        let mut all_args = args;
+        all_args.extend(extra_args);
         let pane = PtyPane::spawn_with_envs(
             &command,
-            &args,
+            &all_args,
             cwd.as_deref(),
             session_size.cols,
             session_size.rows,
-            &[],
+            &envs,
         )?;
         session_panes.insert(
             pane_id,
@@ -602,6 +686,7 @@ impl SessionRuntime {
         codex_sessions_root: PathBuf,
     ) -> anyhow::Result<Self> {
         let state = Arc::new(Mutex::new(SessionRuntimeState::new(
+            base_dir.clone(),
             base_dir.join("state.yaml"),
             config,
             notifications,
@@ -651,6 +736,10 @@ impl SessionRuntime {
             .recv()
             .map_err(|_| anyhow::anyhow!("hook server thread exited before publishing a port"))??;
         write_hook_port_file(&base_dir, hook_port)?;
+        state
+            .lock()
+            .expect("session runtime state lock")
+            .set_hook_port(hook_port);
 
         let shutdown = Arc::new(AtomicBool::new(false));
         let worker_shutdown = Arc::clone(&shutdown);
