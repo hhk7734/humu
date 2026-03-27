@@ -1,5 +1,5 @@
 use humu::codex::{CodexTracker, CodexUpdate};
-use humu::config::{HumuConfig, HumuState, NotificationsConfig};
+use humu::config::{HumuConfig, HumuState, NotificationsConfig, PersistedRoomLayout, SplitNode};
 use humu::hook::http::{
     AgentState, HookEvent, HookServer, remove_hook_port_file, write_hook_port_file,
 };
@@ -15,7 +15,7 @@ use humu::shared::render::{
     PaneGeometrySnapshot, PaneSnapshot, SessionGeometrySnapshot, TabSnapshot,
     TerminalCapabilitiesSnapshot, TerminalCellSnapshot, TerminalScreenSnapshot,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -24,6 +24,9 @@ use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime};
 use tokio::sync::oneshot;
 use uuid::Uuid;
+
+#[path = "persistence.rs"]
+mod persistence;
 
 const PRESET_CLAUDE: &str = "claude";
 const PRESET_GEMINI: &str = "gemini";
@@ -86,9 +89,203 @@ struct SessionRuntimeState {
     session_geometry_by_name: HashMap<String, SessionGeometrySnapshot>,
     agent_states: HashMap<PaneId, AgentStateEntry>,
     recorded_updates: Vec<RuntimeUpdateRecord>,
+    pending_cold_restores: HashSet<String>,
 }
 
 impl SessionRuntimeState {
+    fn pending_cold_restores(state_path: &std::path::Path) -> HashSet<String> {
+        HumuState::load(state_path)
+            .ok()
+            .map(|state| {
+                state.sessions
+                    .iter()
+                    .filter(|session| {
+                        session
+                            .active_room_id
+                            .and_then(|room_id| session.tabs_by_room.get(&room_id))
+                            .is_some_and(|layout| {
+                                !layout.tabs.is_empty()
+                                    && layout.tabs.iter().any(|tab| tab.name == "runtime")
+                            })
+                    })
+                    .map(|session| session.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn persisted_session_layout(
+        &self,
+        session_name: &str,
+    ) -> Option<(
+        PersistedRoomLayout,
+        Option<PathBuf>,
+        Option<SessionGeometrySnapshot>,
+        Option<WorkspaceId>,
+        Option<RoomId>,
+    )> {
+        let state = HumuState::load(&self.state_path).ok()?;
+        let session = state.session_by_name(session_name)?;
+        let room_id = session.active_room_id?;
+        let layout = session.tabs_by_room.get(&room_id)?.clone();
+        let room_path = session.active_workspace_id.and_then(|workspace_id| {
+            state
+                .ws_by_id(workspace_id)
+                .and_then(|workspace| workspace.room_by_id(room_id))
+                .map(|room| room.path.clone())
+        });
+        let session_geometry = session.last_size.as_ref().map(|size| SessionGeometrySnapshot {
+            cols: size.cols,
+            rows: size.rows,
+        });
+
+        Some((
+            layout,
+            room_path,
+            session_geometry,
+            session.active_workspace_id,
+            session.active_room_id,
+        ))
+    }
+
+    fn apply_persisted_session_metadata(&self, session_name: &str, base: &mut FullSnapshot) {
+        let Some((_, room_path, session_geometry, active_workspace_id, active_room_id)) =
+            self.persisted_session_layout(session_name)
+        else {
+            return;
+        };
+
+        base.active_workspace_id = active_workspace_id;
+        base.active_room_id = active_room_id;
+        if base.explorer_root.is_none() {
+            base.explorer_root = room_path;
+        }
+        if base.session_geometry.is_none() {
+            base.session_geometry = session_geometry;
+        }
+    }
+
+    fn restore_split_node(
+        &mut self,
+        session_name: &str,
+        node: &SplitNode,
+        cwd: Option<PathBuf>,
+    ) -> anyhow::Result<()> {
+        match node {
+            SplitNode::Leaf { preset, session_id } => self.register_pane(
+                session_name,
+                PaneId::new(),
+                preset,
+                cwd,
+                session_id.clone(),
+                SystemTime::now(),
+            ),
+            SplitNode::Split { children, .. } => {
+                for child in children {
+                    self.restore_split_node(session_name, child, cwd.clone())?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn restore_session_from_state(&mut self, session_name: &str) -> anyhow::Result<()> {
+        if !self.pending_cold_restores.contains(session_name) {
+            return Ok(());
+        }
+        if self
+            .runtime_panes_by_session
+            .get(session_name)
+            .is_some_and(|panes| !panes.is_empty())
+        {
+            return Ok(());
+        }
+
+        let Some((layout, cwd, session_geometry, _, _)) =
+            self.persisted_session_layout(session_name)
+        else {
+            self.pending_cold_restores.remove(session_name);
+            return Ok(());
+        };
+        self.pending_cold_restores.remove(session_name);
+
+        if let Some(session_geometry) = session_geometry {
+            self.session_geometry_by_name
+                .insert(session_name.to_string(), session_geometry);
+        }
+
+        for tab in &layout.tabs {
+            self.restore_split_node(session_name, &tab.split, cwd.clone())?;
+        }
+
+        Ok(())
+    }
+
+    fn session_runtime_layout(&self, session_name: &str) -> Option<PersistedRoomLayout> {
+        let panes = self.panes_by_session.get(session_name)?;
+        let mut panes = panes.iter().collect::<Vec<_>>();
+        panes.sort_by_key(|(pane_id, _)| pane_id.to_string());
+
+        let split = match panes.as_slice() {
+            [] => return None,
+            [(.., pane)] => SplitNode::Leaf {
+                preset: pane.preset_name.clone(),
+                session_id: pane.session_id.clone(),
+            },
+            _ => SplitNode::Split {
+                direction: humu::config::SplitDirection::Horizontal,
+                ratio: 0.5,
+                children: panes
+                    .into_iter()
+                    .map(|(_, pane)| SplitNode::Leaf {
+                        preset: pane.preset_name.clone(),
+                        session_id: pane.session_id.clone(),
+                    })
+                    .collect(),
+            },
+        };
+
+        Some(PersistedRoomLayout {
+            active_tab: 0,
+            tabs: vec![humu::config::TabLayout {
+                name: "runtime".to_string(),
+                split,
+            }],
+        })
+    }
+
+    fn persist_runtime_session_state(&self, session_name: &str) {
+        let (active_workspace_id, active_room_id) = self
+            .session_location(session_name)
+            .map(|(workspace_id, room_id)| (Some(workspace_id), Some(room_id)))
+            .unwrap_or((None, None));
+        let layout = self.session_runtime_layout(session_name);
+        let last_size = self.session_geometry_by_name.get(session_name).cloned();
+        let _ = persistence::persist_session_runtime_state(
+            &self.state_path,
+            session_name,
+            active_workspace_id,
+            active_room_id,
+            layout,
+            last_size,
+        );
+    }
+
+    fn persist_runtime_session_size(&self, session_name: &str) {
+        let (active_workspace_id, active_room_id) = self
+            .session_location(session_name)
+            .map(|(workspace_id, room_id)| (Some(workspace_id), Some(room_id)))
+            .unwrap_or((None, None));
+        let last_size = self.session_geometry_by_name.get(session_name).cloned();
+        let _ = persistence::persist_session_size(
+            &self.state_path,
+            session_name,
+            active_workspace_id,
+            active_room_id,
+            last_size,
+        );
+    }
+
     fn pane_agent_summary(
         runtime_state: Option<&AgentStateEntry>,
         fallback_session_id: Option<&str>,
@@ -113,6 +310,7 @@ impl SessionRuntimeState {
         notifications: NotificationsConfig,
         codex_sessions_root: PathBuf,
     ) -> Self {
+        let pending_cold_restores = Self::pending_cold_restores(&state_path);
         Self {
             base_dir,
             state_path,
@@ -127,6 +325,7 @@ impl SessionRuntimeState {
             session_geometry_by_name: HashMap::new(),
             agent_states: HashMap::new(),
             recorded_updates: Vec::new(),
+            pending_cold_restores,
         }
     }
 
@@ -392,6 +591,8 @@ impl SessionRuntimeState {
     }
 
     fn snapshot_for_session(&mut self, session_name: &str, mut base: FullSnapshot) -> FullSnapshot {
+        self.apply_persisted_session_metadata(session_name, &mut base);
+        let _ = self.restore_session_from_state(session_name);
         self.process_live_panes();
         self.cleanup_exited_panes();
         let Some(panes) = self.runtime_panes_by_session.get_mut(session_name) else {
@@ -825,14 +1026,18 @@ impl SessionRuntime {
         started_at: SystemTime,
     ) -> anyhow::Result<()> {
         let mut state = self.state.lock().expect("session runtime state lock");
-        state.register_pane(
+        let result = state.register_pane(
             session_name,
             pane_id,
             preset_name,
             cwd,
             agent_session_id,
             started_at,
-        )
+        );
+        if result.is_ok() {
+            state.persist_runtime_session_state(session_name);
+        }
+        result
     }
 
     pub fn send_input(
@@ -847,15 +1052,21 @@ impl SessionRuntime {
 
     pub fn resize_session(&self, session_name: &str, cols: u16, rows: u16) -> anyhow::Result<()> {
         let mut state = self.state.lock().expect("session runtime state lock");
-        state.resize_session(session_name, cols, rows)
+        let result = state.resize_session(session_name, cols, rows);
+        if result.is_ok() {
+            state.persist_runtime_session_size(session_name);
+        }
+        result
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn remove_pane(&self, pane_id: PaneId) {
-        self.state
-            .lock()
-            .expect("session runtime state lock")
-            .remove_pane(pane_id);
+        let mut state = self.state.lock().expect("session runtime state lock");
+        let session_name = state.pane_session_name(pane_id);
+        state.remove_pane(pane_id);
+        if let Some(session_name) = session_name {
+            state.persist_runtime_session_state(&session_name);
+        }
     }
 
     pub fn pane_session_name(&self, pane_id: PaneId) -> Option<String> {

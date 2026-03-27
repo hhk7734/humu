@@ -1,13 +1,14 @@
 #![allow(dead_code)]
 
 use humu::config::{
-    HumuState, PersistedRoomLayout, RoomEntry, SessionState, SplitNode, TabLayout, WorkspaceEntry,
+    HumuConfig, HumuState, PersistedRoomLayout, RoomEntry, SessionState, SplitNode, TabLayout,
+    WorkspaceEntry,
 };
 use humu::id::{RoomId, WorkspaceId};
 use humu::tui::layout::{PaneId, SplitTree};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
-use std::io::Read;
 use std::ffi::OsStr;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc;
@@ -284,11 +285,7 @@ pub fn isolated_humu_home() -> TestEnv {
     let home = tempfile::tempdir().expect("create isolated humu home");
     let cwd = tempfile::tempdir().expect("create isolated cwd");
     let humu = tempfile::tempdir().expect("create isolated humu state dir");
-    TestEnv {
-        home,
-        cwd,
-        humu,
-    }
+    TestEnv { home, cwd, humu }
 }
 
 pub fn humu_binary() -> PathBuf {
@@ -311,6 +308,14 @@ pub fn humu_attach_command(env: &TestEnv, session: &str) -> Command {
     let mut command = humu_command(env);
     command.arg("attach").arg(session);
     command
+}
+
+pub fn write_config(env: &TestEnv, config: &HumuConfig) {
+    config.save(&env.config_path()).expect("write config");
+}
+
+pub fn write_state(env: &TestEnv, state: &HumuState) {
+    state.save(&env.state_path()).expect("write state");
 }
 
 pub fn spawn_scoped_command(mut command: Command) -> ScopedChild {
