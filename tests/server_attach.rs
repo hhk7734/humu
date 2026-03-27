@@ -500,16 +500,26 @@ fn daemon_disconnect_releases_session_lock() {
         assert!(matches!(first_attach, ServerResponse::Attached { .. }));
     }
 
-    let second = send_request::<ServerResponse>(
-        &env,
-        &ClientRequest::AttachSession {
-            name: "default".to_string(),
-            cols: 120,
-            rows: 40,
-        },
-    )
-    .expect("attach after disconnect");
-    assert!(matches!(second, ServerResponse::Attached { .. }));
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        let second = send_request::<ServerResponse>(
+            &env,
+            &ClientRequest::AttachSession {
+                name: "default".to_string(),
+                cols: 120,
+                rows: 40,
+            },
+        )
+        .expect("attach after disconnect");
+        if matches!(second, ServerResponse::Attached { .. }) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "session lock was not released before timeout: {second:?}"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
 }
 
 #[test]

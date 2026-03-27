@@ -1,4 +1,5 @@
 use crate::pty::terminal::Screen;
+use crate::shared::render::{ColorSnapshot, TerminalCellSnapshot, TerminalScreenSnapshot};
 use crate::tui::search::SearchMatch;
 use crate::tui::theme::{Palette, UiConfig};
 use ratatui::buffer::Buffer;
@@ -6,8 +7,14 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
 
+enum ScreenSource<'a> {
+    Live(&'a Screen),
+    Snapshot(&'a TerminalScreenSnapshot),
+}
+
 pub struct TerminalWidget<'a> {
-    screen: &'a Screen,
+    screen: ScreenSource<'a>,
+    scrollback: usize,
     has_focus: bool,
     exited: Option<i32>,
     pane_count: usize,
@@ -29,7 +36,31 @@ impl<'a> TerminalWidget<'a> {
         ui_config: &'a UiConfig,
     ) -> Self {
         Self {
-            screen,
+            screen: ScreenSource::Live(screen),
+            scrollback: screen.scrollback(),
+            has_focus: false,
+            exited: None,
+            pane_count: 1,
+            title,
+            palette,
+            ui_config,
+            search_matches: &[],
+            active_match_index: None,
+            scrollback_base_row: 0,
+            selection: None,
+        }
+    }
+
+    pub fn from_snapshot(
+        screen: &'a TerminalScreenSnapshot,
+        scrollback: usize,
+        title: &'a str,
+        palette: &'a Palette,
+        ui_config: &'a UiConfig,
+    ) -> Self {
+        Self {
+            screen: ScreenSource::Snapshot(screen),
+            scrollback,
             has_focus: false,
             exited: None,
             pane_count: 1,
@@ -174,7 +205,7 @@ impl Widget for TerminalWidget<'_> {
             .set_style(border_style);
 
         // Scrollback indicator in bottom-right of border (e.g., "─ ↑42 ╯")
-        let scrollback = self.screen.scrollback();
+        let scrollback = self.scrollback;
         if scrollback > 0 {
             let label = format!(" \u{2191}{} ", scrollback);
             // +2 accounts for the 3-byte UTF-8 arrow being 1 display column
@@ -193,31 +224,30 @@ impl Widget for TerminalWidget<'_> {
         let inner = Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2);
 
         // Render vt100 screen into inner area
-        let rows = inner.height.min(self.screen.size().0);
-        let cols = inner.width.min(self.screen.size().1);
+        let rows = inner.height.min(self.screen_rows());
+        let cols = inner.width.min(self.screen_cols());
         for row in 0..rows {
             for col in 0..cols {
-                let cell = self.screen.cell(row, col);
-                if let Some(cell) = cell {
+                if let Some(cell) = self.cell(row, col) {
                     let x = inner.x + col;
                     let y = inner.y + row;
                     if x < inner.right() && y < inner.bottom() {
-                        let fg = convert_color(cell.fgcolor());
-                        let bg = convert_color(cell.bgcolor());
+                        let fg = cell.fg;
+                        let bg = cell.bg;
                         let mut style = Style::default().fg(fg).bg(bg);
-                        if cell.bold() {
+                        if cell.bold {
                             style = style.add_modifier(Modifier::BOLD);
                         }
-                        if cell.dim() {
+                        if cell.dim {
                             style = style.add_modifier(Modifier::DIM);
                         }
-                        if cell.italic() {
+                        if cell.italic {
                             style = style.add_modifier(Modifier::ITALIC);
                         }
-                        if cell.underline() {
+                        if cell.underline {
                             style = style.add_modifier(Modifier::UNDERLINED);
                         }
-                        if cell.inverse() {
+                        if cell.inverse {
                             let real_fg = if fg == Color::Reset {
                                 self.palette.fg_primary
                             } else {
@@ -230,13 +260,13 @@ impl Widget for TerminalWidget<'_> {
                             };
                             style = style.fg(real_bg).bg(real_fg);
                         }
-                        if cell.hidden() {
+                        if cell.hidden {
                             style = style.add_modifier(Modifier::HIDDEN);
                         }
-                        if cell.strike() {
+                        if cell.strike {
                             style = style.add_modifier(Modifier::CROSSED_OUT);
                         }
-                        let ch = cell.contents();
+                        let ch = cell.text.as_str();
                         let display_char = if ch.is_empty() { " " } else { &ch };
                         buf.set_string(x, y, display_char, style);
                     }
@@ -339,4 +369,84 @@ fn convert_color(color: crate::pty::terminal::Color) -> Color {
         crate::pty::terminal::Color::Idx(i) => Color::Indexed(i),
         crate::pty::terminal::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
     }
+}
+
+fn convert_snapshot_color(color: ColorSnapshot) -> Color {
+    match color {
+        ColorSnapshot::Default => Color::Reset,
+        ColorSnapshot::Idx(i) => Color::Indexed(i),
+        ColorSnapshot::Rgb(r, g, b) => Color::Rgb(r, g, b),
+    }
+}
+
+struct RenderedCell {
+    text: String,
+    fg: Color,
+    bg: Color,
+    bold: bool,
+    dim: bool,
+    italic: bool,
+    underline: bool,
+    inverse: bool,
+    hidden: bool,
+    strike: bool,
+}
+
+impl TerminalWidget<'_> {
+    fn screen_rows(&self) -> u16 {
+        match self.screen {
+            ScreenSource::Live(screen) => screen.size().0,
+            ScreenSource::Snapshot(screen) => screen.rows,
+        }
+    }
+
+    fn screen_cols(&self) -> u16 {
+        match self.screen {
+            ScreenSource::Live(screen) => screen.size().1,
+            ScreenSource::Snapshot(screen) => screen.cols,
+        }
+    }
+
+    fn cell(&self, row: u16, col: u16) -> Option<RenderedCell> {
+        match self.screen {
+            ScreenSource::Live(screen) => {
+                let cell = screen.cell(row, col)?;
+                Some(RenderedCell {
+                    text: cell.contents().to_string(),
+                    fg: convert_color(cell.fgcolor()),
+                    bg: convert_color(cell.bgcolor()),
+                    bold: cell.bold(),
+                    dim: cell.dim(),
+                    italic: cell.italic(),
+                    underline: cell.underline(),
+                    inverse: cell.inverse(),
+                    hidden: cell.hidden(),
+                    strike: cell.strike(),
+                })
+            }
+            ScreenSource::Snapshot(screen) => {
+                let cell = snapshot_cell(screen, row, col)?;
+                Some(RenderedCell {
+                    text: cell.text.clone(),
+                    fg: convert_snapshot_color(cell.fg),
+                    bg: convert_snapshot_color(cell.bg),
+                    bold: cell.bold,
+                    dim: cell.dim,
+                    italic: cell.italic,
+                    underline: cell.underline,
+                    inverse: cell.inverse,
+                    hidden: cell.hidden,
+                    strike: cell.strike,
+                })
+            }
+        }
+    }
+}
+
+fn snapshot_cell(
+    screen: &TerminalScreenSnapshot,
+    row: u16,
+    col: u16,
+) -> Option<&TerminalCellSnapshot> {
+    screen.cells.get(row as usize)?.get(col as usize)
 }

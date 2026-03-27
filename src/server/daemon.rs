@@ -393,10 +393,20 @@ fn handle_client(
     let mut attached_session = None;
     let mut decoder = humu::shared::protocol::FrameDecoder::new();
     let mut buf = [0u8; 4096];
+    let detach_owned_session = |attached_session: &mut Option<String>| {
+        let Some(session_name) = attached_session.take() else {
+            return;
+        };
+        let mut sessions = sessions.lock().expect("session manager lock");
+        if sessions.detach_owned(&session_name, &client_id) {
+            runtime.detach_session(&session_name);
+        }
+    };
     let result = (|| -> Result<()> {
         loop {
             let read = stream.read(&mut buf)?;
             if read == 0 {
+                detach_owned_session(&mut attached_session);
                 return Ok(());
             }
             decoder.push(&buf[..read]);
@@ -414,12 +424,7 @@ fn handle_client(
         }
     })();
 
-    if let Some(session_name) = attached_session {
-        let mut sessions = sessions.lock().expect("session manager lock");
-        if sessions.detach_owned(&session_name, &client_id) {
-            runtime.detach_session(&session_name);
-        }
-    }
+    detach_owned_session(&mut attached_session);
     result
 }
 

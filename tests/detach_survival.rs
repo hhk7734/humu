@@ -3,7 +3,7 @@ mod server_impl;
 
 mod support;
 
-use humu::config::{HumuConfig, NotificationsConfig};
+use humu::config::{HumuConfig, HumuState, NotificationsConfig};
 use humu::id::PaneId;
 use humu::shared::protocol::{ClientRequest, FrameDecoder, ServerResponse, encode_frame};
 use humu::shared::render::{FullSnapshot, PaneRuntimeState, SessionGeometrySnapshot};
@@ -257,16 +257,27 @@ fn reattach_resizes_session_to_new_client_geometry() {
 
     drop(stream);
 
-    let mut stream = connect_server(&env).expect("reconnect daemon");
-    let response = send_request_on_stream::<ServerResponse>(
-        &mut stream,
-        &ClientRequest::AttachSession {
-            name: "default".to_string(),
-            cols: 120,
-            rows: 40,
-        },
-    )
-    .expect("reattach session");
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let (mut stream, response) = loop {
+        let mut stream = connect_server(&env).expect("reconnect daemon");
+        let response = send_request_on_stream::<ServerResponse>(
+            &mut stream,
+            &ClientRequest::AttachSession {
+                name: "default".to_string(),
+                cols: 120,
+                rows: 40,
+            },
+        )
+        .expect("reattach session");
+        if matches!(response, ServerResponse::Attached { .. }) {
+            break (stream, response);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "session lock was not released before timeout: {response:?}"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    };
     let snapshot = match response {
         ServerResponse::Attached { snapshot, .. } => snapshot,
         other => panic!("unexpected reattach response: {other:?}"),
@@ -321,6 +332,28 @@ fn reattach_resizes_session_to_new_client_geometry() {
         }
         other => panic!("unexpected list-sessions response: {other:?}"),
     }
+}
+
+#[test]
+fn app_attached_snapshot_drives_main_pane_state_without_local_pty() {
+    let mut app = support::App::test_with_state(HumuState::default(), std::env::temp_dir());
+    let snapshot = FullSnapshot::fixture();
+    let pane_id = snapshot.focused_pane_id.expect("focused pane");
+
+    app.test_hydrate_attached_snapshot(snapshot);
+    app.panes.clear();
+
+    assert_eq!(app.test_attached_screen_contents(pane_id).as_deref(), Some("hu\ns"));
+
+    let input_state = app
+        .test_pane_input_state(pane_id)
+        .expect("attached pane input state");
+    assert!(input_state.alternate_screen);
+    assert!(input_state.bracketed_paste);
+    assert_eq!(input_state.rows, 24);
+
+    let matches = app.test_search_matches_for_query(pane_id, "hu");
+    assert_eq!(matches, vec![(0, 0, 2)]);
 }
 
 fn attach_session(

@@ -1,4 +1,6 @@
 use crate::id::{PaneId, RoomId, TabId, WorkspaceId};
+use crate::pty::input::PaneInputState;
+use crate::pty::terminal::{MouseProtocolEncoding, MouseProtocolMode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -112,6 +114,44 @@ impl TerminalScreenSnapshot {
             .collect::<Vec<_>>()
             .join("\n")
     }
+
+    pub fn extract_rows(&self) -> Vec<(String, Vec<usize>)> {
+        let screen_rows = self.rows as usize;
+        let screen_cols = self.cols as usize;
+        let mut all_rows = Vec::with_capacity(screen_rows);
+
+        for row_idx in 0..screen_rows {
+            let mut text = String::new();
+            let mut col_byte_starts = Vec::with_capacity(screen_cols + 1);
+            let row = self.cells.get(row_idx);
+            for col in 0..screen_cols {
+                col_byte_starts.push(text.len());
+                let contents = row
+                    .and_then(|cells| cells.get(col))
+                    .map(TerminalCellSnapshot::contents)
+                    .unwrap_or("");
+                if contents.is_empty() {
+                    text.push(' ');
+                } else {
+                    text.push_str(contents);
+                }
+            }
+            col_byte_starts.push(text.len());
+
+            let mut byte_to_col = vec![0usize; text.len() + 1];
+            for col in 0..screen_cols {
+                let byte_start = col_byte_starts[col];
+                let byte_end = col_byte_starts[col + 1];
+                for byte_idx in byte_start..byte_end {
+                    byte_to_col[byte_idx] = col;
+                }
+            }
+            byte_to_col[text.len()] = screen_cols;
+            all_rows.push((text, byte_to_col));
+        }
+
+        all_rows
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -179,6 +219,39 @@ pub struct PaneSnapshot {
     pub capabilities: TerminalCapabilitiesSnapshot,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_state: Option<AgentSummary>,
+}
+
+impl PaneSnapshot {
+    pub fn input_state(&self) -> PaneInputState {
+        PaneInputState {
+            mouse_mode: match self.capabilities.mouse_protocol_mode {
+                Some(MouseProtocolModeSnapshot::Press) => MouseProtocolMode::Press,
+                Some(MouseProtocolModeSnapshot::PressRelease) => MouseProtocolMode::PressRelease,
+                Some(MouseProtocolModeSnapshot::ButtonMotion) => {
+                    MouseProtocolMode::ButtonMotion
+                }
+                Some(MouseProtocolModeSnapshot::AnyMotion) => MouseProtocolMode::AnyMotion,
+                Some(MouseProtocolModeSnapshot::None) | None => MouseProtocolMode::None,
+            },
+            mouse_encoding: match self.capabilities.mouse_protocol_encoding {
+                Some(MouseProtocolEncodingSnapshot::Utf8) => MouseProtocolEncoding::Utf8,
+                Some(MouseProtocolEncodingSnapshot::Sgr) => MouseProtocolEncoding::Sgr,
+                Some(MouseProtocolEncodingSnapshot::Default) | None => {
+                    MouseProtocolEncoding::Default
+                }
+            },
+            alternate_screen: self.capabilities.alternate_screen,
+            bracketed_paste: self.capabilities.bracketed_paste,
+            rows: self.screen.rows,
+        }
+    }
+
+    pub fn exit_code(&self) -> Option<i32> {
+        match self.state {
+            PaneRuntimeState::Running => None,
+            PaneRuntimeState::Exited { exit_code } => exit_code,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

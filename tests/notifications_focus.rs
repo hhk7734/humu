@@ -218,8 +218,20 @@ fn second_foreground_attach_is_refused_cleanly() {
 
     let mut first = support::spawn_humu_attach(&env, "default");
     assert!(first.wait_for_output("\u{1b}[?1049h", Duration::from_secs(2)));
+    wait_for(
+        || {
+            support::humu_command(&env)
+                .arg("list-sessions")
+                .output()
+                .ok()
+                .and_then(|output| String::from_utf8(output.stdout).ok())
+                .is_some_and(|stdout| stdout.contains("default\tattached"))
+        },
+        Duration::from_secs(2),
+    );
 
     let mut second = support::spawn_humu_attach(&env, "default");
+    assert!(second.wait_for_output("already attached", Duration::from_secs(2)));
     wait_for_app_exit(&mut second, Duration::from_secs(2));
     let output = second.output_string();
     assert!(

@@ -15,12 +15,13 @@ use humu::git::workspace::{WorkspaceManager, default_clone_target_dir};
 use humu::hook::http::AgentState;
 use humu::id::{RoomId, TabId, WorkspaceId};
 use humu::pty::input::{
-    InputAction, InputRoute, route_floating_mouse, route_mouse, route_passthrough, route_paste,
+    InputAction, InputRoute, PaneInputState, route_floating_mouse, route_mouse,
+    route_passthrough, route_paste,
 };
 use humu::pty::pane::PtyPane;
 use humu::shared::protocol::{ClientRequest, FrameDecoder, ServerResponse, encode_frame};
 use humu::shared::render::{
-    AgentStatus, FullSnapshot, SplitDirectionSnapshot, SplitTreeSnapshot,
+    AgentStatus, FullSnapshot, PaneSnapshot, SplitDirectionSnapshot, SplitTreeSnapshot,
 };
 use humu::tui::completion::complete_path;
 use humu::tui::input::{
@@ -233,7 +234,7 @@ pub struct App {
     pub hook_port: Option<u16>,
     /// Persistent daemon connection used for session ownership and pane registration.
     server_stream: Option<UnixStream>,
-    /// Snapshot returned by the daemon attach handshake, applied after local panes restore.
+    /// Current attached-session view model mirrored from the daemon.
     attached_snapshot: Option<FullSnapshot>,
     /// Last-rendered panel rects used for mouse hit-testing.
     pub panel_rects: PanelRects,
@@ -635,10 +636,169 @@ impl App {
         }
     }
 
+    fn create_attached_placeholder_pane(
+        &mut self,
+        preset_name: &str,
+        session_id: Option<String>,
+    ) -> PaneId {
+        let pane_id = PaneId::new();
+        self.pane_presets.insert(pane_id, preset_name.to_string());
+        if session_id.is_some() {
+            self.agent_states.insert(
+                pane_id,
+                AgentStateEntry {
+                    state: AgentState::Idle,
+                    session_id,
+                },
+            );
+        }
+        pane_id
+    }
+
+    fn remap_split_tree(
+        tree: &SplitTree,
+        pane_mapping: &HashMap<PaneId, PaneId>,
+    ) -> Option<SplitTree> {
+        match tree {
+            SplitTree::Leaf(pane_id) => Some(SplitTree::leaf(*pane_mapping.get(pane_id)?)),
+            SplitTree::Split {
+                direction,
+                ratio,
+                children,
+            } => Some(SplitTree::Split {
+                direction: *direction,
+                ratio: *ratio,
+                children: Box::new((
+                    Self::remap_split_tree(&children.0, pane_mapping)?,
+                    Self::remap_split_tree(&children.1, pane_mapping)?,
+                )),
+            }),
+        }
+    }
+
+    fn remap_layout_from_attached_snapshot(
+        &mut self,
+        snapshot: &FullSnapshot,
+    ) -> Option<HashMap<PaneId, PaneId>> {
+        if self.tabs.is_empty() || self.pane_presets.is_empty() {
+            return None;
+        }
+
+        let mut snapshot_by_key = HashMap::<(String, Option<String>), Vec<PaneId>>::new();
+        let mut snapshot_by_preset = HashMap::<String, Vec<PaneId>>::new();
+        for (pane_id, pane) in &snapshot.panes {
+            let session_id = pane
+                .agent_state
+                .as_ref()
+                .and_then(|agent_state| agent_state.session_id.clone());
+            snapshot_by_key
+                .entry((pane.preset_name.clone(), session_id))
+                .or_default()
+                .push(*pane_id);
+            snapshot_by_preset
+                .entry(pane.preset_name.clone())
+                .or_default()
+                .push(*pane_id);
+        }
+
+        let mut pane_mapping = HashMap::<PaneId, PaneId>::new();
+        let mut used_snapshot_panes = std::collections::HashSet::new();
+
+        let mut local_pane_ids = self.pane_presets.keys().copied().collect::<Vec<_>>();
+        local_pane_ids.sort_by_key(|pane_id| pane_id.to_string());
+
+        for local_pane_id in &local_pane_ids {
+            let Some(preset_name) = self.pane_presets.get(local_pane_id).cloned() else {
+                continue;
+            };
+            let session_id = self
+                .agent_states
+                .get(local_pane_id)
+                .and_then(|entry| entry.session_id.clone());
+            if let Some(candidates) = snapshot_by_key.get(&(preset_name, session_id)) {
+                if let Some(snapshot_pane_id) = candidates
+                    .iter()
+                    .copied()
+                    .find(|pane_id| !used_snapshot_panes.contains(pane_id))
+                {
+                    pane_mapping.insert(*local_pane_id, snapshot_pane_id);
+                    used_snapshot_panes.insert(snapshot_pane_id);
+                }
+            }
+        }
+
+        for local_pane_id in &local_pane_ids {
+            if pane_mapping.contains_key(local_pane_id) {
+                continue;
+            }
+            let Some(preset_name) = self.pane_presets.get(local_pane_id) else {
+                continue;
+            };
+            if let Some(candidates) = snapshot_by_preset.get(preset_name) {
+                if let Some(snapshot_pane_id) = candidates
+                    .iter()
+                    .copied()
+                    .find(|pane_id| !used_snapshot_panes.contains(pane_id))
+                {
+                    pane_mapping.insert(*local_pane_id, snapshot_pane_id);
+                    used_snapshot_panes.insert(snapshot_pane_id);
+                }
+            }
+        }
+
+        let tab_names = self
+            .tabs
+            .tab_names()
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let active_index = self.tabs.active_index();
+        let focused_pane = self.focused_pane;
+        let fullscreen_pane = self.fullscreen_pane;
+
+        let mut remapped_tabs = TabContainer::new();
+        for (index, name) in tab_names.iter().enumerate() {
+            let tree = self.tabs.tree_at(index)?;
+            remapped_tabs.add_tab(name.clone(), Self::remap_split_tree(tree, &pane_mapping)?);
+        }
+
+        if !remapped_tabs.is_empty() {
+            remapped_tabs.set_active(active_index.min(remapped_tabs.len() - 1));
+        }
+        self.tabs = remapped_tabs;
+        self.focused_pane = focused_pane.and_then(|pane_id| pane_mapping.get(&pane_id).copied());
+        self.fullscreen_pane =
+            fullscreen_pane.and_then(|pane_id| pane_mapping.get(&pane_id).copied());
+        if self.focused_pane.is_none() {
+            self.focused_pane = snapshot.focused_pane_id;
+        }
+        if self.fullscreen_pane.is_none() {
+            self.fullscreen_pane = snapshot.fullscreen_pane_id;
+        }
+
+        let pane_presets = snapshot
+            .panes
+            .iter()
+            .map(|(pane_id, pane)| (*pane_id, pane.preset_name.clone()))
+            .collect::<HashMap<_, _>>();
+        self.pane_presets = pane_presets;
+
+        Some(pane_mapping)
+    }
+
     fn hydrate_attached_snapshot(&mut self) {
-        let Some(snapshot) = self.attached_snapshot.take() else {
+        let Some(snapshot) = self.attached_snapshot.clone() else {
             return;
         };
+
+        if let Some(workspace_id) = snapshot.active_workspace_id {
+            self.state.active_workspace_id = Some(workspace_id);
+            self.workspace_selected = Some(workspace_id);
+        }
+        if let Some(room_id) = snapshot.active_room_id {
+            self.state.active_room_id = Some(room_id);
+            self.room_selected = Some(room_id);
+        }
 
         let mut snapshot_states = HashMap::new();
         let mut snapshot_entries = Vec::new();
@@ -710,7 +870,70 @@ impl App {
             }
         }
 
-        self.restore_snapshot_layout(&snapshot);
+        let pane_mapping = self.remap_layout_from_attached_snapshot(&snapshot);
+        if pane_mapping.is_none() {
+            self.restore_snapshot_layout(&snapshot);
+        }
+        self.agent_states
+            .retain(|pane_id, _| snapshot.panes.contains_key(pane_id));
+        for (pane_id, pane) in &snapshot.panes {
+            if let Some(agent_state) = pane.agent_state.as_ref() {
+                let state = match agent_state.status {
+                    AgentStatus::Working => AgentState::Working,
+                    AgentStatus::NeedsInput => AgentState::NeedsInput,
+                    AgentStatus::Idle => AgentState::Idle,
+                };
+                self.agent_states.insert(
+                    *pane_id,
+                    AgentStateEntry {
+                        state,
+                        session_id: agent_state.session_id.clone(),
+                    },
+                );
+            }
+        }
+    }
+
+    fn attached_pane_snapshot(&self, pane_id: PaneId) -> Option<&PaneSnapshot> {
+        self.attached_snapshot.as_ref()?.panes.get(&pane_id)
+    }
+
+    fn pane_input_state(&self, pane_id: PaneId) -> Option<PaneInputState> {
+        if let Some(pane) = self.panes.get(&pane_id) {
+            return Some(pane.input_state());
+        }
+        self.attached_pane_snapshot(pane_id)
+            .map(PaneSnapshot::input_state)
+    }
+
+    fn pane_exit_code(&mut self, pane_id: PaneId) -> Option<i32> {
+        if let Some(pane) = self.panes.get_mut(&pane_id) {
+            return pane.exit_status();
+        }
+        self.attached_pane_snapshot(pane_id)
+            .and_then(PaneSnapshot::exit_code)
+    }
+
+    fn pane_has_exited(&mut self, pane_id: PaneId) -> bool {
+        self.pane_exit_code(pane_id).is_some()
+    }
+
+    fn pane_search_rows(&self, pane_id: PaneId) -> Option<Vec<(String, Vec<usize>)>> {
+        if let Some(pane) = self.panes.get(&pane_id) {
+            let screen = pane.screen_snapshot();
+            return Some(humu::tui::search::extract_rows(&screen));
+        }
+        self.attached_pane_snapshot(pane_id)
+            .map(|pane| pane.screen.extract_rows())
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn pane_screen_contents(&self, pane_id: PaneId) -> Option<String> {
+        if let Some(pane) = self.panes.get(&pane_id) {
+            return Some(pane.screen_snapshot().contents());
+        }
+        self.attached_pane_snapshot(pane_id)
+            .map(|pane| pane.screen.contents())
     }
 
     pub fn run(&mut self) -> Result<()> {
@@ -1278,6 +1501,8 @@ impl App {
                 InputAction::Write(bytes) => {
                     if let Some(pane) = self.panes.get_mut(&pane_id) {
                         let _ = pane.write_input(&bytes);
+                    } else {
+                        let _ = self.send_daemon_request(ClientRequest::SendInput { pane_id, bytes });
                     }
                 }
                 InputAction::AdjustScrollback { lines, up } => {
@@ -2630,9 +2855,9 @@ impl App {
         let search_base_row = 0;
         let (search_matches, search_active) = match &self.search_state {
             Some(state) if matches!(self.mode, Mode::EnterSearch | Mode::Search) => {
-                (state.matches.as_slice(), state.active_index)
+                (state.matches.clone(), state.active_index)
             }
-            _ => ([].as_slice(), None),
+            _ => (Vec::new(), None),
         };
 
         // Render tab bar — a tab is active if any of its panes has a non-Idle
@@ -2677,7 +2902,7 @@ impl App {
                     let _ = pane.resize(inner_w, inner_h);
                 }
             }
-            let fs_exit_code = self.panes.get_mut(&fs_id).and_then(|p| p.exit_status());
+            let fs_exit_code = self.pane_exit_code(fs_id);
             let fs_pane_count = self
                 .tabs
                 .active_tree()
@@ -2696,13 +2921,43 @@ impl App {
                         .focus(true)
                         .exited(fs_exit_code)
                         .pane_count(fs_pane_count)
-                        .search(search_matches, search_active, search_base_row)
+                        .search(&search_matches, search_active, search_base_row)
                         .selection(sel);
                 frame.render_widget(widget, pane_area);
                 if fs_exit_code.is_none() && screen.scrollback() == 0 {
                     let (crow, ccol) = screen.cursor_position();
                     let cx = pane_area.x + 1 + ccol;
                     let cy = pane_area.y + 1 + crow;
+                    if cx < pane_area.right() - 1 && cy < pane_area.bottom() - 1 {
+                        frame.set_cursor_position(Position::new(cx, cy));
+                    }
+                }
+            } else if let Some(pane) = self.attached_pane_snapshot(fs_id) {
+                let preset_name = self
+                    .pane_presets
+                    .get(&fs_id)
+                    .map(|s| s.as_str())
+                    .unwrap_or(pane.preset_name.as_str());
+                let sel = self.selection_for_pane(fs_id);
+                let widget = TerminalWidget::from_snapshot(
+                    &pane.screen,
+                    pane.capabilities.scrollback_offset,
+                    preset_name,
+                    &self.palette,
+                    &self.ui_config,
+                )
+                .focus(true)
+                .exited(fs_exit_code)
+                .pane_count(fs_pane_count)
+                .search(&search_matches, search_active, search_base_row)
+                .selection(sel);
+                frame.render_widget(widget, pane_area);
+                if fs_exit_code.is_none()
+                    && pane.capabilities.scrollback_offset == 0
+                    && pane.screen.cursor.visible
+                {
+                    let cx = pane_area.x + 1 + pane.screen.cursor.col;
+                    let cy = pane_area.y + 1 + pane.screen.cursor.row;
                     if cx < pane_area.right() - 1 && cy < pane_area.bottom() - 1 {
                         frame.set_cursor_position(Position::new(cx, cy));
                     }
@@ -2727,7 +2982,7 @@ impl App {
             // Collect exit codes while we still have mutable access.
             let exit_codes: HashMap<PaneId, Option<i32>> = rects
                 .iter()
-                .filter_map(|(pid, _)| self.panes.get_mut(pid).map(|p| (*pid, p.exit_status())))
+                .map(|(pid, _)| (*pid, self.pane_exit_code(*pid)))
                 .collect();
             for (pane_id, rect) in rects {
                 if let Some(pane) = self.panes.get(&pane_id) {
@@ -2747,7 +3002,7 @@ impl App {
                             .exited(exit_code)
                             .pane_count(pane_count)
                             .search(
-                                if is_focused { search_matches } else { &[] },
+                                if is_focused { &search_matches } else { &[] },
                                 if is_focused { search_active } else { None },
                                 search_base_row,
                             )
@@ -2761,6 +3016,44 @@ impl App {
                         let (crow, ccol) = screen.cursor_position();
                         let cx = rect.x + 1 + ccol;
                         let cy = rect.y + 1 + crow;
+                        if cx < rect.right() - 1 && cy < rect.bottom() - 1 {
+                            frame.set_cursor_position(Position::new(cx, cy));
+                        }
+                    }
+                } else if let Some(pane) = self.attached_pane_snapshot(pane_id) {
+                    let is_focused =
+                        self.focused_pane == Some(pane_id) && self.focus == FocusedPanel::Terminal;
+                    let preset_name = self
+                        .pane_presets
+                        .get(&pane_id)
+                        .map(|s| s.as_str())
+                        .unwrap_or(pane.preset_name.as_str());
+                    let exit_code = exit_codes.get(&pane_id).copied().flatten();
+                    let sel = self.selection_for_pane(pane_id);
+                    let widget = TerminalWidget::from_snapshot(
+                        &pane.screen,
+                        pane.capabilities.scrollback_offset,
+                        preset_name,
+                        &self.palette,
+                        &self.ui_config,
+                    )
+                    .focus(is_focused)
+                    .exited(exit_code)
+                    .pane_count(pane_count)
+                    .search(
+                        if is_focused { &search_matches } else { &[] },
+                        if is_focused { search_active } else { None },
+                        search_base_row,
+                    )
+                    .selection(sel);
+                    frame.render_widget(widget, rect);
+                    if is_focused
+                        && exit_code.is_none()
+                        && pane.screen.cursor.visible
+                        && pane.capabilities.scrollback_offset == 0
+                    {
+                        let cx = rect.x + 1 + pane.screen.cursor.col;
+                        let cy = rect.y + 1 + pane.screen.cursor.row;
                         if cx < rect.right() - 1 && cy < rect.bottom() - 1 {
                             frame.set_cursor_position(Position::new(cx, cy));
                         }
@@ -3038,10 +3331,9 @@ impl App {
                 if self.pane_at(pos).is_some() && self.try_forward_mouse(&mouse) {
                     self.pty_mouse_active = self
                         .focused_pane
-                        .and_then(|pane_id| self.panes.get(&pane_id))
-                        .is_some_and(|pane| {
-                            pane.input_state().mouse_mode
-                                != humu::pty::terminal::MouseProtocolMode::None
+                        .and_then(|pane_id| self.pane_input_state(pane_id))
+                        .is_some_and(|state| {
+                            state.mouse_mode != humu::pty::terminal::MouseProtocolMode::None
                         });
                 }
             }
@@ -3126,11 +3418,6 @@ impl App {
             Some(s) => s,
             None => return,
         };
-        let pane = match self.panes.get(&sel.pane_id) {
-            Some(p) => p,
-            None => return,
-        };
-        let screen = pane.screen_snapshot();
         let (start_row, start_col, end_row, end_col) = if sel.start <= sel.end {
             (sel.start.0, sel.start.1, sel.end.0, sel.end.1)
         } else {
@@ -3138,34 +3425,70 @@ impl App {
         };
 
         let mut text = String::new();
-        let cols = screen.size().1;
-        for row in start_row..=end_row {
-            let from = if row == start_row { start_col } else { 0 };
-            let to = if row == end_row {
-                end_col
-            } else {
-                cols.saturating_sub(1)
-            };
-            for col in from..=to {
-                if let Some(cell) = screen.cell(row, col) {
-                    // Skip continuation cells of wide characters (e.g., CJK)
-                    if cell.is_wide_continuation() {
-                        continue;
-                    }
-                    let contents = cell.contents();
-                    if contents.is_empty() {
-                        text.push(' ');
-                    } else {
-                        text.push_str(&contents);
+        if let Some(pane) = self.panes.get(&sel.pane_id) {
+            let screen = pane.screen_snapshot();
+            let cols = screen.size().1;
+            for row in start_row..=end_row {
+                let from = if row == start_row { start_col } else { 0 };
+                let to = if row == end_row {
+                    end_col
+                } else {
+                    cols.saturating_sub(1)
+                };
+                for col in from..=to {
+                    if let Some(cell) = screen.cell(row, col) {
+                        if cell.is_wide_continuation() {
+                            continue;
+                        }
+                        let contents = cell.contents();
+                        if contents.is_empty() {
+                            text.push(' ');
+                        } else {
+                            text.push_str(&contents);
+                        }
                     }
                 }
+                if row < end_row {
+                    let trimmed = text.trim_end_matches(' ');
+                    text.truncate(trimmed.len());
+                    text.push('\n');
+                }
             }
-            if row < end_row {
-                // Trim trailing spaces from each line.
-                let trimmed = text.trim_end_matches(' ');
-                text.truncate(trimmed.len());
-                text.push('\n');
+        } else if let Some(pane) = self.attached_pane_snapshot(sel.pane_id) {
+            let cols = pane.screen.cols;
+            for row in start_row..=end_row {
+                let from = if row == start_row { start_col } else { 0 };
+                let to = if row == end_row {
+                    end_col
+                } else {
+                    cols.saturating_sub(1)
+                };
+                for col in from..=to {
+                    if let Some(cell) = pane
+                        .screen
+                        .cells
+                        .get(row as usize)
+                        .and_then(|cells| cells.get(col as usize))
+                    {
+                        if cell.wide_continuation {
+                            continue;
+                        }
+                        let contents = cell.contents();
+                        if contents.is_empty() {
+                            text.push(' ');
+                        } else {
+                            text.push_str(contents);
+                        }
+                    }
+                }
+                if row < end_row {
+                    let trimmed = text.trim_end_matches(' ');
+                    text.truncate(trimmed.len());
+                    text.push('\n');
+                }
             }
+        } else {
+            return;
         }
         let trimmed = text.trim_end();
         if trimmed.is_empty() {
@@ -3336,11 +3659,10 @@ impl App {
             Some(ctx) => ctx,
             None => return false,
         };
-        let pane = match self.panes.get(&pane_id) {
-            Some(p) => p,
+        let state = match self.pane_input_state(pane_id) {
+            Some(state) => state,
             None => return false,
         };
-        let state = pane.input_state();
         let handled = self.apply_input_route(
             pane_id,
             Some(pane_rect),
@@ -3393,11 +3715,10 @@ impl App {
             None => return,
         };
 
-        let pane = match self.panes.get(&pane_id) {
-            Some(p) => p,
+        let state = match self.pane_input_state(pane_id) {
+            Some(state) => state,
             None => return,
         };
-        let state = pane.input_state();
         let route = route_mouse(
             crossterm::event::MouseEvent {
                 kind: if up {
@@ -3969,23 +4290,16 @@ impl App {
         };
 
         // If focused pane has exited, intercept p/t to close pane/tab.
-        let exited = self
-            .panes
-            .get_mut(&pane_id)
-            .and_then(|p| p.exit_status())
-            .is_some();
+        let exited = self.pane_has_exited(pane_id);
         if exited {
             return;
         }
 
-        if let Some(pane) = self.panes.get(&pane_id) {
-            // Page Up/Down: scroll humu's scrollback buffer when the child is
-            // on the normal screen without mouse reporting, or whenever the
-            // child is on the alternate screen (for example Codex's TUI).
-            let route = route_passthrough(key, &pane.input_state());
-            let _ = pane;
-            self.apply_input_route(pane_id, None, route);
-        }
+        let Some(state) = self.pane_input_state(pane_id) else {
+            return;
+        };
+        let route = route_passthrough(key, &state);
+        self.apply_input_route(pane_id, None, route);
     }
 
     /// Route paste events: popups get priority, otherwise forward to PTY.
@@ -4034,14 +4348,12 @@ impl App {
         let Some(pane_id) = self.focused_pane else {
             return;
         };
-        let Some(pane) = self.panes.get_mut(&pane_id) else {
+        let Some(state) = self.pane_input_state(pane_id) else {
             return;
         };
-        if pane.exit_status().is_some() {
+        if self.pane_has_exited(pane_id) {
             return;
         }
-        let state = pane.input_state();
-        let _ = pane;
         let route = route_paste(text, &state);
         self.apply_input_route(pane_id, None, route);
     }
@@ -4589,7 +4901,11 @@ impl App {
     fn node_to_split_tree(&mut self, node: &SplitNode) -> Option<SplitTree> {
         match node {
             SplitNode::Leaf { preset, session_id } => {
-                let id = self.spawn_pane(preset, session_id.clone())?;
+                let id = if self.attached_snapshot.is_some() {
+                    self.create_attached_placeholder_pane(preset, session_id.clone())
+                } else {
+                    self.spawn_pane(preset, session_id.clone())?
+                };
                 Some(SplitTree::Leaf(id))
             }
             SplitNode::Split {
@@ -4622,12 +4938,10 @@ impl App {
             Some(id) => id,
             None => return,
         };
-        let pane = match self.panes.get(&pane_id) {
-            Some(p) => p,
+        let rows = match self.pane_search_rows(pane_id) {
+            Some(rows) => rows,
             None => return,
         };
-        let screen = pane.screen_snapshot();
-        let rows = humu::tui::search::extract_rows(&screen);
         if let Some(ref mut state) = self.search_state {
             state.execute(&rows);
             self.scroll_to_active_match();
@@ -5327,6 +5641,40 @@ impl App {
     pub fn test_hydrate_attached_snapshot(&mut self, snapshot: FullSnapshot) {
         self.attached_snapshot = Some(snapshot);
         self.hydrate_attached_snapshot();
+    }
+
+    pub fn test_attached_screen_contents(&self, pane_id: PaneId) -> Option<String> {
+        self.pane_screen_contents(pane_id)
+    }
+
+    pub fn test_pane_input_state(&self, pane_id: PaneId) -> Option<PaneInputState> {
+        self.pane_input_state(pane_id)
+    }
+
+    pub fn test_search_matches_for_query(
+        &mut self,
+        pane_id: PaneId,
+        query: &str,
+    ) -> Vec<(usize, usize, usize)> {
+        self.focused_pane = Some(pane_id);
+        self.search_state = Some(SearchState {
+            query: query.to_string(),
+            matches: Vec::new(),
+            active_index: None,
+            case_sensitive: true,
+            wrap: false,
+        });
+        self.run_search();
+        self.search_state
+            .as_ref()
+            .map(|state| {
+                state
+                    .matches
+                    .iter()
+                    .map(|sm| (sm.row, sm.col_start, sm.col_end))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub fn test_state_path(&self) -> &std::path::Path {

@@ -76,6 +76,23 @@ struct SessionRuntimeState {
 }
 
 impl SessionRuntimeState {
+    fn pane_agent_summary(
+        runtime_state: Option<&AgentStateEntry>,
+        fallback_session_id: Option<&str>,
+    ) -> Option<AgentSummary> {
+        let session_id = runtime_state
+            .and_then(|state| state.session_id.clone())
+            .or_else(|| fallback_session_id.map(str::to_string));
+        let status = runtime_state
+            .map(|state| match state.state {
+                AgentState::Working => AgentStatus::Working,
+                AgentState::NeedsInput => AgentStatus::NeedsInput,
+                AgentState::Idle => AgentStatus::Idle,
+            })
+            .unwrap_or(AgentStatus::Idle);
+        session_id.map(|session_id| AgentSummary { status, session_id: Some(session_id) })
+    }
+
     fn new(
         state_path: PathBuf,
         config: HumuConfig,
@@ -302,6 +319,7 @@ impl SessionRuntimeState {
 
         let mut pane_snapshots = HashMap::new();
         for pane_id in &pane_ids {
+            let runtime_state = self.agent_states.get(pane_id).cloned();
             let Some(pane) = panes.get_mut(pane_id) else {
                 continue;
             };
@@ -397,22 +415,10 @@ impl SessionRuntimeState {
                         }),
                         scrollback_offset: screen.scrollback(),
                     },
-                    agent_state: pane.session_id.as_ref().map(|_| AgentSummary {
-                        status: self
-                            .agent_states
-                            .get(pane_id)
-                            .map(|state| match state.state {
-                                AgentState::Working => AgentStatus::Working,
-                                AgentState::NeedsInput => AgentStatus::NeedsInput,
-                                AgentState::Idle => AgentStatus::Idle,
-                            })
-                            .unwrap_or(AgentStatus::Idle),
-                        session_id: self
-                            .agent_states
-                            .get(pane_id)
-                            .and_then(|state| state.session_id.clone())
-                            .or_else(|| pane.session_id.clone()),
-                    }),
+                    agent_state: Self::pane_agent_summary(
+                        runtime_state.as_ref(),
+                        pane.session_id.as_deref(),
+                    ),
                 },
             );
         }
