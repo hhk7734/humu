@@ -4,6 +4,7 @@ mod server_impl;
 mod support;
 
 use humu::id::PaneId;
+use humu::client::attach::AttachedClient;
 use humu::shared::protocol::{
     ClientAction, ClientRequest, FrameDecoder, NavigationDirection, ServerEvent, ServerResponse,
     SessionListEntry, decode_frame, encode_frame,
@@ -48,6 +49,40 @@ fn send_request<T: DeserializeOwned>(
 
 fn connect_server(env: &support::TestEnv) -> anyhow::Result<UnixStream> {
     Ok(UnixStream::connect(env.server_socket_path())?)
+}
+
+#[test]
+fn attach_client_receives_full_snapshot_and_streams_updates() {
+    let env = support::isolated_humu_home();
+    let _child = support::spawn_humu_server(&env);
+    wait_for_ping(&env, Duration::from_secs(5)).expect("daemon ping");
+
+    let mut client = AttachedClient::connect_socket(&env.server_socket_path(), "default", 80, 24)
+        .expect("attach client");
+    assert_eq!(client.session_name(), "default");
+    assert_eq!(client.state().snapshot().session_name, "default");
+    assert!(client.state().subscribed());
+
+    let pane_id = pane_id("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    let response = client
+        .send_request(&ClientRequest::RegisterPane {
+            pane_id,
+            preset_name: "shell".to_string(),
+            cwd: None,
+            session_id: None,
+            started_at_unix_secs: 0,
+        })
+        .expect("register pane");
+    assert!(matches!(response, ServerResponse::Ack));
+
+    let event = client.read_event().expect("stream incremental event");
+    match event {
+        ServerEvent::PaneUpdated {
+            pane_id: updated_pane_id,
+            ..
+        } => assert_eq!(updated_pane_id, pane_id),
+        other => panic!("unexpected streamed event: {other:?}"),
+    }
 }
 
 fn send_request_on_stream<T: DeserializeOwned>(
@@ -290,17 +325,18 @@ fn list_sessions_refuses_protocol_version_mismatch() {
 }
 
 #[test]
-fn attach_fallback_rejects_named_sessions() {
+fn attach_command_supports_named_sessions() {
     let env = support::isolated_humu_home();
+    let _child = support::spawn_humu_server(&env);
+    wait_for_ping(&env, Duration::from_secs(5)).expect("daemon ping");
+
     let output = support::humu_command(&env)
         .arg("attach")
         .arg("review")
         .output()
         .expect("run humu attach review");
 
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("only supports the default session"));
+    assert!(output.status.success());
 }
 
 #[test]

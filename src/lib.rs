@@ -1,3 +1,4 @@
+pub mod client;
 pub mod codex;
 pub mod config;
 pub mod explorer;

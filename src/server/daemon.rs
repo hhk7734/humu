@@ -7,7 +7,9 @@ use humu::log;
 use humu::shared::protocol::{
     ClientRequest, PROTOCOL_VERSION, ServerResponse, encode_frame,
 };
+use humu::shared::ServerEvent;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::net::Shutdown;
@@ -369,16 +371,18 @@ fn load_daemon_config(humu_dir: &std::path::Path) -> Result<HumuConfig> {
 
 fn serve(listener: UnixListener, runtime: SessionRuntime) -> Result<()> {
     let sessions = Arc::new(Mutex::new(SessionManager::default()));
+    let subscribers = Arc::new(Mutex::new(HashMap::<String, Vec<UnixStream>>::new()));
     let runtime = Arc::new(runtime);
     let next_client_id = Arc::new(AtomicU64::new(1));
     loop {
         let (stream, _) = listener.accept().context("accept daemon client")?;
         let sessions = Arc::clone(&sessions);
+        let subscribers = Arc::clone(&subscribers);
         let runtime = Arc::clone(&runtime);
         let owner_pid = peer_pid(&stream);
         let client_id = format!("client-{}", next_client_id.fetch_add(1, Ordering::Relaxed));
         thread::spawn(move || {
-            let _ = handle_client(stream, sessions, runtime, client_id, owner_pid);
+            let _ = handle_client(stream, sessions, subscribers, runtime, client_id, owner_pid);
         });
     }
 }
@@ -386,6 +390,7 @@ fn serve(listener: UnixListener, runtime: SessionRuntime) -> Result<()> {
 fn handle_client(
     mut stream: UnixStream,
     sessions: Arc<Mutex<SessionManager>>,
+    subscribers: Arc<Mutex<HashMap<String, Vec<UnixStream>>>>,
     runtime: Arc<SessionRuntime>,
     client_id: String,
     owner_pid: Option<u32>,
@@ -401,6 +406,10 @@ fn handle_client(
         if sessions.detach_owned(&session_name, &client_id) {
             runtime.detach_session(&session_name);
         }
+        subscribers
+            .lock()
+            .expect("subscriber lock")
+            .remove(&session_name);
     };
     let result = (|| -> Result<()> {
         loop {
@@ -411,6 +420,30 @@ fn handle_client(
             }
             decoder.push(&buf[..read]);
             while let Some(request) = decoder.try_decode::<ClientRequest>()? {
+                if matches!(request, ClientRequest::SubscribeUpdates) {
+                    let Some(session_name) = owned_attached_session_name(
+                        &sessions.lock().expect("session manager lock"),
+                        &client_id,
+                        &mut attached_session,
+                    ) else {
+                        let response = ServerResponse::Error {
+                            message: "subscribe requires ownership of an attached session"
+                                .to_string(),
+                        };
+                        stream.write_all(&encode_frame(&response)?)?;
+                        continue;
+                    };
+                    subscribers
+                        .lock()
+                        .expect("subscriber lock")
+                        .entry(session_name.clone())
+                        .or_default()
+                        .push(stream.try_clone()?);
+                    let response = ServerResponse::Subscribed { session_name };
+                    stream.write_all(&encode_frame(&response)?)?;
+                    continue;
+                }
+                let request_for_broadcast = request.clone();
                 let response = handle_request(
                     request,
                     &sessions,
@@ -420,12 +453,93 @@ fn handle_client(
                     &mut attached_session,
                 )?;
                 stream.write_all(&encode_frame(&response)?)?;
+                broadcast_incremental_update(
+                    &request_for_broadcast,
+                    &response,
+                    &sessions,
+                    &subscribers,
+                    runtime.as_ref(),
+                    attached_session.as_deref(),
+                )?;
             }
         }
     })();
 
     detach_owned_session(&mut attached_session);
     result
+}
+
+fn broadcast_incremental_update(
+    request: &ClientRequest,
+    response: &ServerResponse,
+    sessions: &Arc<Mutex<SessionManager>>,
+    subscribers: &Arc<Mutex<HashMap<String, Vec<UnixStream>>>>,
+    runtime: &SessionRuntime,
+    attached_session: Option<&str>,
+) -> Result<()> {
+    let Some(session_name) = attached_session else {
+        return Ok(());
+    };
+    if !matches!(response, ServerResponse::Ack | ServerResponse::Attached { .. }) {
+        return Ok(());
+    }
+
+    let snapshot = {
+        let sessions = sessions.lock().expect("session manager lock");
+        runtime.snapshot_for_session(session_name, sessions.snapshot(session_name))
+    };
+
+    let event = match request {
+        ClientRequest::RegisterPane { pane_id, .. } => snapshot
+            .panes
+            .get(pane_id)
+            .cloned()
+            .map(|pane| ServerEvent::PaneUpdated { pane_id: *pane_id, pane }),
+        ClientRequest::ResizeSession { .. } => Some(ServerEvent::LayoutUpdated {
+            tabs: snapshot.tabs.clone(),
+            active_tab_index: snapshot.active_tab_index,
+            split_tree: snapshot.split_tree.clone(),
+            session_geometry: snapshot.session_geometry.clone(),
+            focused_pane_id: snapshot.focused_pane_id,
+            fullscreen_pane_id: snapshot.fullscreen_pane_id,
+            pane_geometries: snapshot
+                .panes
+                .iter()
+                .filter_map(|(pane_id, pane)| pane.geometry.clone().map(|g| (*pane_id, g)))
+                .collect(),
+        }),
+        ClientRequest::UnregisterPane { pane_id } => Some(ServerEvent::LayoutUpdated {
+            tabs: snapshot.tabs.clone(),
+            active_tab_index: snapshot.active_tab_index,
+            split_tree: snapshot.split_tree.clone(),
+            session_geometry: snapshot.session_geometry.clone(),
+            focused_pane_id: snapshot.focused_pane_id,
+            fullscreen_pane_id: snapshot.fullscreen_pane_id,
+            pane_geometries: snapshot
+                .panes
+                .iter()
+                .filter(|(id, _)| **id != *pane_id)
+                .filter_map(|(pane_id, pane)| pane.geometry.clone().map(|g| (*pane_id, g)))
+                .collect(),
+        }),
+        ClientRequest::SendInput { pane_id, .. } => snapshot
+            .panes
+            .get(pane_id)
+            .cloned()
+            .map(|pane| ServerEvent::PaneUpdated { pane_id: *pane_id, pane }),
+        _ => None,
+    };
+
+    let Some(event) = event else {
+        return Ok(());
+    };
+
+    let mut subscribers = subscribers.lock().expect("subscriber lock");
+    if let Some(streams) = subscribers.get_mut(session_name) {
+        let payload = encode_frame(&event)?;
+        streams.retain_mut(|stream| stream.write_all(&payload).is_ok());
+    }
+    Ok(())
 }
 
 fn owned_attached_session_name(

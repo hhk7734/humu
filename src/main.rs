@@ -14,15 +14,16 @@ fn main() -> Result<()> {
         }
         Some(Command::Server { daemon }) => server::daemon::run(daemon),
         Some(Command::Attach { session }) => {
-            if let Some(session_name) = session.as_deref()
-                && session_name != "default"
-            {
-                bail!(
-                    "attach fallback only supports the default session until the real client exists"
-                );
+            server::daemon::run(true)?;
+            let session_name = session.as_deref().unwrap_or("default");
+            if session_name == "default" {
+                let client = humu::client::attach::AttachedClient::connect_default(session_name)?;
+                drop(client);
+                let mut app = app::App::new()?;
+                app.run()
+            } else {
+                humu::client::attach::attach(session_name)
             }
-            let mut app = app::App::new()?;
-            app.run()
         }
         Some(Command::ListSessions) => server::daemon::list_sessions_shell(),
         Some(Command::Detach { session, force }) => {
