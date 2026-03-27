@@ -13,9 +13,14 @@ Two agent state transitions fire notifications:
 | Working → NeedsInput | `AgentNeedsInput` | `[workspace/room] Agent needs input` |
 | Working → Idle | `AgentFinished` | `[workspace/room] Agent finished` |
 
-Detected in `process_hook_events()` by comparing previous `AgentStateEntry.state` against the incoming event before overwriting. Events are drained into a local `Vec<HookEvent>` first to avoid borrow conflicts with `hook_rx`.
+Detected in the daemon-owned session runtime by comparing the previous
+`AgentStateEntry.state` against the incoming hook/Codex update before
+overwriting it.
 
-**Name resolution:** `HookEvent` carries `workspace_id` and `room_id` as UUID strings. Resolved to human-readable names via `self.state.ws_by_id(WorkspaceId(uuid))` → `.name` and `ws.room_by_id(RoomId(uuid))` → `.name`. Falls back to `"unknown"` if unparseable or not found.
+**Name resolution:** `HookEvent` carries `workspace_id` and `room_id` as UUID
+strings. The daemon resolves these to human-readable workspace/room names from
+persisted `HumuState` before emitting notifications. Falls back to `"unknown"`
+if unparseable or not found.
 
 **Idle transition semantics:** AI agents (Claude, Gemini) emit events that map to `Idle` at the end of each agent turn, including intermediate stops. `AgentFinished` may fire on intermediate completions. This is intentional — over-notification is preferred over missing a real completion.
 
@@ -41,7 +46,14 @@ Three independent channels, each with `enabled` and `only_unfocused` toggles:
 
 ## Focus Tracking
 
-Terminal focus is tracked via crossterm's `EnableFocusChange` / `Event::FocusGained` / `Event::FocusLost`. The `is_focused: bool` field on `App` is passed to `NotificationManager::notify()`. Each channel's `only_unfocused` flag determines whether to suppress notifications when humu is focused.
+Terminal focus is session-scoped and daemon-owned. The foreground client reports
+`FocusChanged` over daemon IPC using crossterm's `EnableFocusChange` /
+`Event::FocusGained` / `Event::FocusLost`, and the daemon stores
+`SessionFocusState` per attached session.
+
+Detached sessions are treated as unfocused. This means `only_unfocused` channels
+continue to fire after the client closes while the daemon-owned task keeps
+running.
 
 ## Configuration
 
@@ -83,9 +95,12 @@ src/notification/
 └── telegram.rs   # TelegramNotifier (Bot API via ureq)
 ```
 
-`NotificationManager` holds `Option<Channel<T>>` for each provider, where `Channel<T>` wraps the notifier with its `only_unfocused` flag.
+`NotificationManager` holds `Option<Channel<T>>` for each provider, where
+`Channel<T>` wraps the notifier with its `only_unfocused` flag.
 
-`NotificationManager::notify(event, focused)` checks each channel: if the channel is enabled and (`!focused || !only_unfocused`), the notification fires.
+`NotificationManager::notify_with_session_focus(event, focus_state)` checks each
+channel: if the channel is enabled and the session is detached or not currently
+focused, `only_unfocused` channels still fire.
 
 ## Settings Menu
 

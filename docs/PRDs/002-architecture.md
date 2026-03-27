@@ -1,14 +1,29 @@
 # Architecture
 
-Single Rust binary. No client-server, no database.
+Single Rust binary with two runtime roles: a background daemon and an attachable
+foreground client. No external database.
 
 ```
 humu (single binary)
-├── TUI Layer (ratatui + crossterm)
-│   ├── WorkspacePanel (workspace tree with rooms)
-│   ├── TerminalArea (tabs + split panes)
+├── Daemon Role (`humu server`, bare `humu`, `humu attach`)
+│   ├── Session registry (`SessionManager`)
+│   ├── Session runtime (`SessionRuntime`)
+│   │   ├── PTY lifecycle, input, resize, exit polling
+│   │   ├── Terminal emulation and snapshot generation
+│   │   ├── Hook server ownership (`~/.humu/port`)
+│   │   ├── Codex tracking ownership
+│   │   └── Session-scoped persistence / cold restore
+│   └── Unix socket IPC (`~/.humu/server.sock`)
+├── Client Role (`humu attach [session]`)
+│   ├── Attach handshake + daemon discovery
+│   ├── Snapshot-backed client state
+│   ├── Incremental server event consumption
+│   └── Foreground TUI shell / rendering
+├── Legacy/Shared TUI Layer
+│   ├── WorkspacePanel
+│   ├── TerminalArea
 │   ├── ExplorerPanel
-│   └── StatusBar (mode badge + key hints)
+│   └── StatusBar
 ├── Git Layer
 │   ├── Workspace manager (clone / init / register)
 │   └── Room manager (worktree add / remove / list)
@@ -16,21 +31,18 @@ humu (single binary)
 │   ├── `PtyRuntime` (portable-pty lifecycle, raw read/write, resize, exit polling)
 │   ├── `TerminalEmulator` (vendored vt100 parser, query replies, screen state)
 │   ├── `TerminalInputRouter` (mouse/key/paste routing decisions)
-│   └── `PtyPane` facade (pane-facing helpers consumed by `App`)
+│   └── `PtyPane` facade
 ├── Hook Layer (axum HTTP server)
-│   └── HTTP server at 127.0.0.1:<random port> for Claude/Gemini events
 ├── Codex Tracking Layer
-│   └── Poll `~/.codex/sessions/` JSONL files for Codex session state
 ├── Theme Layer
-│   ├── Palette (GitHub Dark color scheme)
-│   └── UiConfig (simplified_ui, rounded_corners)
 ├── ID Layer (src/id.rs)
-│   └── Typed IDs: WorkspaceId, RoomId, TabId, PaneId
 └── State Layer
     └── $HUMU_DIR (default: ~/.humu/)
         ├── config.yaml
         ├── state.yaml
         ├── port
+        ├── server.sock
+        ├── server.json
         └── hooks/
 ```
 
@@ -64,11 +76,34 @@ IDs are the first-class identity for all entities. Names are used only for displ
 
 `RoomId` is assigned lazily on first discovery and persisted. On startup, persisted rooms are compared against git worktrees — stale entries are pruned.
 
+## Runtime Ownership
+
+The daemon is the owner of attached-session runtime state:
+
+- named sessions and attach locks
+- PTY spawn, input, resize, exit cleanup
+- terminal emulation and `FullSnapshot` generation
+- hook/Codex integration
+- session-scoped persisted layout and last known size
+
+The foreground attach client owns:
+
+- terminal raw mode / alternate screen
+- crossterm event handling
+- rendering of daemon snapshots
+- local-only overlays such as floating editor and diff panes
+
+Closing the client detaches from the daemon but does not stop daemon-owned
+session PTYs. Reattaching restores the current daemon snapshot. If the daemon is
+restarted, live PTYs are lost, but the daemon cold-restores session layout from
+persisted session state on startup.
+
 ## Rendering Pipeline
 
 ```
-PTY output → vte parser (`third_party/vt100/` via `crate::pty::terminal`) → screen buffer → ratatui cells
-User keystrokes → ratatui/crossterm → PTY input
+Daemon PTY output → vte parser (`third_party/vt100/` via `crate::pty::terminal`) → `FullSnapshot` / `ServerEvent`
+Client render loop → ratatui cells
+User keystrokes → client input routing → daemon IPC → PTY input
 ```
 
 Terminal emulation uses a vendored module at `third_party/vt100/` built on the `vte` crate and re-exported through `crate::pty::terminal`. The module implements `vte::Perform` on a custom `Screen` struct with grid, cell, and attribute tracking.
@@ -146,27 +181,41 @@ presets:
 
 ## Layout Persistence
 
-Tab and pane layout is stored directly in each room entry in `state.yaml` and restored on room switch or restart. The layout is a tree structure: each tab contains a `SplitNode` that is either a `Leaf` (single pane with preset and optional `session_id`) or a `Split` (binary split with direction, ratio, and children).
+Tab and pane layout is session-scoped in `state.yaml`, not stored as the source
+of truth directly on room entries. Each session tracks:
+
+- active workspace / room
+- tabs-by-room persisted layout
+- last known session size
+
+Each tab contains a `SplitNode` that is either a `Leaf` (single pane with
+preset and optional `session_id`) or a `Split` (binary split with direction,
+ratio, and children).
 
 Layout is persisted via **event-driven persistence** — `persist_layout()` is called on every structural mutation (tab add/remove, pane split/close), not on a timer or only at shutdown. This ensures crash safety: if humu is killed unexpectedly, the layout reflects the last structural change. When all tabs are closed, the room's tabs list is cleared so that a restart creates a fresh default shell instead of restoring stale panes.
 
-When humu attaches to a daemon session, the daemon-provided `FullSnapshot` is treated as the source of truth for the active tab tree, focus, fullscreen pane, and per-pane preset mapping. The foreground client hydrates its local `TabContainer` from that snapshot rather than maintaining a separate authoritative copy of the active session layout.
+When humu attaches to a daemon session, the daemon-provided `FullSnapshot` is
+the source of truth for the active tab tree, focus, fullscreen pane, and
+per-pane preset mapping. The foreground client hydrates its local view from
+that snapshot and then applies streamed `ServerEvent`s.
 
 Workspaces and rooms are stored as lists with `name` and `id` fields. Lookups use linear search by name or UUID.
 
 ### Room Suspension (Hot Restore)
 
-When switching rooms or workspaces, live PTY panes are **suspended** rather than killed. The switch sequence is: (1) resolve the target workspace/room from selection indices, (2) suspend the current room under the **current** active IDs, (3) update active IDs to the target, (4) restore the target room. The room list for the target workspace is resolved independently of `active_workspace_id` to avoid miskeying suspended state during workspace creation.
+When switching rooms or workspaces inside an attached daemon session, daemon-run
+session panes continue running and the client swaps only layout metadata. Local
+floating panes remain client-local and are not moved into daemon-owned room
+state.
 
-The runtime state (`RoomState`: panes, tabs, pane_presets, focused_pane, fullscreen_pane) is moved into `suspended_rooms: HashMap<(WorkspaceId, RoomId), RoomState>`. When switching back:
+The room runtime metadata (`RoomState`: local panes, tabs, pane_presets,
+focused_pane, fullscreen_pane) is moved into
+`suspended_rooms: HashMap<(WorkspaceId, RoomId), RoomState>`. When switching
+back:
 
-1. **Hot restore**: If the room has suspended state, swap it back in — PTY processes resume instantly with full terminal history intact.
-2. **Cold restore**: If no suspended state exists (e.g., after restart), rebuild from the persisted layout in `state.yaml`, spawning new PTY processes.
+1. **Hot restore**: If the room has suspended state, swap the client metadata back in. In attached mode the daemon-owned PTY processes were never moved out of the session runtime.
+2. **Cold restore**: If no suspended state exists (for example after daemon restart), rebuild from the persisted session layout in `state.yaml`, spawning new PTY processes in the daemon.
 3. **Default**: If no persisted layout exists either, create a single shell tab.
-
-Suspended panes continue running in the background — their reader threads accumulate output in unbounded `mpsc` channels, which is drained on restore. Hot restore keeps the same `PtyPane` runtime objects alive, while cold restore rebuilds panes from persisted `SplitNode` layout and respawns presets with any saved `session_id`. `PaneId` remains globally unique (monotonically increasing `next_pane_id` is never saved/restored per room). `agent_states` is global since hook events can arrive for any pane.
-
-On graceful shutdown, all suspended rooms have their layouts persisted to `state.yaml` before PTY processes are dropped.
 
 When a workspace is deleted, all its entries in `suspended_rooms` are discarded. If the deleted workspace was active, live panes are cleared and humu auto-switches to the next available workspace.
 When a room is deleted, humu discards both the live runtime state and any suspended runtime state for that `(workspace_id, room_id)` pair before switching the workspace back to its `local` room.

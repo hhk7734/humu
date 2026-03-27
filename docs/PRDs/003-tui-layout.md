@@ -33,7 +33,11 @@ Three panels plus a status bar. The left panel is a single workspace tree: each 
 - **Splits within tabs**: Vertical and horizontal splits, nested. One tab might be a single Claude pane; another might be a vertical split with shell + cargo watch.
 - **Pane borders**: Rounded (`╭╮╯╰`), focused pane in `accent_blue`, unfocused in `fg_muted`. Title in top border (preset name). Exited panes are automatically closed.
 
-When a client attaches to an existing daemon session, the tab bar and active split tree are hydrated from the server snapshot first so the visible layout, focused pane, and fullscreen state match the daemon-owned session state.
+When a client attaches to an existing daemon session, the tab bar and active
+split tree are hydrated from the server snapshot first so the visible layout,
+focused pane, and fullscreen state match the daemon-owned session state. The
+attach TUI then consumes streamed `ServerEvent`s and rerenders from updated
+client snapshot state rather than owning the attached session PTYs directly.
 
 ## Preset Selector
 
@@ -120,7 +124,14 @@ Click behavior: first click focuses panel + selects item, second click on same i
 
 ### Floating Pane
 
-A centered overlay (90% of terminal panel area) that runs a PTY process (`$EDITOR` or `delta`). All keys forwarded to the PTY. Mouse scroll sends `j`/`k` to `less`/`delta` when no mouse reporting. Closes on `Ctrl+Q`, `Ctrl+G`, or when the process exits.
+A centered overlay (90% of terminal panel area) that runs a client-local PTY
+process (`$EDITOR` or `delta`). All keys are forwarded to the PTY. Mouse scroll
+sends `j`/`k` to `less`/`delta` when no mouse reporting. Closes on `Ctrl+Q`,
+`Ctrl+G`, or when the process exits.
+
+Floating editor and diff panes are intentionally not daemon-owned session panes.
+They do not survive client detach, and they are explicitly torn down when the
+client exits.
 
 ### EnterSearch Mode
 
