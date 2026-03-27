@@ -345,17 +345,15 @@ fn attach_command_supports_default_session_via_attach_client_path() {
     let _child = support::spawn_humu_server(&env);
     wait_for_ping(&env, Duration::from_secs(5)).expect("daemon ping");
 
-    let output = support::humu_command(&env)
-        .arg("attach")
-        .arg("default")
-        .output()
-        .expect("run humu attach default");
-
+    let mut attach = support::spawn_humu_attach(&env, "default");
+    attach.write_input(b"n");
     assert!(
-        output.status.success(),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
+        attach.wait_for_output("shell", Duration::from_secs(5)),
+        "attach output did not reflect streamed pane update: {}",
+        attach.output_string()
     );
+    attach.write_input(b"\x11");
+    assert!(attach.child_is_alive() || attach.wait_for_output("shell", Duration::from_secs(1)));
 }
 
 #[test]

@@ -8,6 +8,8 @@ use std::io::{IsTerminal, Write, stdin, stdout};
 use std::time::Duration;
 
 use crate::client::attach::AttachedClient;
+use crate::id::PaneId;
+use crate::shared::protocol::ClientRequest;
 use crate::shared::render::AgentStatus;
 
 pub struct TuiApp {
@@ -33,10 +35,15 @@ impl TuiApp {
         result
     }
 
-    fn run_attached_loop(self) -> Result<()> {
+    fn run_attached_loop(mut self) -> Result<()> {
         render_snapshot_summary(&self.client)?;
 
         loop {
+            if let Ok(event) = self.client.read_event_timeout(Duration::from_millis(10)) {
+                if event.is_some() {
+                    render_snapshot_summary(&self.client)?;
+                }
+            }
             if event::poll(Duration::from_millis(50))? {
                 match event::read()? {
                     Event::Key(key)
@@ -44,6 +51,15 @@ impl TuiApp {
                             && key.modifiers.contains(KeyModifiers::CONTROL) =>
                     {
                         break;
+                    }
+                    Event::Key(key) if key.code == KeyCode::Char('n') => {
+                        self.client.send_request(&ClientRequest::RegisterPane {
+                            pane_id: PaneId::new(),
+                            preset_name: "shell".to_string(),
+                            cwd: None,
+                            session_id: None,
+                            started_at_unix_secs: 0,
+                        })?;
                     }
                     _ => {}
                 }
@@ -56,6 +72,7 @@ impl TuiApp {
 fn render_snapshot_summary(client: &AttachedClient) -> Result<()> {
     let snapshot = client.state().snapshot();
     let mut output = String::new();
+    output.push_str("\x1b[2J\x1b[H");
     for pane in snapshot.panes.values() {
         let indicator = pane
             .agent_state

@@ -1,7 +1,8 @@
 use anyhow::{Context, Result, anyhow};
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::client::state::ClientState;
 use crate::client::tui_app::TuiApp;
@@ -107,6 +108,24 @@ impl AttachedClient {
         self.state.apply(event.clone());
         Ok(event)
     }
+
+    pub fn read_event_timeout(&mut self, timeout: Duration) -> Result<Option<ServerEvent>> {
+        self.stream
+            .set_read_timeout(Some(timeout))
+            .context("set attach stream read timeout")?;
+        let event = match try_read_framed_message::<ServerEvent>(&mut self.stream) {
+            Ok(event) => {
+                self.state.apply(event.clone());
+                Some(event)
+            }
+            Err(err) if is_timeout(&err) => None,
+            Err(err) => return Err(err),
+        };
+        self.stream
+            .set_read_timeout(None)
+            .context("clear attach stream read timeout")?;
+        Ok(event)
+    }
 }
 
 pub fn ensure_server_running() -> Result<PathBuf> {
@@ -149,4 +168,30 @@ fn read_framed_message<T: serde::de::DeserializeOwned>(stream: &mut UnixStream) 
             return Ok(message);
         }
     }
+}
+
+fn try_read_framed_message<T: serde::de::DeserializeOwned>(stream: &mut UnixStream) -> Result<T> {
+    let mut decoder = FrameDecoder::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        match stream.read(&mut buf) {
+            Ok(0) => return Err(anyhow!("stream closed before a full frame was received")),
+            Ok(read) => {
+                decoder.push(&buf[..read]);
+                if let Some(message) = decoder.try_decode()? {
+                    return Ok(message);
+                }
+            }
+            Err(err) if err.kind() == ErrorKind::WouldBlock || err.kind() == ErrorKind::TimedOut => {
+                return Err(err.into());
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+}
+
+fn is_timeout(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<std::io::Error>().is_some_and(|io_err| {
+        io_err.kind() == ErrorKind::WouldBlock || io_err.kind() == ErrorKind::TimedOut
+    })
 }
