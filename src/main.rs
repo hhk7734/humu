@@ -16,14 +16,7 @@ fn main() -> Result<()> {
         Some(Command::Attach { session }) => {
             server::daemon::run(true)?;
             let session_name = session.as_deref().unwrap_or("default");
-            if session_name == "default" {
-                let client = humu::client::attach::AttachedClient::connect_default(session_name)?;
-                drop(client);
-                let mut app = app::App::new()?;
-                app.run()
-            } else {
-                humu::client::attach::attach(session_name)
-            }
+            humu::client::attach::attach(session_name)
         }
         Some(Command::ListSessions) => server::daemon::list_sessions_shell(),
         Some(Command::Detach { session, force }) => {

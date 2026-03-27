@@ -340,6 +340,25 @@ fn attach_command_supports_named_sessions() {
 }
 
 #[test]
+fn attach_command_supports_default_session_via_attach_client_path() {
+    let env = support::isolated_humu_home();
+    let _child = support::spawn_humu_server(&env);
+    wait_for_ping(&env, Duration::from_secs(5)).expect("daemon ping");
+
+    let output = support::humu_command(&env)
+        .arg("attach")
+        .arg("default")
+        .output()
+        .expect("run humu attach default");
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn server_startup_refuses_protocol_version_mismatch() {
     let env = support::isolated_humu_home();
     let handle = spawn_version_mismatched_server(&env);
