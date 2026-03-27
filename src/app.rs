@@ -277,6 +277,10 @@ pub struct App {
 
 impl App {
     pub fn new() -> Result<Self> {
+        Self::new_with_session(HumuState::DEFAULT_SESSION_NAME)
+    }
+
+    pub fn new_with_session(session_name: &str) -> Result<Self> {
         humu::log::init();
 
         let config_path = humu_dir().join("config.yaml");
@@ -303,8 +307,7 @@ impl App {
         let tabs = TabContainer::new();
         let local_panes = HashMap::new();
         let pane_presets = HashMap::new();
-        let (server_stream, hook_port, attached_snapshot) =
-            Self::connect_default_daemon_session()?;
+        let (server_stream, hook_port, attached_snapshot) = Self::connect_daemon_session(session_name)?;
 
         let ui_config = humu::tui::theme::UiConfig {
             simplified_ui: config.ui.simplified_ui,
@@ -352,7 +355,8 @@ impl App {
     }
 
     #[cfg(not(test))]
-    fn connect_default_daemon_session(
+    fn connect_daemon_session(
+        session_name: &str,
     ) -> Result<(Option<UnixStream>, Option<u16>, Option<FullSnapshot>)> {
         if let Err(err) = crate::server::daemon::run(true) {
             humu::humu_log!("failed to start daemon runtime: {err}");
@@ -373,7 +377,7 @@ impl App {
         };
 
         let attach = ClientRequest::AttachSession {
-            name: "default".to_string(),
+            name: session_name.to_string(),
             cols: 80,
             rows: 24,
         };
@@ -420,7 +424,8 @@ impl App {
     }
 
     #[cfg(test)]
-    fn connect_default_daemon_session(
+    fn connect_daemon_session(
+        _session_name: &str,
     ) -> Result<(Option<UnixStream>, Option<u16>, Option<FullSnapshot>)> {
         Ok((None, None, None))
     }

@@ -911,7 +911,8 @@ async fn foreground_attach_rehydrates_runtime_agent_state_from_daemon_snapshot()
     let mut app = support::spawn_humu_attach(&env, "default");
     assert!(app.wait_for_output("\u{1b}[?1049h", Duration::from_secs(2)));
     assert!(
-        app.wait_for_output("shell ⠋", Duration::from_secs(2)),
+        app.wait_for_output("shell", Duration::from_secs(2))
+            && app.wait_for_output("⠋", Duration::from_secs(2)),
         "expected rehydrated spinner in attach UI, got output: {}",
         app.output_string()
     );
@@ -1000,7 +1001,8 @@ async fn foreground_attach_rehydrates_daemon_learned_hook_session_id_without_loc
     let mut app = support::spawn_humu_attach(&env, "default");
     assert!(app.wait_for_output("\u{1b}[?1049h", Duration::from_secs(2)));
     assert!(
-        app.wait_for_output("shell ⠋", Duration::from_secs(2)),
+        app.wait_for_output("shell", Duration::from_secs(2))
+            && app.wait_for_output("⠋", Duration::from_secs(2)),
         "expected daemon-learned shell spinner in attach UI, got output: {}",
         app.output_string()
     );
@@ -1089,7 +1091,8 @@ async fn foreground_attach_rehydrates_daemon_discovered_codex_session_id() {
     let mut app = support::spawn_humu_attach(&env, "default");
     assert!(app.wait_for_output("\u{1b}[?1049h", Duration::from_secs(2)));
     assert!(
-        app.wait_for_output("codex ⠋", Duration::from_secs(2)),
+        app.wait_for_output("codex", Duration::from_secs(2))
+            && app.wait_for_output("⠋", Duration::from_secs(2)),
         "expected codex spinner in attach UI, got output: {}",
         app.output_string()
     );
@@ -1193,7 +1196,8 @@ async fn graceful_foreground_exit_cleans_runtime_registrations_between_attach_cy
     let mut second = support::spawn_humu_attach(&env, "default");
     assert!(second.wait_for_output("\u{1b}[?1049h", Duration::from_secs(2)));
     assert!(
-        second.wait_for_output("shell ⠋", Duration::from_secs(2)),
+        second.wait_for_output("shell", Duration::from_secs(2))
+            && second.wait_for_output("⠋", Duration::from_secs(2)),
         "expected rehydrated spinner after repeated attach cycle, got output: {}",
         second.output_string()
     );

@@ -346,14 +346,16 @@ fn attach_command_supports_default_session_via_attach_client_path() {
     wait_for_ping(&env, Duration::from_secs(5)).expect("daemon ping");
 
     let mut attach = support::spawn_humu_attach(&env, "default");
-    attach.write_input(b"n");
     assert!(
-        attach.wait_for_output("shell", Duration::from_secs(5)),
-        "attach output did not reflect streamed pane update: {}",
+        attach.wait_for_output("Workspaces", Duration::from_secs(5)),
+        "attach output did not render the humu workspace panel: {}",
         attach.output_string()
     );
     attach.write_input(b"\x11");
-    assert!(attach.child_is_alive() || attach.wait_for_output("shell", Duration::from_secs(1)));
+    assert!(
+        !attach.child_is_alive()
+            || attach.wait_for_output("TERMINAL", Duration::from_secs(1))
+    );
 }
 
 #[test]

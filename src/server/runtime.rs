@@ -435,21 +435,6 @@ impl SessionRuntimeState {
         agent_session_id: Option<String>,
         started_at: SystemTime,
     ) -> anyhow::Result<()> {
-        self.pane_sessions
-            .insert(pane_id, session_name.to_string());
-        self.panes_by_session
-            .entry(session_name.to_string())
-            .or_default()
-            .insert(
-                pane_id,
-                RegisteredPane {
-                    preset_name: preset_name.to_string(),
-                    cwd: cwd.clone(),
-                    started_at,
-                    session_id: agent_session_id.clone(),
-                },
-            );
-
         let session_size = self
             .session_geometry_by_name
             .get(session_name)
@@ -504,11 +489,26 @@ impl SessionRuntimeState {
         );
 
         if preset_name == "codex"
-            && let Some(cwd) = cwd
+            && let Some(cwd) = cwd.as_ref()
         {
             self.codex_tracker
-                .track_pane(pane_id, cwd, agent_session_id, started_at);
+                .track_pane(pane_id, cwd.to_path_buf(), agent_session_id.clone(), started_at);
         }
+
+        self.pane_sessions
+            .insert(pane_id, session_name.to_string());
+        self.panes_by_session
+            .entry(session_name.to_string())
+            .or_default()
+            .insert(
+                pane_id,
+                RegisteredPane {
+                    preset_name: preset_name.to_string(),
+                    cwd,
+                    started_at,
+                    session_id: agent_session_id,
+                },
+            );
 
         Ok(())
     }

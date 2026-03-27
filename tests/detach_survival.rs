@@ -354,6 +354,51 @@ fn runtime_register_pane_applies_codex_resume_args() {
 }
 
 #[test]
+fn failed_runtime_register_does_not_leak_persisted_runtime_layout() {
+    let env = support::isolated_humu_home();
+    support::write_state(&env, &support::migrated_state_fixture());
+    let mut config = HumuConfig::default();
+    let codex = config.presets.get_mut("codex").expect("codex preset");
+    codex.command = "/definitely/missing/humu-codex".to_string();
+    codex.args.clear();
+
+    let runtime = server_impl::runtime::SessionRuntime::start(
+        env.humu_dir().to_path_buf(),
+        config,
+        NotificationsConfig::default(),
+        env.home.path().join(".codex/sessions"),
+    )
+    .expect("start runtime");
+
+    runtime.attach_session("default");
+    let failed = pane_id("44444444-4444-4444-4444-444444444444");
+    let shell = pane_id("55555555-5555-5555-5555-555555555555");
+
+    assert!(
+        runtime
+            .register_pane("default", failed, "codex", None, None, SystemTime::now())
+            .is_err()
+    );
+    runtime
+        .register_pane("default", shell, "shell", None, None, SystemTime::now())
+        .expect("register shell runtime pane");
+
+    let reloaded = HumuState::load(&env.state_path()).expect("reload persisted state");
+    let session = reloaded
+        .session_by_name("default")
+        .expect("default session persisted");
+    let room_id = session.active_room_id.expect("active room id");
+    let layout = session
+        .tabs_by_room
+        .get(&room_id)
+        .expect("persisted runtime layout");
+    let serialized = serde_yaml::to_string(layout).expect("serialize layout");
+
+    assert!(serialized.contains("shell"));
+    assert!(!serialized.contains("codex"));
+}
+
+#[test]
 fn reattach_resizes_session_to_new_client_geometry() {
     let env = support::isolated_humu_home();
     write_config(
