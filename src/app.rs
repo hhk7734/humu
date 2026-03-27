@@ -276,6 +276,36 @@ pub struct App {
 }
 
 impl App {
+    fn normalized_panel_widths(&self, total_width: u16) -> [u16; 2] {
+        const MIN_SIDE_PANEL_WIDTH: u16 = 5;
+        const MIN_TERMINAL_WIDTH: u16 = 20;
+
+        let minimum_total = MIN_SIDE_PANEL_WIDTH * 2 + 1;
+        if total_width <= minimum_total {
+            return [MIN_SIDE_PANEL_WIDTH, MIN_SIDE_PANEL_WIDTH];
+        }
+
+        let left = self.panel_widths[0].max(MIN_SIDE_PANEL_WIDTH);
+        let right = self.panel_widths[1].max(MIN_SIDE_PANEL_WIDTH);
+        let available_for_side_panels = total_width.saturating_sub(MIN_TERMINAL_WIDTH).max(
+            MIN_SIDE_PANEL_WIDTH * 2,
+        );
+
+        if left.saturating_add(right) <= available_for_side_panels {
+            return [left, right];
+        }
+
+        let total = (left as u32) + (right as u32);
+        let mut normalized_left =
+            ((left as u32 * available_for_side_panels as u32) / total) as u16;
+        normalized_left = normalized_left.clamp(
+            MIN_SIDE_PANEL_WIDTH,
+            available_for_side_panels.saturating_sub(MIN_SIDE_PANEL_WIDTH),
+        );
+        let normalized_right = available_for_side_panels.saturating_sub(normalized_left);
+        [normalized_left, normalized_right.max(MIN_SIDE_PANEL_WIDTH)]
+    }
+
     pub fn new() -> Result<Self> {
         Self::new_with_session(HumuState::DEFAULT_SESSION_NAME)
     }
@@ -2210,13 +2240,7 @@ impl App {
                     return;
                 }
                 let path_buf = if path_str.is_empty() {
-                    let Some(home) = dirs::home_dir() else {
-                        self.show_error(
-                            "Could not determine home directory for default clone path",
-                        );
-                        return;
-                    };
-                    match default_clone_target_dir(&home, &url) {
+                    match default_clone_target_dir(&humu_dir(), &url) {
                         Ok(path) => path,
                         Err(e) => {
                             self.show_error(e.to_string());
@@ -2452,13 +2476,14 @@ impl App {
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(1), Constraint::Length(1)])
             .split(size);
+        let panel_widths = self.normalized_panel_widths(main_chunks[0].width);
 
         let panel_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(self.panel_widths[0]),
+                Constraint::Length(panel_widths[0]),
                 Constraint::Min(1),
-                Constraint::Length(self.panel_widths[1]),
+                Constraint::Length(panel_widths[1]),
             ])
             .split(main_chunks[0]);
 
@@ -6083,6 +6108,19 @@ mod tests {
         assert_eq!(app.selected_tree_index, 1);
         assert_eq!(app.mode, Mode::Workspace);
         assert_eq!(app.focus, FocusedPanel::Workspace);
+    }
+
+    #[test]
+    fn panel_widths_preserve_minimum_terminal_space() {
+        let (mut app, _ws_id, _local_room_id, _feature_room_id) = workspace_room_fixture();
+        app.panel_widths = [33, 60];
+
+        let normalized = app.normalized_panel_widths(80);
+
+        assert!(normalized[0] >= 5);
+        assert!(normalized[1] >= 5);
+        assert!(normalized[0] + normalized[1] <= 60);
+        assert!(80 - normalized[0] - normalized[1] >= 20);
     }
 
     #[test]

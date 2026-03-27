@@ -131,9 +131,10 @@ fn test_delete_workspace_removes_repo() {
 
 #[test]
 fn test_default_clone_target_dir_from_https_url() {
-    let home = Path::new("/home/tester");
+    let humu_dir = Path::new("/home/tester/.humu");
 
-    let target = default_clone_target_dir(home, "https://github.com/hhk7734/humu.git").unwrap();
+    let target =
+        default_clone_target_dir(humu_dir, "https://github.com/hhk7734/humu.git").unwrap();
 
     assert_eq!(
         target,
@@ -143,9 +144,9 @@ fn test_default_clone_target_dir_from_https_url() {
 
 #[test]
 fn test_default_clone_target_dir_from_ssh_url() {
-    let home = Path::new("/home/tester");
+    let humu_dir = Path::new("/home/tester/.humu");
 
-    let target = default_clone_target_dir(home, "git@github.com:openai/codex.git").unwrap();
+    let target = default_clone_target_dir(humu_dir, "git@github.com:openai/codex.git").unwrap();
 
     assert_eq!(
         target,
@@ -155,11 +156,24 @@ fn test_default_clone_target_dir_from_ssh_url() {
 
 #[test]
 fn test_default_clone_target_dir_rejects_unparseable_url() {
-    let home = Path::new("/home/tester");
+    let humu_dir = Path::new("/home/tester/.humu");
 
-    let result = default_clone_target_dir(home, "https://github.com/humu.git");
+    let result = default_clone_target_dir(humu_dir, "https://github.com/humu.git");
 
     assert!(result.is_err());
+}
+
+#[test]
+fn test_default_clone_target_dir_respects_custom_humu_dir_root() {
+    let humu_dir = Path::new("/home/tester/.humu_dev");
+
+    let target =
+        default_clone_target_dir(humu_dir, "https://github.com/hhk7734/humu.git").unwrap();
+
+    assert_eq!(
+        target,
+        Path::new("/home/tester/.humu_dev/projects/hhk7734/humu")
+    );
 }
 
 #[test]

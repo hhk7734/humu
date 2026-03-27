@@ -6,6 +6,15 @@ TUI-based multi-task manager built on git concepts. Workspaces = repos, rooms = 
 
 Design documents live in `docs/PRDs/`. When any behavioral or architectural change is made, update the relevant PRD to keep documentation in sync with the implementation.
 
+## Path Ownership
+
+Treat `HUMU_DIR` and `HOME` as separate roots and do not mix them when implementing paths.
+
+- Use `HUMU_DIR` for humu-owned data and runtime files such as `state.yaml`, `config.yaml`, `hooks/`, `server.sock`, `port`, and `projects/`.
+- Use `HOME` only for external user-home conventions or other tools' state such as `~/.codex/...`.
+- Do not reconstruct humu paths from `HOME` (for example `HOME/.humu/...`) when `HUMU_DIR` exists; always resolve humu-owned paths from `humu_dir()`.
+- Tests that exercise path behavior should keep `HOME` and `HUMU_DIR` distinct so incorrect path usage is detectable.
+
 ## Release Checklist
 
 When tagging a new version:

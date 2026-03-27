@@ -103,10 +103,7 @@ impl SessionRuntimeState {
                         session
                             .active_room_id
                             .and_then(|room_id| session.tabs_by_room.get(&room_id))
-                            .is_some_and(|layout| {
-                                !layout.tabs.is_empty()
-                                    && layout.tabs.iter().any(|tab| tab.name == "runtime")
-                            })
+                            .is_some_and(|layout| !layout.tabs.is_empty())
                     })
                     .map(|session| session.name.clone())
                     .collect()

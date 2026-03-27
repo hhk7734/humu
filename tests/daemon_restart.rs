@@ -97,6 +97,54 @@ fn restart_state_fixture(env: &support::TestEnv) -> HumuState {
     }
 }
 
+fn persisted_shell_layout_state(env: &support::TestEnv) -> HumuState {
+    let workspace_id = support::workspace_id("humu");
+    let room_id = support::room_id("main");
+    let workspace_path = env.cwd().join("workspace");
+    fs::create_dir_all(&workspace_path).expect("create workspace path");
+
+    HumuState {
+        active_workspace_id: Some(workspace_id),
+        active_room_id: Some(room_id),
+        workspaces: vec![WorkspaceEntry {
+            name: "humu".to_string(),
+            id: workspace_id,
+            path: workspace_path.clone(),
+            last_room_id: Some(room_id),
+            rooms: vec![RoomEntry {
+                name: "main".to_string(),
+                id: room_id,
+                path: workspace_path.clone(),
+                active_tab: None,
+                tabs: vec![],
+            }],
+        }],
+        sessions: vec![SessionState {
+            name: HumuState::DEFAULT_SESSION_NAME.to_string(),
+            active_workspace_id: Some(workspace_id),
+            active_room_id: Some(room_id),
+            tabs_by_room: [(
+                room_id,
+                humu::config::PersistedRoomLayout {
+                    active_tab: 0,
+                    tabs: vec![humu::config::TabLayout {
+                        name: "shell".to_string(),
+                        split: humu::config::SplitNode::Leaf {
+                            preset: "shell".to_string(),
+                            session_id: None,
+                        },
+                    }],
+                },
+            )]
+            .into_iter()
+            .collect(),
+            attached: false,
+            last_size: None,
+        }],
+        panel_widths: None,
+    }
+}
+
 fn restart_config_fixture() -> HumuConfig {
     let mut config = HumuConfig::default();
     config.presets.insert(
@@ -250,5 +298,29 @@ fn daemon_restart_cold_restores_session_layout() {
             cols: 100,
             rows: 30,
         })
+    );
+}
+
+#[test]
+fn daemon_cold_restores_persisted_non_runtime_tab_layout() {
+    let env = support::isolated_humu_home();
+    support::write_config(&env, &restart_config_fixture());
+    support::write_state(&env, &persisted_shell_layout_state(&env));
+
+    let _daemon = support::spawn_humu_server(&env);
+    wait_for_ping(&env, Duration::from_secs(5)).expect("daemon ping");
+
+    let snapshot = wait_for_restored_snapshot(&env, "persisted shell layout attach");
+    assert_eq!(snapshot.tabs.len(), 1);
+    assert_eq!(snapshot.tabs[0].name, "runtime");
+    assert_eq!(snapshot.panes.len(), 1);
+    assert_eq!(
+        snapshot
+            .panes
+            .values()
+            .next()
+            .expect("restored pane")
+            .preset_name,
+        "shell"
     );
 }

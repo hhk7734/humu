@@ -129,7 +129,7 @@ impl WorkspaceManager {
     }
 }
 
-pub fn default_clone_target_dir(home: &Path, url: &str) -> Result<PathBuf> {
+pub fn default_clone_target_dir(humu_dir: &Path, url: &str) -> Result<PathBuf> {
     let repo_path = clone_repo_path(url)?;
     let mut segments = repo_path.split('/').filter(|segment| !segment.is_empty());
     let mut collected: Vec<&str> = segments.by_ref().collect();
@@ -143,7 +143,7 @@ pub fn default_clone_target_dir(home: &Path, url: &str) -> Result<PathBuf> {
         bail!("could not derive clone path from URL: {url}");
     }
 
-    Ok(home.join(".humu").join("projects").join(owner).join(repo))
+    Ok(humu_dir.join("projects").join(owner).join(repo))
 }
 
 fn clone_repo_path(url: &str) -> Result<&str> {
