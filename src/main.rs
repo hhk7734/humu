@@ -9,8 +9,8 @@ fn main() -> Result<()> {
     let cli = Cli::parse()?;
     match cli.command {
         None => {
-            let mut app = app::App::new()?;
-            app.run()
+            server::daemon::run(true)?;
+            humu::client::attach::attach("default")
         }
         Some(Command::Server { daemon }) => server::daemon::run(daemon),
         Some(Command::Attach { session }) => {

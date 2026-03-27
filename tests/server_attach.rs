@@ -357,6 +357,39 @@ fn attach_command_supports_default_session_via_attach_client_path() {
 }
 
 #[test]
+fn bare_humu_autostarts_daemon_and_attaches_default_session() {
+    let env = support::isolated_humu_home();
+
+    let output = support::humu_command(&env)
+        .output()
+        .expect("run bare humu");
+
+    assert!(
+        output.status.success(),
+        "bare humu failed: stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(env.server_socket_path().exists(), "daemon socket was not created");
+
+    let sessions = support::humu_command(&env)
+        .arg("list-sessions")
+        .output()
+        .expect("run humu list-sessions after bare attach");
+    assert!(
+        sessions.status.success(),
+        "list-sessions failed: stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&sessions.stdout),
+        String::from_utf8_lossy(&sessions.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&sessions.stdout);
+    assert!(
+        stdout.contains("default"),
+        "default session missing from list-sessions output: {stdout}"
+    );
+}
+
+#[test]
 fn server_startup_refuses_protocol_version_mismatch() {
     let env = support::isolated_humu_home();
     let handle = spawn_version_mismatched_server(&env);
